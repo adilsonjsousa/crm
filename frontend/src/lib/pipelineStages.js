@@ -2,6 +2,7 @@ export const PIPELINE_STAGES = [
   { value: "lead", label: "LEAD" },
   { value: "qualificacao", label: "QUALIFICAÇÃO" },
   { value: "follow_up", label: "FOLLOW-UP" },
+  { value: "proposta", label: "PROPOSTA" },
   { value: "stand_by", label: "STAND-BY" },
   { value: "ganho", label: "GANHO" },
   { value: "perdido", label: "PERDIDO" }
@@ -15,7 +16,8 @@ const STAGE_LABELS = PIPELINE_STAGES.reduce((acc, stage) => {
 const NEXT_STAGE_MAP = {
   lead: ["qualificacao"],
   qualificacao: ["follow_up"],
-  follow_up: ["stand_by"],
+  follow_up: ["proposta"],
+  proposta: ["stand_by"],
   stand_by: ["ganho", "perdido"],
   ganho: [],
   perdido: []
