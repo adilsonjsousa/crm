@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { createCompany, findCompanyByCnpj, listCompanies } from "../lib/revenueApi";
+import { createCompany, findCompanyByCnpj, listCompanies, lookupCompanyDataByCnpj } from "../lib/revenueApi";
 
 const SEGMENTOS = [
   "Tecnologia",
@@ -101,6 +101,35 @@ export default function CompaniesModule() {
           });
           return;
         }
+
+        setCnpjValidation({ type: "checking", message: "CNPJ válido. Buscando dados da empresa..." });
+        let lookupData = null;
+        try {
+          lookupData = await lookupCompanyDataByCnpj(cnpjDigits);
+        } catch (lookupError) {
+          if (!active) return;
+          setCnpjValidation({
+            type: "valid",
+            message: "CNPJ válido e disponível. Não foi possível autopreencher agora."
+          });
+          return;
+        }
+
+        if (!active) return;
+        if (lookupData) {
+          setForm((prev) => ({
+            ...prev,
+            trade_name: lookupData.trade_name || prev.trade_name,
+            legal_name: lookupData.legal_name || prev.legal_name,
+            email: lookupData.email || prev.email,
+            phone: lookupData.phone || prev.phone,
+            address_full: lookupData.address_full || prev.address_full,
+            segmento: lookupData.segmento || prev.segmento
+          }));
+          setCnpjValidation({ type: "valid", message: "CNPJ válido. Dados da empresa preenchidos automaticamente." });
+          return;
+        }
+
         setCnpjValidation({ type: "valid", message: "CNPJ válido e disponível." });
       } catch (err) {
         if (!active) return;

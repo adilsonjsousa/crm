@@ -4,6 +4,37 @@ function normalizeError(error, fallback) {
   return error?.message || fallback;
 }
 
+function cleanDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function formatCep(value) {
+  const cep = cleanDigits(value);
+  if (cep.length !== 8) return cep;
+  return `${cep.slice(0, 5)}-${cep.slice(5)}`;
+}
+
+function joinAddress(parts) {
+  return parts.filter(Boolean).join(", ");
+}
+
+function inferSegmentoFromCnae(description) {
+  const raw = String(description || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  if (!raw) return "";
+  if (raw.includes("grafica digital")) return "Gráfica Digital";
+  if (raw.includes("grafica")) return "Gráfica";
+  if (raw.includes("comunicacao visual")) return "Comunicação visual";
+  if (raw.includes("varej")) return "Varejo";
+  if (raw.includes("software") || raw.includes("informatica") || raw.includes("tecnologia")) return "Tecnologia";
+  if (raw.includes("industria") || raw.includes("fabrica") || raw.includes("fabricacao")) return "Indústria";
+  if (raw.includes("servic")) return "Serviços";
+  return "";
+}
+
 export async function getDashboardKpis() {
   const supabase = ensureSupabase();
 
@@ -69,6 +100,35 @@ export async function findCompanyByCnpj(cnpj) {
 
   if (error) throw new Error(normalizeError(error, "Falha ao validar CNPJ na base."));
   return data;
+}
+
+export async function lookupCompanyDataByCnpj(cnpj) {
+  const normalized = cleanDigits(cnpj);
+  if (normalized.length !== 14) return null;
+
+  const response = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${normalized}`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error("Falha ao consultar dados públicos do CNPJ.");
+
+  const payload = await response.json();
+  const address = joinAddress([
+    payload.logradouro,
+    payload.numero,
+    payload.complemento,
+    payload.bairro,
+    payload.municipio,
+    payload.uf,
+    payload.cep ? `CEP ${formatCep(payload.cep)}` : ""
+  ]);
+
+  return {
+    legal_name: payload.razao_social || "",
+    trade_name: payload.nome_fantasia || payload.razao_social || "",
+    email: payload.email || "",
+    phone: payload.ddd_telefone_1 || payload.ddd_telefone_2 || "",
+    address_full: address,
+    segmento: inferSegmentoFromCnae(payload.cnae_fiscal_descricao)
+  };
 }
 
 export async function createCompany(payload) {
