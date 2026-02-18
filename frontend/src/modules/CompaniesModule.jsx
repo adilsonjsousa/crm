@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createCompany,
   createContact,
@@ -113,7 +113,7 @@ function upperLettersOnly(value) {
     .trimStart();
 }
 
-export default function CompaniesModule() {
+export default function CompaniesModule({ focusTarget = "company", focusRequest = 0 }) {
   const [companies, setCompanies] = useState([]);
   const [companyOptions, setCompanyOptions] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -130,6 +130,8 @@ export default function CompaniesModule() {
   const [editContactForm, setEditContactForm] = useState(EMPTY_EDIT_CONTACT_FORM);
   const [editContactError, setEditContactError] = useState("");
   const [savingContactEdit, setSavingContactEdit] = useState(false);
+  const companyPanelRef = useRef(null);
+  const contactPanelRef = useRef(null);
 
   const cnpjDigits = useMemo(() => cleanCnpj(form.cnpj), [form.cnpj]);
   const hasPrimaryContactData = useMemo(
@@ -247,6 +249,18 @@ export default function CompaniesModule() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    const panelRef = focusTarget === "contact" ? contactPanelRef : companyPanelRef;
+    if (!panelRef.current) return;
+
+    panelRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    const firstField = panelRef.current.querySelector("select, input, textarea");
+    if (firstField && typeof firstField.focus === "function") {
+      window.setTimeout(() => firstField.focus(), 180);
+    }
+  }, [focusRequest, focusTarget]);
 
   async function handleCompanySubmit(event) {
     event.preventDefault();
@@ -449,7 +463,7 @@ export default function CompaniesModule() {
       {error ? <p className="error-text">{error}</p> : null}
 
       <div className="two-col">
-        <article className="panel">
+        <article className="panel" ref={companyPanelRef}>
           <h2>Empresas</h2>
           <form className="form-grid" onSubmit={handleCompanySubmit}>
             <input
@@ -621,7 +635,7 @@ export default function CompaniesModule() {
       </div>
 
       <div className="two-col top-gap">
-        <article className="panel">
+        <article className="panel" ref={contactPanelRef}>
           <h2>Criar contato (com ou sem vínculo)</h2>
           <form className="form-grid" onSubmit={handleContactSubmit}>
             <select

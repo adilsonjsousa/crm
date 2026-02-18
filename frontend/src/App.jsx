@@ -47,6 +47,8 @@ const PAGE_META = {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [companiesFocusTarget, setCompaniesFocusTarget] = useState("company");
+  const [companiesFocusRequest, setCompaniesFocusRequest] = useState(0);
   const [globalSearch, setGlobalSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -68,12 +70,14 @@ export default function App() {
   }, [theme]);
 
   const activeModule = useMemo(() => {
-    if (activeTab === "companies") return <CompaniesModule />;
+    if (activeTab === "companies") {
+      return <CompaniesModule focusTarget={companiesFocusTarget} focusRequest={companiesFocusRequest} />;
+    }
     if (activeTab === "pipeline") return <PipelineModule />;
     if (activeTab === "orders") return <OrdersModule />;
     if (activeTab === "service") return <ServiceModule />;
     return <DashboardModule />;
-  }, [activeTab]);
+  }, [activeTab, companiesFocusRequest, companiesFocusTarget]);
 
   const activeMeta = PAGE_META[activeTab] || PAGE_META.dashboard;
   const activeNav = NAV_ITEMS.find((item) => item.id === activeTab) || NAV_ITEMS[0];
@@ -123,6 +127,12 @@ export default function App() {
 
   function openSearchResult(tab) {
     setActiveTab(tab);
+  }
+
+  function openCompanyQuickAction(target) {
+    setCompaniesFocusTarget(target);
+    setCompaniesFocusRequest((previous) => previous + 1);
+    setActiveTab("companies");
   }
 
   function selectSuggestion(item) {
@@ -253,7 +263,10 @@ export default function App() {
             <button type="button" className="btn-ghost" onClick={() => setActiveTab("pipeline")}>
               + Novo Negócio
             </button>
-            <button type="button" className="btn-primary" onClick={() => setActiveTab("companies")}>
+            <button type="button" className="btn-ghost" onClick={() => openCompanyQuickAction("contact")}>
+              + Novo Contato
+            </button>
+            <button type="button" className="btn-primary" onClick={() => openCompanyQuickAction("company")}>
               + Nova Empresa
             </button>
             <span className="crm-user-pill">AS</span>
