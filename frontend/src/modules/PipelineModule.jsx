@@ -20,11 +20,19 @@ const OPPORTUNITY_TITLES = [
 
 const OPPORTUNITY_SUBCATEGORIES = {
   "ACABAMENTOS GRÁFICOS": [
-    "LAMINAÇÃO",
-    "VERNIZ UV",
-    "CORTE E VINCO",
-    "HOT STAMPING",
-    "DOBRA E COLAGEM"
+    "Plotter de Recorte T-24 (60cms)",
+    "Plotter de Recorte T-48 (120cms)",
+    "Plotter de Recorte T-59 (160cms)",
+    "Auto Cutter Z Pro Max",
+    "Auto Cutter LN 05",
+    "Auto Cutter LN 06",
+    "Roll Cutter",
+    "Mesa de Corte 7090E",
+    "Mesa de Cote 7090U",
+    "Mesa de Corte MAPCUT 6040",
+    "Mesa de Corte MAPCUT 8060",
+    "Mesa de Corte MAPCUT 1815",
+    "Mesa de Corte MAPCUT 2513"
   ],
   "COMUNICAÇÃO VISUAL": ["BANNER", "ADESIVO", "LONA", "PLACA EM PVC", "FACHADA"],
   "PRODUÇÃO COLOR": [
