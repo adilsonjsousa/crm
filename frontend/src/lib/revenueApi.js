@@ -36,6 +36,14 @@ function inferSegmentoFromCnae(description) {
   return "";
 }
 
+function normalizeSearchTerm(term) {
+  return String(term || "")
+    .trim()
+    .replace(/[,%()]/g, " ")
+    .replace(/\s+/g, " ")
+    .slice(0, 80);
+}
+
 export async function getDashboardKpis() {
   const supabase = ensureSupabase();
 
@@ -253,4 +261,94 @@ export async function listCompanyOptions() {
   const { data, error } = await supabase.from("companies").select("id,trade_name").order("trade_name", { ascending: true });
   if (error) throw new Error(normalizeError(error, "Falha ao listar empresas para seleção."));
   return data || [];
+}
+
+export async function searchGlobalRecords(term) {
+  const supabase = ensureSupabase();
+  const normalized = normalizeSearchTerm(term);
+  if (!normalized || normalized.length < 2) return [];
+
+  const pattern = `%${normalized}%`;
+
+  const [companiesRes, contactsRes, opportunitiesRes, ordersRes, ticketsRes] = await Promise.all([
+    supabase
+      .from("companies")
+      .select("id,trade_name,cnpj")
+      .or(`trade_name.ilike.${pattern},legal_name.ilike.${pattern},cnpj.ilike.${pattern}`)
+      .limit(5),
+    supabase
+      .from("contacts")
+      .select("id,full_name,email,companies:company_id(trade_name)")
+      .or(`full_name.ilike.${pattern},email.ilike.${pattern},whatsapp.ilike.${pattern}`)
+      .limit(5),
+    supabase
+      .from("opportunities")
+      .select("id,title,stage,companies:company_id(trade_name)")
+      .or(`title.ilike.${pattern},stage.ilike.${pattern}`)
+      .limit(5),
+    supabase
+      .from("sales_orders")
+      .select("id,order_number,status,companies:company_id(trade_name)")
+      .or(`order_number.ilike.${pattern},status.ilike.${pattern}`)
+      .limit(5),
+    supabase
+      .from("service_tickets")
+      .select("id,description,status,companies:company_id(trade_name)")
+      .or(`description.ilike.${pattern},status.ilike.${pattern}`)
+      .limit(5)
+  ]);
+
+  if (companiesRes.error) throw new Error(normalizeError(companiesRes.error, "Falha na busca global (empresas)."));
+  if (contactsRes.error) throw new Error(normalizeError(contactsRes.error, "Falha na busca global (contatos)."));
+  if (opportunitiesRes.error) throw new Error(normalizeError(opportunitiesRes.error, "Falha na busca global (pipeline)."));
+  if (ordersRes.error) throw new Error(normalizeError(ordersRes.error, "Falha na busca global (pedidos)."));
+  if (ticketsRes.error) throw new Error(normalizeError(ticketsRes.error, "Falha na busca global (assistência)."));
+
+  const mappedCompanies = (companiesRes.data || []).map((item) => ({
+    id: `company-${item.id}`,
+    type: "Empresa",
+    title: item.trade_name || "Empresa",
+    subtitle: item.cnpj ? `CNPJ ${item.cnpj}` : "Sem CNPJ",
+    tab: "companies"
+  }));
+
+  const mappedContacts = (contactsRes.data || []).map((item) => ({
+    id: `contact-${item.id}`,
+    type: "Contato",
+    title: item.full_name || "Contato",
+    subtitle: item.companies?.trade_name || "Sem vínculo com empresa",
+    tab: "companies"
+  }));
+
+  const mappedOpportunities = (opportunitiesRes.data || []).map((item) => ({
+    id: `opportunity-${item.id}`,
+    type: "Pipeline",
+    title: item.title || "Oportunidade",
+    subtitle: item.companies?.trade_name || "Sem empresa",
+    tab: "pipeline"
+  }));
+
+  const mappedOrders = (ordersRes.data || []).map((item) => ({
+    id: `order-${item.id}`,
+    type: "Pedido",
+    title: item.order_number || "Pedido",
+    subtitle: item.companies?.trade_name || "Sem empresa",
+    tab: "orders"
+  }));
+
+  const mappedTickets = (ticketsRes.data || []).map((item) => ({
+    id: `ticket-${item.id}`,
+    type: "Assistência",
+    title: item.description || "Chamado técnico",
+    subtitle: item.companies?.trade_name || "Sem empresa",
+    tab: "service"
+  }));
+
+  return [
+    ...mappedCompanies,
+    ...mappedContacts,
+    ...mappedOpportunities,
+    ...mappedOrders,
+    ...mappedTickets
+  ];
 }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { isSupabaseConfigured } from "./lib/supabase";
+import { searchGlobalRecords } from "./lib/revenueApi";
 import DashboardModule from "./modules/DashboardModule";
 import CompaniesModule from "./modules/CompaniesModule";
 import PipelineModule from "./modules/PipelineModule";
@@ -47,6 +48,10 @@ const PAGE_META = {
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [globalSearch, setGlobalSearch] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [searchExecuted, setSearchExecuted] = useState(false);
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") return "light";
     const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -79,6 +84,43 @@ export default function App() {
       }).format(new Date()),
     []
   );
+
+  async function runGlobalSearch() {
+    const term = globalSearch.trim();
+    setSearchError("");
+    setSearchExecuted(true);
+
+    if (!term) {
+      setSearchResults([]);
+      return;
+    }
+
+    if (!isSupabaseConfigured) {
+      setSearchError("Configure o Supabase para usar a busca global.");
+      setSearchResults([]);
+      return;
+    }
+
+    try {
+      setSearchLoading(true);
+      const result = await searchGlobalRecords(term);
+      setSearchResults(result);
+    } catch (err) {
+      setSearchError(err.message);
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  }
+
+  function handleSearchSubmit(event) {
+    event.preventDefault();
+    runGlobalSearch();
+  }
+
+  function openSearchResult(tab) {
+    setActiveTab(tab);
+  }
 
   return (
     <div className="crm-layout">
@@ -121,14 +163,19 @@ export default function App() {
 
       <div className="crm-main">
         <header className="crm-topbar">
-          <label className="crm-search">
+          <form className="crm-search" onSubmit={handleSearchSubmit}>
             <span>Busca Global</span>
-            <input
-              value={globalSearch}
-              onChange={(event) => setGlobalSearch(event.target.value)}
-              placeholder="Pesquisar empresas, negócios, pedidos e chamados..."
-            />
-          </label>
+            <div className="crm-search-row">
+              <input
+                value={globalSearch}
+                onChange={(event) => setGlobalSearch(event.target.value)}
+                placeholder="Pesquisar empresas, contatos, negócios, pedidos e chamados..."
+              />
+              <button type="submit" className="crm-search-btn" aria-label="Pesquisar">
+                🔍
+              </button>
+            </div>
+          </form>
           <div className="crm-topbar-actions">
             <button type="button" className="btn-ghost" onClick={() => setActiveTab("pipeline")}>
               + Novo Negócio
@@ -143,6 +190,36 @@ export default function App() {
         {!isSupabaseConfigured ? (
           <section className="warning-box">
             <strong>Configuração pendente:</strong> defina `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` no arquivo `.env`.
+          </section>
+        ) : null}
+
+        {searchExecuted ? (
+          <section className="search-results-panel">
+            <div className="search-results-header">
+              <strong>Resultados da busca</strong>
+              <span>Termo: {globalSearch || "-"}</span>
+            </div>
+
+            {searchLoading ? <p className="muted">Pesquisando...</p> : null}
+            {searchError ? <p className="error-text">{searchError}</p> : null}
+
+            {!searchLoading && !searchError && !searchResults.length ? (
+              <p className="muted">Nenhum resultado encontrado.</p>
+            ) : null}
+
+            {!searchLoading && !searchError && searchResults.length ? (
+              <ul className="search-results-list">
+                {searchResults.map((item) => (
+                  <li key={item.id}>
+                    <button type="button" className="search-result-btn" onClick={() => openSearchResult(item.tab)}>
+                      <span className="search-result-type">{item.type}</span>
+                      <strong>{item.title}</strong>
+                      <span>{item.subtitle}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </section>
         ) : null}
 
