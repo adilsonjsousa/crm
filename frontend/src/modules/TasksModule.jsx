@@ -254,6 +254,8 @@ export default function TasksModule() {
       });
       await logTaskFlowComment({
         taskId: task.id,
+        companyId: task.company_id || null,
+        taskTitle: task.title || "",
         fromStatus: previousStatus,
         toStatus: nextStatus,
         comment: flowComment

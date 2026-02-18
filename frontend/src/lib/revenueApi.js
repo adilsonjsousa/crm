@@ -375,25 +375,63 @@ export async function updateTask(taskId, payload) {
   if (error) throw new Error(normalizeError(error, "Falha ao atualizar tarefa."));
 }
 
-export async function logTaskFlowComment({ taskId, fromStatus, toStatus, comment }) {
+export async function logTaskFlowComment({ taskId, companyId, taskTitle, fromStatus, toStatus, comment }) {
   const supabase = ensureSupabase();
   const normalizedComment = String(comment || "").trim();
   if (!taskId || !normalizedComment) {
     throw new Error("Comentário obrigatório para registrar mudança de fluxo.");
   }
 
-  const { error } = await supabase.from("event_log").insert({
-    entity_type: "task",
-    entity_id: taskId,
-    event_name: "task_flow_status_changed",
-    payload: {
-      from_status: fromStatus || null,
-      to_status: toStatus || null,
-      comment: normalizedComment
+  const basePayload = {
+    task_id: taskId,
+    task_title: String(taskTitle || "").trim() || null,
+    from_status: fromStatus || null,
+    to_status: toStatus || null,
+    comment: normalizedComment
+  };
+
+  const eventRows = [
+    {
+      entity_type: "task",
+      entity_id: taskId,
+      event_name: "task_flow_status_changed",
+      payload: basePayload
     }
-  });
+  ];
+
+  if (companyId) {
+    eventRows.push({
+      entity_type: "company",
+      entity_id: companyId,
+      event_name: "task_flow_status_changed",
+      payload: basePayload
+    });
+  }
+
+  const { error } = await supabase.from("event_log").insert(eventRows);
 
   if (error) throw new Error(normalizeError(error, "Falha ao registrar comentário da mudança de fluxo."));
+}
+
+export async function listCompanyHistory({ companyId = "", limit = 120 } = {}) {
+  const supabase = ensureSupabase();
+  const safeLimit = Number.isFinite(limit) ? Math.max(10, Math.min(300, Math.floor(limit))) : 120;
+
+  let query = supabase
+    .from("event_log")
+    .select("id,entity_id,event_name,payload,happened_at")
+    .eq("entity_type", "company")
+    .eq("event_name", "task_flow_status_changed")
+    .order("happened_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (companyId) {
+    query = query.eq("entity_id", companyId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(normalizeError(error, "Falha ao listar histórico do cliente."));
+  return data || [];
 }
 
 export async function listOrders() {

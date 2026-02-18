@@ -4,6 +4,7 @@ import {
   createContact,
   findCompanyByCnpj,
   listCompanies,
+  listCompanyHistory,
   listCompanyOptions,
   listContacts,
   lookupCompanyDataByCnpj,
@@ -105,6 +106,27 @@ function formatBirthDate(value) {
   }).format(new Date(`${value}T00:00:00`));
 }
 
+function formatDateTime(value) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function taskStatusLabel(value) {
+  const map = {
+    todo: "A Fazer",
+    in_progress: "Em Andamento",
+    done: "Concluída",
+    cancelled: "Cancelada"
+  };
+  return map[value] || String(value || "-");
+}
+
 function upperLettersOnly(value) {
   return String(value || "")
     .toUpperCase()
@@ -130,6 +152,8 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
   const [editContactForm, setEditContactForm] = useState(EMPTY_EDIT_CONTACT_FORM);
   const [editContactError, setEditContactError] = useState("");
   const [savingContactEdit, setSavingContactEdit] = useState(false);
+  const [historyRows, setHistoryRows] = useState([]);
+  const [historyCompanyId, setHistoryCompanyId] = useState("");
   const companyPanelRef = useRef(null);
   const contactPanelRef = useRef(null);
 
@@ -143,6 +167,16 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
   );
   const isCheckingCnpj = cnpjValidation.type === "checking";
   const isCnpjBlocked = cnpjValidation.type === "invalid" || cnpjValidation.type === "duplicate";
+  const companyNameById = useMemo(() => {
+    const map = new Map();
+    for (const item of companies) {
+      if (!map.has(item.id)) map.set(item.id, item.trade_name);
+    }
+    for (const item of companyOptions) {
+      if (!map.has(item.id)) map.set(item.id, item.trade_name);
+    }
+    return map;
+  }, [companies, companyOptions]);
 
   useEffect(() => {
     let active = true;
@@ -231,6 +265,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         listCompanyOptions(),
         listContacts()
       ]);
+      const historyData = await listCompanyHistory({ companyId: historyCompanyId, limit: 120 });
 
       const normalizedOptions = optionsData.length
         ? optionsData
@@ -239,6 +274,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       setCompanies(companiesData);
       setCompanyOptions(normalizedOptions);
       setContacts(contactsData);
+      setHistoryRows(historyData);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -248,7 +284,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
 
   useEffect(() => {
     load();
-  }, []);
+  }, [historyCompanyId]);
 
   useEffect(() => {
     if (!focusRequest) return;
@@ -758,6 +794,57 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
           </div>
         </article>
       </div>
+
+      <article className="panel top-gap">
+        <h3>Histórico do cliente</h3>
+        <p className="muted">Registros de mudança no fluxo da agenda com comentário obrigatório.</p>
+        <div className="inline-actions">
+          <select value={historyCompanyId} onChange={(event) => setHistoryCompanyId(event.target.value)}>
+            <option value="">Todos os clientes</option>
+            {companyOptions.map((company) => (
+              <option key={`history-${company.id}`} value={company.id}>
+                {company.trade_name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="table-wrap top-gap">
+          <table>
+            <thead>
+              <tr>
+                <th>Data/Hora</th>
+                <th>Cliente</th>
+                <th>Atividade</th>
+                <th>Fluxo</th>
+                <th>Comentário</th>
+              </tr>
+            </thead>
+            <tbody>
+              {historyRows.map((row) => {
+                const payload = row.payload || {};
+                const fromLabel = taskStatusLabel(payload.from_status);
+                const toLabel = taskStatusLabel(payload.to_status);
+                return (
+                  <tr key={row.id}>
+                    <td>{formatDateTime(row.happened_at)}</td>
+                    <td>{companyNameById.get(row.entity_id) || "SEM VÍNCULO"}</td>
+                    <td>{payload.task_title || "Atividade"}</td>
+                    <td>{`${fromLabel} -> ${toLabel}`}</td>
+                    <td>{payload.comment || "-"}</td>
+                  </tr>
+                );
+              })}
+              {!historyRows.length ? (
+                <tr>
+                  <td colSpan={5} className="muted">
+                    Nenhum registro no histórico para o filtro selecionado.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </article>
     </section>
   );
 }
