@@ -186,7 +186,7 @@ export async function listOpportunities() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("opportunities")
-    .select("id,title,stage,status,estimated_value,expected_close_date,created_at,companies:company_id(trade_name)")
+    .select("id,company_id,title,stage,status,estimated_value,expected_close_date,created_at,companies:company_id(trade_name)")
     .order("created_at", { ascending: false })
     .limit(30);
   if (error) throw new Error(normalizeError(error, "Falha ao listar oportunidades."));
@@ -197,6 +197,28 @@ export async function createOpportunity(payload) {
   const supabase = ensureSupabase();
   const { error } = await supabase.from("opportunities").insert(payload);
   if (error) throw new Error(normalizeError(error, "Falha ao criar oportunidade."));
+}
+
+export async function updateOpportunity(opportunityId, payload) {
+  const supabase = ensureSupabase();
+  const fromStage = payload?.from_stage;
+  const updatePayload = { ...payload };
+  delete updatePayload.from_stage;
+
+  const { error } = await supabase.from("opportunities").update(updatePayload).eq("id", opportunityId);
+  if (error) throw new Error(normalizeError(error, "Falha ao atualizar oportunidade."));
+
+  if (fromStage && updatePayload.stage && fromStage !== updatePayload.stage) {
+    const { error: historyError } = await supabase.from("opportunity_stage_history").insert({
+      opportunity_id: opportunityId,
+      from_stage: fromStage,
+      to_stage: updatePayload.stage
+    });
+
+    if (historyError) {
+      console.warn("Falha ao registrar histórico de etapa:", historyError.message);
+    }
+  }
 }
 
 export async function updateOpportunityStage({ opportunityId, fromStage, toStage }) {

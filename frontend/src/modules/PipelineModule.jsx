@@ -1,9 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { createOpportunity, listCompanyOptions, listOpportunities, updateOpportunityStage } from "../lib/revenueApi";
+import {
+  createOpportunity,
+  listCompanyOptions,
+  listOpportunities,
+  updateOpportunity,
+  updateOpportunityStage
+} from "../lib/revenueApi";
 import { PIPELINE_STAGES, canMoveToStage, stageLabel, stageStatus } from "../lib/pipelineStages";
 
 function brl(value) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
+}
+
+function emptyOpportunityForm(defaultCompanyId = "") {
+  return {
+    company_id: defaultCompanyId,
+    title: "",
+    stage: "lead",
+    estimated_value: "",
+    expected_close_date: ""
+  };
 }
 
 export default function PipelineModule() {
@@ -12,13 +28,8 @@ export default function PipelineModule() {
   const [error, setError] = useState("");
   const [draggingId, setDraggingId] = useState("");
   const [dragOverStage, setDragOverStage] = useState("");
-  const [form, setForm] = useState({
-    company_id: "",
-    title: "",
-    stage: "lead",
-    estimated_value: "",
-    expected_close_date: ""
-  });
+  const [editingOpportunityId, setEditingOpportunityId] = useState("");
+  const [form, setForm] = useState(() => emptyOpportunityForm());
 
   const itemsByStage = useMemo(() => {
     const grouped = PIPELINE_STAGES.reduce((acc, stage) => {
@@ -40,8 +51,8 @@ export default function PipelineModule() {
       const [opps, companiesData] = await Promise.all([listOpportunities(), listCompanyOptions()]);
       setItems(opps);
       setCompanies(companiesData);
-      if (!form.company_id && companiesData.length) {
-        setForm((prev) => ({ ...prev, company_id: companiesData[0].id }));
+      if (companiesData.length) {
+        setForm((prev) => (prev.company_id ? prev : { ...prev, company_id: companiesData[0].id }));
       }
     } catch (err) {
       setError(err.message);
@@ -57,15 +68,27 @@ export default function PipelineModule() {
     setError("");
 
     try {
-      await createOpportunity({
+      const payload = {
         company_id: form.company_id,
         title: form.title,
         stage: form.stage,
         status: stageStatus(form.stage),
         estimated_value: Number(form.estimated_value || 0),
         expected_close_date: form.expected_close_date || null
-      });
-      setForm((prev) => ({ ...prev, title: "", estimated_value: "", expected_close_date: "" }));
+      };
+
+      if (editingOpportunityId) {
+        const currentOpportunity = items.find((item) => item.id === editingOpportunityId);
+        await updateOpportunity(editingOpportunityId, {
+          ...payload,
+          from_stage: currentOpportunity?.stage || null
+        });
+      } else {
+        await createOpportunity(payload);
+      }
+
+      setEditingOpportunityId("");
+      setForm(emptyOpportunityForm(companies[0]?.id || ""));
       await load();
     } catch (err) {
       setError(err.message);
@@ -73,6 +96,10 @@ export default function PipelineModule() {
   }
 
   function handleDragStart(event, opportunityId) {
+    if (event.target?.closest && event.target.closest(".pipeline-card-actions")) {
+      event.preventDefault();
+      return;
+    }
     setDraggingId(opportunityId);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/opportunity-id", opportunityId);
@@ -114,6 +141,9 @@ export default function PipelineModule() {
           : item
       )
     );
+    if (editingOpportunityId === opportunityId) {
+      setForm((prev) => ({ ...prev, stage: targetStage }));
+    }
 
     try {
       await updateOpportunityStage({
@@ -123,10 +153,31 @@ export default function PipelineModule() {
       });
     } catch (err) {
       setItems(previousItems);
+      if (editingOpportunityId === opportunityId) {
+        setForm((prev) => ({ ...prev, stage: currentOpportunity.stage }));
+      }
       setError(err.message);
     } finally {
       setDraggingId("");
     }
+  }
+
+  function startEditOpportunity(item) {
+    setError("");
+    setEditingOpportunityId(item.id);
+    setForm({
+      company_id: item.company_id || "",
+      title: item.title || "",
+      stage: item.stage || "lead",
+      estimated_value: String(item.estimated_value ?? ""),
+      expected_close_date: item.expected_close_date || ""
+    });
+  }
+
+  function cancelEditOpportunity() {
+    setError("");
+    setEditingOpportunityId("");
+    setForm(emptyOpportunityForm(companies[0]?.id || ""));
   }
 
   return (
@@ -173,7 +224,16 @@ export default function PipelineModule() {
             value={form.expected_close_date}
             onChange={(e) => setForm((prev) => ({ ...prev, expected_close_date: e.target.value }))}
           />
-          <button type="submit" className="btn-primary">Salvar oportunidade</button>
+          <div className="inline-actions">
+            <button type="submit" className="btn-primary">
+              {editingOpportunityId ? "Atualizar oportunidade" : "Salvar oportunidade"}
+            </button>
+            {editingOpportunityId ? (
+              <button type="button" className="btn-ghost" onClick={cancelEditOpportunity}>
+                Cancelar edição
+              </button>
+            ) : null}
+          </div>
         </form>
       </article>
 
@@ -207,6 +267,19 @@ export default function PipelineModule() {
                     <p className="pipeline-card-title">{item.title}</p>
                     <p className="pipeline-card-company">{item.companies?.trade_name || "-"}</p>
                     <p className="pipeline-card-value">{brl(item.estimated_value)}</p>
+                    <div className="pipeline-card-actions">
+                      <button
+                        type="button"
+                        className="btn-ghost btn-table-action"
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          startEditOpportunity(item);
+                        }}
+                      >
+                        {editingOpportunityId === item.id ? "Editando" : "Editar"}
+                      </button>
+                    </div>
                   </article>
                 ))}
 

@@ -794,6 +794,12 @@ tbody tr:hover {
   font-weight: 700;
 }
 
+.pipeline-card-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .pipeline-empty {
   margin: 0;
   color: var(--text-muted);
