@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CRM Comercial e Técnica</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>CRM Comercial + Técnica</h1>
+        <p>Gestão integrada de clientes, oportunidades e suporte técnico.</p>
+      </div>
+      <button id="btnExportar" class="btn btn-outline">Exportar dados</button>
+    </header>
+
+    <main class="layout">
+      <section class="card dashboard">
+        <h2>Dashboard</h2>
+        <div id="kpis" class="kpi-grid"></div>
+      </section>
+
+      <section class="card">
+        <h2>Novo Cliente</h2>
+        <form id="formCliente" class="form-grid">
+          <input name="nome" placeholder="Nome do cliente" required />
+          <input name="empresa" placeholder="Empresa" required />
+          <input name="email" type="email" placeholder="Email" required />
+          <input name="telefone" placeholder="Telefone" required />
+          <input name="latitude" type="number" step="0.000001" placeholder="Latitude (opcional)" />
+          <input name="longitude" type="number" step="0.000001" placeholder="Longitude (opcional)" />
+          <input name="raioMetros" type="number" min="20" placeholder="Raio check-in em metros (opcional)" />
+          <select name="segmento" required>
+            <option value="">Segmento</option>
+            <option>Tecnologia</option>
+            <option>Indústria</option>
+            <option>Serviços</option>
+            <option>Varejo</option>
+          </select>
+          <button type="submit" class="btn">Salvar cliente</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Nova Oportunidade Comercial</h2>
+        <form id="formOportunidade" class="form-grid">
+          <select name="clienteId" id="oportunidadeCliente" required></select>
+          <input name="titulo" placeholder="Título da oportunidade" required />
+          <input name="valor" type="number" min="0" step="0.01" placeholder="Valor (R$)" required />
+          <select name="etapa" required>
+            <option>Lead</option>
+            <option>Qualificação</option>
+            <option>Proposta</option>
+            <option>Negociação</option>
+            <option>Fechado</option>
+          </select>
+          <input name="proximoContato" type="date" required />
+          <button type="submit" class="btn">Salvar oportunidade</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Novo Chamado Técnico</h2>
+        <form id="formChamado" class="form-grid">
+          <select name="clienteId" id="chamadoCliente" required></select>
+          <input name="titulo" placeholder="Título do chamado" required />
+          <textarea name="descricao" rows="2" placeholder="Descrição técnica" required></textarea>
+          <select name="prioridade" required>
+            <option>Baixa</option>
+            <option>Média</option>
+            <option>Alta</option>
+            <option>Crítica</option>
+          </select>
+          <select name="status" required>
+            <option>Aberto</option>
+            <option>Em atendimento</option>
+            <option>Aguardando cliente</option>
+            <option>Resolvido</option>
+          </select>
+          <input name="responsavel" placeholder="Responsável técnico" required />
+          <button type="submit" class="btn">Salvar chamado</button>
+        </form>
+      </section>
+
+      <section class="card full">
+        <h2>Integração ERP Omie</h2>
+        <form id="formOmie" class="form-grid cols-4">
+          <input name="appKey" id="omieAppKey" placeholder="App Key Omie" required />
+          <input name="appSecret" id="omieAppSecret" placeholder="App Secret Omie" required />
+          <input
+            name="proxyUrl"
+            id="omieProxyUrl"
+            placeholder="URL do proxy (ex.: http://localhost:3333)"
+            required
+          />
+          <button type="submit" class="btn">Salvar integração</button>
+        </form>
+        <div class="inline-actions top-gap">
+          <button id="btnOmieSyncClientes">Sincronizar clientes</button>
+          <button id="btnOmieSyncOportunidades">Sincronizar oportunidades</button>
+          <button id="btnOmieSyncChamados">Sincronizar chamados</button>
+        </div>
+        <p id="omieStatus" class="helper-text"></p>
+      </section>
+
+      <section class="card">
+        <h2>Nova Atividade Comercial</h2>
+        <form id="formAtividade" class="form-grid">
+          <input name="titulo" placeholder="Título da atividade" required />
+          <select name="clienteId" id="atividadeCliente" required></select>
+          <select name="tipo" required>
+            <option>Ligação</option>
+            <option>Reunião</option>
+            <option>Follow-up</option>
+            <option>Demonstração</option>
+            <option>Proposta</option>
+          </select>
+          <input name="responsavel" placeholder="Responsável comercial" required />
+          <input name="dataHora" type="datetime-local" required />
+          <button type="submit" class="btn">Salvar atividade</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>SLA Técnico</h2>
+        <form id="formSla" class="form-grid">
+          <input name="baixa" type="number" min="1" placeholder="SLA Baixa (h)" required />
+          <input name="media" type="number" min="1" placeholder="SLA Média (h)" required />
+          <input name="alta" type="number" min="1" placeholder="SLA Alta (h)" required />
+          <input name="critica" type="number" min="1" placeholder="SLA Crítica (h)" required />
+          <button type="submit" class="btn">Salvar metas SLA</button>
+        </form>
+        <p id="slaResumo" class="helper-text"></p>
+      </section>
+
+      <section class="card full">
+        <h2>Check-in de Visita por Geolocalização</h2>
+        <form id="formCheckin" class="form-grid cols-4">
+          <select name="clienteId" id="checkinCliente" required></select>
+          <select name="atividadeId" id="checkinAtividade">
+            <option value="">Atividade vinculada (opcional)</option>
+          </select>
+          <input name="vendedor" placeholder="Nome do vendedor" required />
+          <input name="observacao" placeholder="Observação (opcional)" />
+          <button type="submit" class="btn">Registrar check-in no cliente</button>
+        </form>
+        <p id="checkinStatus" class="helper-text"></p>
+      </section>
+
+      <section class="card full">
+        <div class="section-title">
+          <h2>Pipeline Comercial</h2>
+          <input id="filtroEtapa" placeholder="Filtrar por etapa" />
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Título</th>
+                <th>Valor</th>
+                <th>Etapa</th>
+                <th>Próximo contato</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tabelaOportunidades"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card full">
+        <h2>Calendário de Atividades Comerciais</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Data/Hora</th>
+                <th>Cliente</th>
+                <th>Título</th>
+                <th>Tipo</th>
+                <th>Responsável</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tabelaAtividades"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card full">
+        <h2>Alertas de SLA</h2>
+        <div id="painelAlertas" class="alert-panel"></div>
+      </section>
+
+      <section class="card full">
+        <h2>Histórico de Check-ins</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Data/Hora</th>
+                <th>Cliente</th>
+                <th>Vendedor</th>
+                <th>Distância</th>
+                <th>Raio permitido</th>
+                <th>Resultado</th>
+                <th>Coordenadas</th>
+              </tr>
+            </thead>
+            <tbody id="tabelaCheckins"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card full">
+        <h2>Chamados Técnicos</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Título</th>
+                <th>Prioridade</th>
+                <th>Status</th>
+                <th>Responsável</th>
+                <th>SLA</th>
+                <th>Criado em</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tabelaChamados"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card full">
+        <h2>Clientes</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>Empresa</th>
+                <th>Email</th>
+                <th>Telefone</th>
+                <th>Segmento</th>
+                <th>Geo</th>
+              </tr>
+            </thead>
+            <tbody id="tabelaClientes"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
