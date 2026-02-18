@@ -148,7 +148,7 @@ export async function listOpportunities() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("opportunities")
-    .select("id,title,stage,status,estimated_value,expected_close_date,companies:company_id(trade_name)")
+    .select("id,title,stage,status,estimated_value,expected_close_date,created_at,companies:company_id(trade_name)")
     .order("created_at", { ascending: false })
     .limit(30);
   if (error) throw new Error(normalizeError(error, "Falha ao listar oportunidades."));
