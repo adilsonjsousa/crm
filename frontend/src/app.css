@@ -636,6 +636,69 @@ textarea {
   font-size: 0.78rem;
 }
 
+.status-select {
+  max-width: 148px;
+  margin-right: 6px;
+  margin-bottom: 4px;
+}
+
+.badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.badge-priority-low {
+  background: rgba(34, 139, 230, 0.14);
+  color: #1664b7;
+  border-color: rgba(34, 139, 230, 0.3);
+}
+
+.badge-priority-medium {
+  background: rgba(255, 167, 38, 0.16);
+  color: #a56300;
+  border-color: rgba(255, 167, 38, 0.36);
+}
+
+.badge-priority-high {
+  background: rgba(251, 140, 0, 0.15);
+  color: #924b00;
+  border-color: rgba(251, 140, 0, 0.35);
+}
+
+.badge-priority-critical {
+  background: rgba(214, 69, 69, 0.16);
+  color: #9f2929;
+  border-color: rgba(214, 69, 69, 0.35);
+}
+
+.badge-status-todo {
+  background: rgba(79, 100, 120, 0.12);
+  color: var(--text-sub);
+  border-color: var(--border-soft);
+}
+
+.badge-status-in_progress {
+  background: rgba(255, 167, 38, 0.14);
+  color: #9d5d00;
+  border-color: rgba(255, 167, 38, 0.32);
+}
+
+.badge-status-done {
+  background: rgba(11, 143, 111, 0.16);
+  color: #0f765f;
+  border-color: rgba(11, 143, 111, 0.34);
+}
+
+.badge-status-cancelled {
+  background: rgba(214, 69, 69, 0.13);
+  color: #9c3232;
+  border-color: rgba(214, 69, 69, 0.32);
+}
+
 .inline-actions {
   display: flex;
   gap: 8px;

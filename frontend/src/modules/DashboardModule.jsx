@@ -105,6 +105,7 @@ export default function DashboardModule() {
         <div className="kpi-grid">
           <KpiCard label="Empresas" value={kpis.companies} />
           <KpiCard label="Oportunidades" value={kpis.opportunities} />
+          <KpiCard label="Tarefas Abertas" value={kpis.openTasks || 0} />
           <KpiCard label="Chamados Abertos" value={kpis.openTickets} />
           <KpiCard label="Pedidos" value={kpis.orders} />
           <KpiCard label="Faturamento" value={brl(kpis.revenue)} />

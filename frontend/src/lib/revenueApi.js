@@ -94,12 +94,13 @@ function computeUpcomingBirthday(birthDate, referenceDate = new Date()) {
 export async function getDashboardKpis() {
   const supabase = ensureSupabase();
 
-  const [companiesRes, oppRes, ticketsRes, ordersRes, orderRevenueRes] = await Promise.all([
+  const [companiesRes, oppRes, ticketsRes, ordersRes, orderRevenueRes, tasksRes] = await Promise.all([
     supabase.from("companies").select("id", { count: "exact", head: true }),
     supabase.from("opportunities").select("id", { count: "exact", head: true }),
     supabase.from("service_tickets").select("id", { count: "exact", head: true }).neq("status", "closed"),
     supabase.from("sales_orders").select("id", { count: "exact", head: true }),
-    supabase.from("sales_orders").select("total_amount")
+    supabase.from("sales_orders").select("total_amount"),
+    supabase.from("tasks").select("id", { count: "exact", head: true }).in("status", ["todo", "in_progress"])
   ]);
 
   if (companiesRes.error) throw new Error(normalizeError(companiesRes.error, "Falha ao buscar empresas."));
@@ -107,6 +108,7 @@ export async function getDashboardKpis() {
   if (ticketsRes.error) throw new Error(normalizeError(ticketsRes.error, "Falha ao buscar chamados."));
   if (ordersRes.error) throw new Error(normalizeError(ordersRes.error, "Falha ao buscar pedidos."));
   if (orderRevenueRes.error) throw new Error(normalizeError(orderRevenueRes.error, "Falha ao buscar faturamento."));
+  if (tasksRes.error) throw new Error(normalizeError(tasksRes.error, "Falha ao buscar tarefas."));
 
   const revenue = (orderRevenueRes.data || []).reduce((acc, row) => acc + Number(row.total_amount || 0), 0);
 
@@ -115,6 +117,7 @@ export async function getDashboardKpis() {
     opportunities: oppRes.count || 0,
     openTickets: ticketsRes.count || 0,
     orders: ordersRes.count || 0,
+    openTasks: tasksRes.count || 0,
     revenue
   };
 }
@@ -347,6 +350,30 @@ export async function createTicket(payload) {
   if (error) throw new Error(normalizeError(error, "Falha ao criar chamado."));
 }
 
+export async function listTasks() {
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("id,company_id,title,task_type,priority,status,due_date,description,completed_at,created_at,companies:company_id(trade_name)")
+    .order("due_date", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(120);
+  if (error) throw new Error(normalizeError(error, "Falha ao listar tarefas."));
+  return data || [];
+}
+
+export async function createTask(payload) {
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("tasks").insert(payload);
+  if (error) throw new Error(normalizeError(error, "Falha ao criar tarefa."));
+}
+
+export async function updateTask(taskId, payload) {
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("tasks").update(payload).eq("id", taskId);
+  if (error) throw new Error(normalizeError(error, "Falha ao atualizar tarefa."));
+}
+
 export async function listOrders() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
@@ -396,7 +423,7 @@ export async function searchGlobalRecords(term) {
 
   const pattern = `%${normalized}%`;
 
-  const [companiesRes, contactsRes, opportunitiesRes, ordersRes, ticketsRes] = await Promise.all([
+  const [companiesRes, contactsRes, opportunitiesRes, ordersRes, ticketsRes, tasksRes] = await Promise.all([
     supabase
       .from("companies")
       .select("id,trade_name,cnpj")
@@ -421,6 +448,11 @@ export async function searchGlobalRecords(term) {
       .from("service_tickets")
       .select("id,description,status,companies:company_id(trade_name)")
       .or(`description.ilike.${pattern},status.ilike.${pattern}`)
+      .limit(5),
+    supabase
+      .from("tasks")
+      .select("id,title,status,task_type,companies:company_id(trade_name)")
+      .or(`title.ilike.${pattern},description.ilike.${pattern},status.ilike.${pattern}`)
       .limit(5)
   ]);
 
@@ -429,6 +461,7 @@ export async function searchGlobalRecords(term) {
   if (opportunitiesRes.error) throw new Error(normalizeError(opportunitiesRes.error, "Falha na busca global (pipeline)."));
   if (ordersRes.error) throw new Error(normalizeError(ordersRes.error, "Falha na busca global (pedidos)."));
   if (ticketsRes.error) throw new Error(normalizeError(ticketsRes.error, "Falha na busca global (assistência)."));
+  if (tasksRes.error) throw new Error(normalizeError(tasksRes.error, "Falha na busca global (tarefas)."));
 
   const mappedCompanies = (companiesRes.data || []).map((item) => ({
     id: `company-${item.id}`,
@@ -470,11 +503,20 @@ export async function searchGlobalRecords(term) {
     tab: "service"
   }));
 
+  const mappedTasks = (tasksRes.data || []).map((item) => ({
+    id: `task-${item.id}`,
+    type: "Tarefa",
+    title: item.title || "Tarefa",
+    subtitle: item.companies?.trade_name || "Sem empresa",
+    tab: "tasks"
+  }));
+
   return [
     ...mappedCompanies,
     ...mappedContacts,
     ...mappedOpportunities,
     ...mappedOrders,
-    ...mappedTickets
+    ...mappedTickets,
+    ...mappedTasks
   ];
 }

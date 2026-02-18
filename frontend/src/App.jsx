@@ -6,6 +6,7 @@ import CompaniesModule from "./modules/CompaniesModule";
 import PipelineModule from "./modules/PipelineModule";
 import ServiceModule from "./modules/ServiceModule";
 import OrdersModule from "./modules/OrdersModule";
+import TasksModule from "./modules/TasksModule";
 
 const THEME_STORAGE_KEY = "crm-theme";
 
@@ -14,6 +15,7 @@ const NAV_ITEMS = [
   { id: "companies", label: "Empresas", hint: "Contas e CNPJ", icon: "◎" },
   { id: "pipeline", label: "Pipeline", hint: "Negócios", icon: "◧" },
   { id: "orders", label: "Pedidos", hint: "Receita", icon: "◫" },
+  { id: "tasks", label: "Tarefas", hint: "Agenda operacional", icon: "◪" },
   { id: "service", label: "Assistência", hint: "SLA e suporte", icon: "◨" }
 ];
 
@@ -37,6 +39,11 @@ const PAGE_META = {
     kicker: "Revenue Operations",
     title: "Pedidos de Venda",
     description: "Controle pedidos de equipamentos, suprimentos e serviços com rastreabilidade comercial."
+  },
+  tasks: {
+    kicker: "Execução",
+    title: "Tarefas Comerciais e Técnicas",
+    description: "Organize atividades com prazo, prioridade e status para manter a operação previsível."
   },
   service: {
     kicker: "Pós-venda",
@@ -140,6 +147,7 @@ export default function App() {
     }
     if (activeTab === "pipeline") return <PipelineModule />;
     if (activeTab === "orders") return <OrdersModule />;
+    if (activeTab === "tasks") return <TasksModule />;
     if (activeTab === "service") return <ServiceModule />;
     return <DashboardModule />;
   }, [activeTab, companiesFocusRequest, companiesFocusTarget]);
@@ -342,6 +350,9 @@ export default function App() {
           <div className="crm-topbar-actions">
             <button type="button" className="btn-ghost" onClick={() => setActiveTab("pipeline")}>
               + Novo Negócio
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => setActiveTab("tasks")}>
+              + Nova Tarefa
             </button>
             <button type="button" className="btn-ghost" onClick={() => openCompanyQuickAction("contact")}>
               + Novo Contato
