@@ -140,8 +140,26 @@ export async function lookupCompanyDataByCnpj(cnpj) {
 
 export async function createCompany(payload) {
   const supabase = ensureSupabase();
-  const { error } = await supabase.from("companies").insert(payload);
+  const { data, error } = await supabase.from("companies").insert(payload).select("id").single();
   if (error) throw new Error(normalizeError(error, "Falha ao criar empresa."));
+  return data;
+}
+
+export async function listContacts() {
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("contacts")
+    .select("id,full_name,email,phone,whatsapp,birth_date,is_primary,companies:company_id(trade_name)")
+    .order("created_at", { ascending: false })
+    .limit(30);
+  if (error) throw new Error(normalizeError(error, "Falha ao listar contatos."));
+  return data || [];
+}
+
+export async function createContact(payload) {
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("contacts").insert(payload);
+  if (error) throw new Error(normalizeError(error, "Falha ao criar contato."));
 }
 
 export async function listOpportunities() {
