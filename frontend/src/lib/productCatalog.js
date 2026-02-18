@@ -4,14 +4,33 @@ export const SALES_TYPES = [
   { value: "service", label: "Serviços" }
 ];
 
-export const OPPORTUNITY_SUBCATEGORIES = [
+const EQUIPMENT_SUBCATEGORIES = [
   "ACABAMENTOS GRÁFICOS",
   "COMUNICAÇÃO VISUAL",
   "PRODUÇÃO COLOR",
   "PRODUÇÃO MONO",
   "OFFICE COLOR",
   "OFFICE MONO",
-  "SUBLIMAÇÃO TEXTIL"
+  "SUBLIMAÇÃO TÊXTIL"
+];
+
+const SUPPLIES_SUBCATEGORIES = [
+  "TONER",
+  "TINTAS",
+  "GRAMPOS",
+  "PEÇAS"
+];
+
+const SERVICE_SUBCATEGORIES = [
+  "CHAMADO AVULSO",
+  "CONTRATO MENSAL",
+  "CONTRATO ALL IN"
+];
+
+export const OPPORTUNITY_SUBCATEGORIES = [
+  ...EQUIPMENT_SUBCATEGORIES,
+  ...SUPPLIES_SUBCATEGORIES,
+  ...SERVICE_SUBCATEGORIES
 ];
 
 export const PRODUCT_CATALOG_ROWS = [
@@ -43,9 +62,9 @@ export const PRODUCT_CATALOG_ROWS = [
   { title: "COMUNICAÇÃO VISUAL", product: "UV Cilindrico K180 3 Ricoh G4", estimated_value: 319000 },
   { title: "COMUNICAÇÃO VISUAL", product: "UV Cilindrico K180 3 Ricoh G6", estimated_value: 349000 },
   { title: "COMUNICAÇÃO VISUAL", product: "UV Mesa K6090 3 i1600", estimated_value: 109990 },
-  { title: "SUBLIMAÇÃO TEXTIL", product: "Sublimatica K1802TX 2 i3200", estimated_value: 79990 },
-  { title: "SUBLIMAÇÃO TEXTIL", product: "Sublimatica K1804TX MAX 4 i3200", estimated_value: 149990 },
-  { title: "SUBLIMAÇÃO TEXTIL", product: "Sublimatica K2008TX PRO 8 i3200", estimated_value: 319000 },
+  { title: "SUBLIMAÇÃO TÊXTIL", product: "Sublimatica K1802TX 2 i3200", estimated_value: 79990 },
+  { title: "SUBLIMAÇÃO TÊXTIL", product: "Sublimatica K1804TX MAX 4 i3200", estimated_value: 149990 },
+  { title: "SUBLIMAÇÃO TÊXTIL", product: "Sublimatica K2008TX PRO 8 i3200", estimated_value: 319000 },
   { title: "COMUNICAÇÃO VISUAL", product: "Mesa Plana UV K1810UV 4 Ricoh G6", estimated_value: 349990 },
   { title: "COMUNICAÇÃO VISUAL", product: "Mesa Plana UV K2513UV 4 Ricoh G6", estimated_value: 369990 },
   { title: "COMUNICAÇÃO VISUAL", product: "Mesa Plana UV K2513UV 6 Ricoh G6", estimated_value: 399990 },
@@ -71,39 +90,61 @@ export const PRODUCT_CATALOG_ROWS = [
   { title: "OFFICE COLOR", product: "Canon imageRUNNER C3926 com pedestal", estimated_value: 26300 }
 ];
 
-const SUBCATEGORY_TYPE_MAP = {
-  "ACABAMENTOS GRÁFICOS": "equipment",
-  "COMUNICAÇÃO VISUAL": "equipment",
-  "PRODUÇÃO COLOR": "equipment",
-  "PRODUÇÃO MONO": "equipment",
-  "OFFICE COLOR": "equipment",
-  "OFFICE MONO": "equipment",
-  "SUBLIMAÇÃO TEXTIL": "equipment"
-};
-
-export const PRODUCTS_BY_SUBCATEGORY = PRODUCT_CATALOG_ROWS.reduce(
-  (acc, row) => {
-    if (!acc[row.title]) acc[row.title] = [];
-    if (!acc[row.title].includes(row.product)) {
-      acc[row.title].push(row.product);
-    }
-    return acc;
-  },
-  Object.fromEntries(OPPORTUNITY_SUBCATEGORIES.map((title) => [title, []]))
-);
-
-export const PRODUCT_PRICE_CATALOG = PRODUCT_CATALOG_ROWS.reduce((acc, row) => {
-  if (!acc[row.title]) acc[row.title] = {};
-  acc[row.title][row.product] = row.estimated_value;
-  return acc;
-}, {});
+const SUBCATEGORY_TYPE_MAP = Object.fromEntries([
+  ...EQUIPMENT_SUBCATEGORIES.map((subcategory) => [subcategory, "equipment"]),
+  ...SUPPLIES_SUBCATEGORIES.map((subcategory) => [subcategory, "supplies"]),
+  ...SERVICE_SUBCATEGORIES.map((subcategory) => [subcategory, "service"])
+]);
 
 function normalizeTitlePart(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
 
+function normalizeLookupKey(value) {
+  return normalizeTitlePart(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+}
+
+const SUBCATEGORY_CANONICAL_BY_KEY = (() => {
+  const map = OPPORTUNITY_SUBCATEGORIES.reduce((acc, subcategory) => {
+    acc[normalizeLookupKey(subcategory)] = subcategory;
+    return acc;
+  }, {});
+
+  // Compatibilidade com histórico salvo sem acento.
+  map[normalizeLookupKey("SUBLIMAÇÃO TEXTIL")] = "SUBLIMAÇÃO TÊXTIL";
+  return map;
+})();
+
+function canonicalizeSubcategory(value) {
+  const normalizedValue = normalizeTitlePart(value);
+  if (!normalizedValue) return "";
+  return SUBCATEGORY_CANONICAL_BY_KEY[normalizeLookupKey(normalizedValue)] || normalizedValue;
+}
+
+export const PRODUCTS_BY_SUBCATEGORY = PRODUCT_CATALOG_ROWS.reduce(
+  (acc, row) => {
+    const canonicalTitle = canonicalizeSubcategory(row.title);
+    if (!acc[canonicalTitle]) acc[canonicalTitle] = [];
+    if (!acc[canonicalTitle].includes(row.product)) {
+      acc[canonicalTitle].push(row.product);
+    }
+    return acc;
+  },
+  Object.fromEntries(OPPORTUNITY_SUBCATEGORIES.map((subcategory) => [subcategory, []]))
+);
+
+export const PRODUCT_PRICE_CATALOG = PRODUCT_CATALOG_ROWS.reduce((acc, row) => {
+  const canonicalTitle = canonicalizeSubcategory(row.title);
+  if (!acc[canonicalTitle]) acc[canonicalTitle] = {};
+  acc[canonicalTitle][row.product] = row.estimated_value;
+  return acc;
+}, {});
+
 function normalizeTypeLabel(value) {
-  return normalizeTitlePart(value).toUpperCase();
+  return normalizeLookupKey(value);
 }
 
 const TYPE_LABEL_TO_VALUE = SALES_TYPES.reduce((acc, type) => {
@@ -121,7 +162,7 @@ export function getSubcategoriesByType(typeValue) {
 }
 
 export function composeOpportunityTitle(titleSubcategory, titleProduct) {
-  const category = normalizeTitlePart(titleSubcategory);
+  const category = canonicalizeSubcategory(titleSubcategory);
   const product = normalizeTitlePart(titleProduct);
   if (!category) return "";
   if (!product) return category;
@@ -147,17 +188,22 @@ export function parseOpportunityTitle(rawTitle) {
     const parsedType = TYPE_LABEL_TO_VALUE[normalizeTypeLabel(parts[0])] || "";
     if (parsedType) {
       opportunityType = parsedType;
-      titleSubcategory = parts[1];
+      titleSubcategory = canonicalizeSubcategory(parts[1]);
       titleProduct = parts.slice(2).join(" > ");
     } else {
-      titleSubcategory = parts[0];
+      titleSubcategory = canonicalizeSubcategory(parts[0]);
       titleProduct = parts.slice(1).join(" > ");
     }
   } else if (parts.length === 2) {
-    titleSubcategory = parts[0];
+    titleSubcategory = canonicalizeSubcategory(parts[0]);
     titleProduct = parts[1];
   } else {
-    titleProduct = parts[0];
+    const maybeSubcategory = canonicalizeSubcategory(parts[0]);
+    if (SUBCATEGORY_TYPE_MAP[maybeSubcategory]) {
+      titleSubcategory = maybeSubcategory;
+    } else {
+      titleProduct = parts[0];
+    }
   }
 
   if (titleSubcategory) {
@@ -168,7 +214,7 @@ export function parseOpportunityTitle(rawTitle) {
 }
 
 export function resolveEstimatedValueByProduct(titleSubcategory, titleProduct) {
-  const category = normalizeTitlePart(titleSubcategory);
+  const category = canonicalizeSubcategory(titleSubcategory);
   const product = normalizeTitlePart(titleProduct);
   if (!category || !product) return null;
 
