@@ -354,7 +354,8 @@ export async function listTasks() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("tasks")
-    .select("id,company_id,title,task_type,priority,status,due_date,description,completed_at,created_at,companies:company_id(trade_name)")
+    .select("id,company_id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,created_at,companies:company_id(trade_name)")
+    .order("scheduled_start_at", { ascending: true, nullsFirst: false })
     .order("due_date", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: false })
     .limit(120);

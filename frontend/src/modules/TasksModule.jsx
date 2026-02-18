@@ -45,6 +45,17 @@ function formatDate(value) {
   }).format(new Date(`${value}T00:00:00`));
 }
 
+function formatDateTime(value) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
 function todayYmd() {
   const now = new Date();
   const year = now.getFullYear();
@@ -61,6 +72,22 @@ function dueLabel(dueDate) {
   return `Prazo ${formatDate(dueDate)}`;
 }
 
+function toIsoFromLocalInput(localValue) {
+  const raw = String(localValue || "").trim();
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function scheduleLabel(task) {
+  if (task.scheduled_start_at && task.scheduled_end_at) {
+    return `${formatDateTime(task.scheduled_start_at)} até ${formatDateTime(task.scheduled_end_at)}`;
+  }
+  if (task.scheduled_start_at) return `Agendado ${formatDateTime(task.scheduled_start_at)}`;
+  return dueLabel(task.due_date);
+}
+
 export default function TasksModule() {
   const [tasks, setTasks] = useState([]);
   const [companies, setCompanies] = useState([]);
@@ -75,6 +102,8 @@ export default function TasksModule() {
     task_type: "commercial",
     priority: "medium",
     status: "todo",
+    scheduled_start_local: "",
+    scheduled_end_local: "",
     due_date: "",
     description: ""
   });
@@ -111,6 +140,13 @@ export default function TasksModule() {
     return tasks.filter((item) => isOpenStatus(item.status));
   }, [onlyOpen, tasks]);
 
+  const upcomingAppointments = useMemo(() => {
+    return tasks
+      .filter((item) => isOpenStatus(item.status) && item.scheduled_start_at)
+      .sort((a, b) => new Date(a.scheduled_start_at).getTime() - new Date(b.scheduled_start_at).getTime())
+      .slice(0, 5);
+  }, [tasks]);
+
   const itemsByStatus = useMemo(() => {
     const grouped = TASK_STATUSES.reduce((acc, status) => {
       acc[status.value] = [];
@@ -130,13 +166,24 @@ export default function TasksModule() {
     setSaving(true);
     try {
       const nextStatus = form.status;
+      const scheduledStartAt = toIsoFromLocalInput(form.scheduled_start_local);
+      const scheduledEndAt = toIsoFromLocalInput(form.scheduled_end_local);
+      if (scheduledStartAt && scheduledEndAt && new Date(scheduledEndAt).getTime() < new Date(scheduledStartAt).getTime()) {
+        setError("O agendamento final não pode ser anterior ao início.");
+        setSaving(false);
+        return;
+      }
+
+      const dueDate = form.due_date || (form.scheduled_start_local ? form.scheduled_start_local.slice(0, 10) : null);
       await createTask({
         company_id: form.company_id || null,
         title: String(form.title || "").trim(),
         task_type: form.task_type,
         priority: form.priority,
         status: nextStatus,
-        due_date: form.due_date || null,
+        due_date: dueDate,
+        scheduled_start_at: scheduledStartAt,
+        scheduled_end_at: scheduledEndAt,
         description: form.description || null,
         completed_at: nextStatus === "done" ? new Date().toISOString() : null
       });
@@ -145,6 +192,8 @@ export default function TasksModule() {
         ...prev,
         title: "",
         description: "",
+        scheduled_start_local: "",
+        scheduled_end_local: "",
         due_date: "",
         status: "todo"
       }));
@@ -263,6 +312,16 @@ export default function TasksModule() {
               ))}
             </select>
             <input
+              type="datetime-local"
+              value={form.scheduled_start_local}
+              onChange={(e) => setForm((prev) => ({ ...prev, scheduled_start_local: e.target.value }))}
+            />
+            <input
+              type="datetime-local"
+              value={form.scheduled_end_local}
+              onChange={(e) => setForm((prev) => ({ ...prev, scheduled_end_local: e.target.value }))}
+            />
+            <input
               type="date"
               value={form.due_date}
               onChange={(e) => setForm((prev) => ({ ...prev, due_date: e.target.value }))}
@@ -300,6 +359,21 @@ export default function TasksModule() {
               {onlyOpen ? "Mostrar todas na lista" : "Mostrar somente abertas na lista"}
             </button>
           </div>
+          <div className="top-gap">
+            <h3>Próximos agendamentos</h3>
+            <ul className="activity-list">
+              {upcomingAppointments.map((task) => (
+                <li key={`upcoming-${task.id}`} className="activity-item">
+                  <div>
+                    <p className="activity-title">{task.title}</p>
+                    <p className="activity-meta">{task.companies?.trade_name || "SEM VÍNCULO"} · {typeLabel(task.task_type)}</p>
+                  </div>
+                  <span className="activity-date">{formatDateTime(task.scheduled_start_at)}</span>
+                </li>
+              ))}
+              {!upcomingAppointments.length ? <li className="muted">Sem agendamentos próximos.</li> : null}
+            </ul>
+          </div>
         </article>
       </div>
 
@@ -333,7 +407,7 @@ export default function TasksModule() {
                       <span className={`badge badge-priority-${task.priority}`}>{priorityLabel(task.priority)}</span>
                       <span>{typeLabel(task.task_type)}</span>
                     </div>
-                    <p className="agenda-card-due">{dueLabel(task.due_date)}</p>
+                    <p className="agenda-card-due">{scheduleLabel(task)}</p>
                   </article>
                 ))}
                 {!itemsByStatus[status.value]?.length ? <p className="pipeline-empty">Sem tarefas</p> : null}
@@ -353,6 +427,7 @@ export default function TasksModule() {
                 <th>Empresa</th>
                 <th>Tipo</th>
                 <th>Prioridade</th>
+                <th>Agendamento</th>
                 <th>Prazo</th>
                 <th>Status</th>
               </tr>
@@ -366,6 +441,7 @@ export default function TasksModule() {
                   <td>
                     <span className={`badge badge-priority-${task.priority}`}>{priorityLabel(task.priority)}</span>
                   </td>
+                  <td>{task.scheduled_start_at ? scheduleLabel(task) : "-"}</td>
                   <td>{formatDate(task.due_date)}</td>
                   <td>
                     <select
@@ -385,7 +461,7 @@ export default function TasksModule() {
               ))}
               {!listRows.length ? (
                 <tr>
-                  <td colSpan={6} className="muted">
+                  <td colSpan={7} className="muted">
                     Nenhuma tarefa encontrada.
                   </td>
                 </tr>
