@@ -12,10 +12,10 @@ const THEME_STORAGE_KEY = "crm-theme";
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", hint: "Indicadores", icon: "◩" },
+  { id: "tasks", label: "Agenda", hint: "Fluxo de tarefas", icon: "◪" },
   { id: "companies", label: "Empresas", hint: "Contas e CNPJ", icon: "◎" },
   { id: "pipeline", label: "Pipeline", hint: "Negócios", icon: "◧" },
   { id: "orders", label: "Pedidos", hint: "Receita", icon: "◫" },
-  { id: "tasks", label: "Tarefas", hint: "Agenda operacional", icon: "◪" },
   { id: "service", label: "Assistência", hint: "SLA e suporte", icon: "◨" }
 ];
 
@@ -41,9 +41,9 @@ const PAGE_META = {
     description: "Controle pedidos de equipamentos, suprimentos e serviços com rastreabilidade comercial."
   },
   tasks: {
-    kicker: "Execução",
-    title: "Tarefas Comerciais e Técnicas",
-    description: "Organize atividades com prazo, prioridade e status para manter a operação previsível."
+    kicker: "Agenda",
+    title: "Fluxo de Tarefas",
+    description: "Cadastre tarefas pelos usuários e acompanhe o fluxo por status para gestão diária."
   },
   service: {
     kicker: "Pós-venda",
