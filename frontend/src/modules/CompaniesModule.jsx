@@ -7,7 +7,8 @@ import {
   listCompanyOptions,
   listContacts,
   lookupCompanyDataByCnpj,
-  updateCompany
+  updateCompany,
+  updateContact
 } from "../lib/revenueApi";
 
 const SEGMENTOS = [
@@ -50,6 +51,14 @@ const EMPTY_EDIT_COMPANY_FORM = {
   phone: "",
   segmento: "",
   address_full: ""
+};
+
+const EMPTY_EDIT_CONTACT_FORM = {
+  company_id: "",
+  full_name: "",
+  email: "",
+  whatsapp: "",
+  birth_date: ""
 };
 
 function cleanCnpj(value) {
@@ -117,6 +126,10 @@ export default function CompaniesModule() {
   const [editForm, setEditForm] = useState(EMPTY_EDIT_COMPANY_FORM);
   const [editError, setEditError] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
+  const [editingContactId, setEditingContactId] = useState("");
+  const [editContactForm, setEditContactForm] = useState(EMPTY_EDIT_CONTACT_FORM);
+  const [editContactError, setEditContactError] = useState("");
+  const [savingContactEdit, setSavingContactEdit] = useState(false);
 
   const cnpjDigits = useMemo(() => cleanCnpj(form.cnpj), [form.cnpj]);
   const hasPrimaryContactData = useMemo(
@@ -224,10 +237,6 @@ export default function CompaniesModule() {
       setCompanies(companiesData);
       setCompanyOptions(normalizedOptions);
       setContacts(contactsData);
-
-      if (!contactForm.company_id && normalizedOptions.length) {
-        setContactForm((prev) => ({ ...prev, company_id: normalizedOptions[0].id }));
-      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -300,18 +309,13 @@ export default function CompaniesModule() {
     setError("");
 
     try {
-      if (!contactForm.company_id) {
-        setError("Selecione a empresa para vincular o contato.");
-        return;
-      }
-
       if (!String(contactForm.full_name || "").trim()) {
         setError("Informe o nome do contato.");
         return;
       }
 
       await createContact({
-        company_id: contactForm.company_id,
+        company_id: contactForm.company_id || null,
         full_name: upperLettersOnly(contactForm.full_name),
         email: contactForm.email || null,
         whatsapp: contactForm.whatsapp || null,
@@ -385,6 +389,58 @@ export default function CompaniesModule() {
       setEditError(err.message);
     } finally {
       setSavingEdit(false);
+    }
+  }
+
+  function startEditContact(contact) {
+    setEditContactError("");
+    setEditingContactId(contact.id);
+    setEditContactForm({
+      company_id: contact.company_id || "",
+      full_name: upperLettersOnly(contact.full_name || ""),
+      email: contact.email || "",
+      whatsapp: contact.whatsapp || contact.phone || "",
+      birth_date: contact.birth_date || ""
+    });
+  }
+
+  function cancelEditContact() {
+    setEditingContactId("");
+    setEditContactForm(EMPTY_EDIT_CONTACT_FORM);
+    setEditContactError("");
+    setSavingContactEdit(false);
+  }
+
+  async function handleEditContactSubmit(event) {
+    event.preventDefault();
+    setEditContactError("");
+
+    try {
+      if (!editingContactId) {
+        setEditContactError("Selecione um contato para editar.");
+        return;
+      }
+
+      if (!String(editContactForm.full_name || "").trim()) {
+        setEditContactError("Informe o nome do contato.");
+        return;
+      }
+
+      setSavingContactEdit(true);
+      await updateContact(editingContactId, {
+        company_id: editContactForm.company_id || null,
+        full_name: upperLettersOnly(editContactForm.full_name),
+        email: editContactForm.email || null,
+        whatsapp: editContactForm.whatsapp || null,
+        birth_date: editContactForm.birth_date || null
+      });
+
+      cancelEditContact();
+      await load();
+    } catch (err) {
+      setEditContactError(err.message);
+    } finally {
+      setSavingContactEdit(false);
     }
   }
 
@@ -566,14 +622,13 @@ export default function CompaniesModule() {
 
       <div className="two-col top-gap">
         <article className="panel">
-          <h2>Criar contato vinculado</h2>
+          <h2>Criar contato (com ou sem vínculo)</h2>
           <form className="form-grid" onSubmit={handleContactSubmit}>
             <select
-              required
               value={contactForm.company_id}
               onChange={(event) => setContactForm((prev) => ({ ...prev, company_id: event.target.value }))}
             >
-              <option value="">Selecione a empresa</option>
+              <option value="">Sem vínculo com empresa</option>
               {companyOptions.map((company) => (
                 <option key={company.id} value={company.id}>
                   {company.trade_name}
@@ -606,7 +661,56 @@ export default function CompaniesModule() {
         </article>
 
         <article className="panel">
-          <h3>Contatos recentes</h3>
+          <h2>Editar contato</h2>
+          {editingContactId ? (
+            <form className="form-grid" onSubmit={handleEditContactSubmit}>
+              <select
+                value={editContactForm.company_id}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, company_id: event.target.value }))}
+              >
+                <option value="">Sem vínculo com empresa</option>
+                {companyOptions.map((company) => (
+                  <option key={company.id} value={company.id}>
+                    {company.trade_name}
+                  </option>
+                ))}
+              </select>
+              <input
+                required
+                placeholder="Nome do contato"
+                value={editContactForm.full_name}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, full_name: upperLettersOnly(event.target.value) }))}
+              />
+              <input
+                placeholder="E-mail"
+                value={editContactForm.email}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, email: event.target.value }))}
+              />
+              <input
+                placeholder="WhatsApp"
+                value={editContactForm.whatsapp}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, whatsapp: event.target.value }))}
+              />
+              <input
+                type="date"
+                value={editContactForm.birth_date}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, birth_date: event.target.value }))}
+              />
+              <div className="inline-actions">
+                <button type="submit" className="btn-primary" disabled={savingContactEdit}>
+                  {savingContactEdit ? "Salvando..." : "Salvar contato"}
+                </button>
+                <button type="button" className="btn-ghost" onClick={cancelEditContact}>
+                  Cancelar edição
+                </button>
+              </div>
+              {editContactError ? <p className="error-text">{editContactError}</p> : null}
+            </form>
+          ) : (
+            <p className="muted">Clique em “Editar” em um contato para alterar ou vincular/desvincular empresa.</p>
+          )}
+
+          <h3 className="top-gap">Contatos recentes</h3>
           {loading ? <p className="muted">Carregando...</p> : null}
           <div className="table-wrap">
             <table>
@@ -617,16 +721,22 @@ export default function CompaniesModule() {
                   <th>E-mail</th>
                   <th>WhatsApp</th>
                   <th>Nascimento</th>
+                  <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {contacts.map((contact) => (
                   <tr key={contact.id}>
-                    <td>{contact.companies?.trade_name || "-"}</td>
+                    <td>{contact.companies?.trade_name || "SEM VÍNCULO"}</td>
                     <td>{contact.full_name}</td>
                     <td>{contact.email || "-"}</td>
                     <td>{contact.whatsapp || contact.phone || "-"}</td>
                     <td>{formatBirthDate(contact.birth_date)}</td>
+                    <td>
+                      <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditContact(contact)}>
+                        Editar
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

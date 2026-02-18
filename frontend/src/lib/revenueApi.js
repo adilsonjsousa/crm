@@ -155,7 +155,7 @@ export async function listContacts() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("contacts")
-    .select("id,full_name,email,phone,whatsapp,birth_date,is_primary,companies:company_id(trade_name)")
+    .select("id,company_id,full_name,email,phone,whatsapp,birth_date,is_primary,companies:company_id(trade_name)")
     .order("created_at", { ascending: false })
     .limit(30);
   if (error) throw new Error(normalizeError(error, "Falha ao listar contatos."));
@@ -166,6 +166,12 @@ export async function createContact(payload) {
   const supabase = ensureSupabase();
   const { error } = await supabase.from("contacts").insert(payload);
   if (error) throw new Error(normalizeError(error, "Falha ao criar contato."));
+}
+
+export async function updateContact(contactId, payload) {
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("contacts").update(payload).eq("id", contactId);
+  if (error) throw new Error(normalizeError(error, "Falha ao atualizar contato."));
 }
 
 export async function listOpportunities() {
