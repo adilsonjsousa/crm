@@ -8,9 +8,10 @@ import {
 } from "../lib/revenueApi";
 import { PIPELINE_STAGES, canMoveToStage, stageLabel, stageStatus } from "../lib/pipelineStages";
 import {
-  OPPORTUNITY_PRODUCTS,
-  OPPORTUNITY_TITLES,
+  PRODUCTS_BY_SUBCATEGORY,
+  SALES_TYPES,
   composeOpportunityTitle,
+  getSubcategoriesByType,
   parseOpportunityTitle,
   resolveEstimatedValueByProduct
 } from "../lib/productCatalog";
@@ -22,7 +23,8 @@ function brl(value) {
 function emptyOpportunityForm(defaultCompanyId = "") {
   return {
     company_id: defaultCompanyId,
-    title_category: "",
+    opportunity_type: "equipment",
+    title_subcategory: "",
     title_product: "",
     stage: "lead",
     estimated_value: "",
@@ -76,20 +78,25 @@ export default function PipelineModule() {
     setError("");
 
     try {
-      const titleCategory = String(form.title_category || "").trim();
+      const opportunityType = String(form.opportunity_type || "").trim();
+      const titleSubcategory = String(form.title_subcategory || "").trim();
       const titleProduct = String(form.title_product || "").trim();
-      if (!titleCategory) {
-        setError("Selecione o título da oportunidade.");
+      if (!opportunityType) {
+        setError("Selecione o tipo.");
+        return;
+      }
+      if (!titleSubcategory) {
+        setError("Selecione a sub-categoria.");
         return;
       }
       if (!titleProduct) {
-        setError("Informe o produto da oportunidade.");
+        setError("Informe o produto.");
         return;
       }
 
       const payload = {
         company_id: form.company_id,
-        title: composeOpportunityTitle(titleCategory, titleProduct),
+        title: composeOpportunityTitle(titleSubcategory, titleProduct),
         stage: form.stage,
         status: stageStatus(form.stage),
         estimated_value: Number(form.estimated_value || 0),
@@ -187,7 +194,8 @@ export default function PipelineModule() {
     setEditingOpportunityId(item.id);
     setForm({
       company_id: item.company_id || "",
-      title_category: parsedTitle.title_category,
+      opportunity_type: parsedTitle.opportunity_type || "equipment",
+      title_subcategory: parsedTitle.title_subcategory,
       title_product: parsedTitle.title_product,
       stage: item.stage || "lead",
       estimated_value: String(item.estimated_value ?? ""),
@@ -221,16 +229,43 @@ export default function PipelineModule() {
           </select>
           <select
             required
-            value={form.title_category}
-            onChange={(e) => setForm((prev) => ({ ...prev, title_category: e.target.value, title_product: "", estimated_value: "" }))}
+            value={form.opportunity_type}
+            onChange={(e) =>
+              setForm((prev) => ({
+                ...prev,
+                opportunity_type: e.target.value,
+                title_subcategory: "",
+                title_product: "",
+                estimated_value: ""
+              }))
+            }
           >
-            <option value="">Selecione o título da oportunidade</option>
-            {OPPORTUNITY_TITLES.map((title) => (
-              <option key={title} value={title}>
-                {title}
+            <option value="">Selecione o tipo</option>
+            {SALES_TYPES.map((type) => (
+              <option key={type.value} value={type.value}>
+                {type.label}
               </option>
             ))}
           </select>
+          <input
+            required
+            list="pipeline-subcategory-options"
+            placeholder="Sub-categoria"
+            value={form.title_subcategory}
+            onChange={(e) =>
+              setForm((prev) => ({
+                ...prev,
+                title_subcategory: e.target.value,
+                title_product: "",
+                estimated_value: ""
+              }))
+            }
+          />
+          <datalist id="pipeline-subcategory-options">
+            {getSubcategoriesByType(form.opportunity_type).map((subcategory) => (
+              <option key={subcategory} value={subcategory} />
+            ))}
+          </datalist>
           <input
             required
             list="pipeline-product-options"
@@ -239,7 +274,7 @@ export default function PipelineModule() {
             onChange={(e) =>
               setForm((prev) => {
                 const nextProduct = e.target.value;
-                const mappedEstimatedValue = resolveEstimatedValueByProduct(prev.title_category, nextProduct);
+                const mappedEstimatedValue = resolveEstimatedValueByProduct(prev.title_subcategory, nextProduct);
                 return {
                   ...prev,
                   title_product: nextProduct,
@@ -247,10 +282,10 @@ export default function PipelineModule() {
                 };
               })
             }
-            disabled={!form.title_category}
+            disabled={!form.title_subcategory}
           />
           <datalist id="pipeline-product-options">
-            {(OPPORTUNITY_PRODUCTS[form.title_category] || []).map((product) => (
+            {(PRODUCTS_BY_SUBCATEGORY[form.title_subcategory] || []).map((product) => (
               <option key={product} value={product} />
             ))}
           </datalist>

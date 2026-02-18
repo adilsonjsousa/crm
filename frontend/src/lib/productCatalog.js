@@ -1,4 +1,10 @@
-export const OPPORTUNITY_TITLES = [
+export const SALES_TYPES = [
+  { value: "equipment", label: "Equipamentos" },
+  { value: "supplies", label: "Suprimentos" },
+  { value: "service", label: "Serviços" }
+];
+
+export const OPPORTUNITY_SUBCATEGORIES = [
   "ACABAMENTOS GRÁFICOS",
   "COMUNICAÇÃO VISUAL",
   "PRODUÇÃO COLOR",
@@ -65,7 +71,17 @@ export const PRODUCT_CATALOG_ROWS = [
   { title: "OFFICE COLOR", product: "Canon imageRUNNER C3926 com pedestal", estimated_value: 26300 }
 ];
 
-export const OPPORTUNITY_PRODUCTS = PRODUCT_CATALOG_ROWS.reduce(
+const SUBCATEGORY_TYPE_MAP = {
+  "ACABAMENTOS GRÁFICOS": "equipment",
+  "COMUNICAÇÃO VISUAL": "equipment",
+  "PRODUÇÃO COLOR": "equipment",
+  "PRODUÇÃO MONO": "equipment",
+  "OFFICE COLOR": "equipment",
+  "OFFICE MONO": "equipment",
+  "SUBLIMAÇÃO TEXTIL": "equipment"
+};
+
+export const PRODUCTS_BY_SUBCATEGORY = PRODUCT_CATALOG_ROWS.reduce(
   (acc, row) => {
     if (!acc[row.title]) acc[row.title] = [];
     if (!acc[row.title].includes(row.product)) {
@@ -73,7 +89,7 @@ export const OPPORTUNITY_PRODUCTS = PRODUCT_CATALOG_ROWS.reduce(
     }
     return acc;
   },
-  Object.fromEntries(OPPORTUNITY_TITLES.map((title) => [title, []]))
+  Object.fromEntries(OPPORTUNITY_SUBCATEGORIES.map((title) => [title, []]))
 );
 
 export const PRODUCT_PRICE_CATALOG = PRODUCT_CATALOG_ROWS.reduce((acc, row) => {
@@ -86,8 +102,26 @@ function normalizeTitlePart(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
 
-export function composeOpportunityTitle(titleCategory, titleProduct) {
-  const category = normalizeTitlePart(titleCategory);
+function normalizeTypeLabel(value) {
+  return normalizeTitlePart(value).toUpperCase();
+}
+
+const TYPE_LABEL_TO_VALUE = SALES_TYPES.reduce((acc, type) => {
+  acc[normalizeTypeLabel(type.label)] = type.value;
+  acc[normalizeTypeLabel(type.value)] = type.value;
+  return acc;
+}, {});
+
+export function getSubcategoriesByType(typeValue) {
+  const requestedType = normalizeTitlePart(typeValue).toLowerCase();
+  return OPPORTUNITY_SUBCATEGORIES.filter((subcategory) => {
+    const categoryType = SUBCATEGORY_TYPE_MAP[subcategory] || "equipment";
+    return categoryType === requestedType;
+  });
+}
+
+export function composeOpportunityTitle(titleSubcategory, titleProduct) {
+  const category = normalizeTitlePart(titleSubcategory);
   const product = normalizeTitlePart(titleProduct);
   if (!category) return "";
   if (!product) return category;
@@ -97,22 +131,44 @@ export function composeOpportunityTitle(titleCategory, titleProduct) {
 export function parseOpportunityTitle(rawTitle) {
   const normalized = normalizeTitlePart(rawTitle);
   if (!normalized) {
-    return { title_category: "", title_product: "" };
+    return { opportunity_type: "equipment", title_subcategory: "", title_product: "" };
   }
 
-  const parts = normalized.split(">");
-  const category = normalizeTitlePart(parts.shift());
-  const product = normalizeTitlePart(parts.join(">"));
+  const parts = normalized
+    .split(">")
+    .map((part) => normalizeTitlePart(part))
+    .filter(Boolean);
 
-  if (OPPORTUNITY_TITLES.includes(category)) {
-    return { title_category: category, title_product: product };
+  let opportunityType = "equipment";
+  let titleSubcategory = "";
+  let titleProduct = "";
+
+  if (parts.length >= 3) {
+    const parsedType = TYPE_LABEL_TO_VALUE[normalizeTypeLabel(parts[0])] || "";
+    if (parsedType) {
+      opportunityType = parsedType;
+      titleSubcategory = parts[1];
+      titleProduct = parts.slice(2).join(" > ");
+    } else {
+      titleSubcategory = parts[0];
+      titleProduct = parts.slice(1).join(" > ");
+    }
+  } else if (parts.length === 2) {
+    titleSubcategory = parts[0];
+    titleProduct = parts[1];
+  } else {
+    titleProduct = parts[0];
   }
 
-  return { title_category: "", title_product: normalized };
+  if (titleSubcategory) {
+    opportunityType = SUBCATEGORY_TYPE_MAP[titleSubcategory] || opportunityType;
+  }
+
+  return { opportunity_type: opportunityType, title_subcategory: titleSubcategory, title_product: titleProduct };
 }
 
-export function resolveEstimatedValueByProduct(titleCategory, titleProduct) {
-  const category = normalizeTitlePart(titleCategory);
+export function resolveEstimatedValueByProduct(titleSubcategory, titleProduct) {
+  const category = normalizeTitlePart(titleSubcategory);
   const product = normalizeTitlePart(titleProduct);
   if (!category || !product) return null;
 

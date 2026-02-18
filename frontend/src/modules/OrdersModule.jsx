@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { createOrder, listCompanyOptions, listOrders } from "../lib/revenueApi";
-import { OPPORTUNITY_PRODUCTS, OPPORTUNITY_TITLES, resolveEstimatedValueByProduct } from "../lib/productCatalog";
-
-const ORDER_TYPES = [
-  { value: "equipment", label: "Equipamento" },
-  { value: "supplies", label: "Suprimentos" },
-  { value: "service", label: "Serviço" }
-];
+import {
+  PRODUCTS_BY_SUBCATEGORY,
+  SALES_TYPES,
+  getSubcategoriesByType,
+  resolveEstimatedValueByProduct
+} from "../lib/productCatalog";
 
 function brl(value) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
+}
+
+function orderTypeLabel(value) {
+  return SALES_TYPES.find((item) => item.value === value)?.label || value;
 }
 
 export default function OrdersModule() {
@@ -21,7 +24,7 @@ export default function OrdersModule() {
     order_number: "",
     order_type: "equipment",
     status: "pending",
-    title_category: "",
+    title_subcategory: "",
     title_product: "",
     total_amount: "",
     order_date: ""
@@ -50,8 +53,12 @@ export default function OrdersModule() {
     setError("");
 
     try {
-      if (!String(form.title_category || "").trim()) {
-        setError("Selecione o título da oportunidade.");
+      if (!String(form.order_type || "").trim()) {
+        setError("Selecione o tipo.");
+        return;
+      }
+      if (!String(form.title_subcategory || "").trim()) {
+        setError("Selecione a sub-categoria.");
         return;
       }
       if (!String(form.title_product || "").trim()) {
@@ -59,9 +66,9 @@ export default function OrdersModule() {
         return;
       }
 
-      const fallbackPrice = resolveEstimatedValueByProduct(form.title_category, form.title_product);
+      const fallbackPrice = resolveEstimatedValueByProduct(form.title_subcategory, form.title_product);
       const totalAmount = Number(form.total_amount || fallbackPrice || 0);
-      const itemDescription = `${form.title_category} > ${form.title_product}`;
+      const itemDescription = `${form.title_subcategory} > ${form.title_product}`;
 
       await createOrder({
         company_id: form.company_id,
@@ -82,7 +89,7 @@ export default function OrdersModule() {
       setForm((prev) => ({
         ...prev,
         order_number: "",
-        title_category: "",
+        title_subcategory: "",
         title_product: "",
         total_amount: "",
         order_date: ""
@@ -116,27 +123,38 @@ export default function OrdersModule() {
             value={form.order_number}
             onChange={(e) => setForm((prev) => ({ ...prev, order_number: e.target.value }))}
           />
-          <select value={form.order_type} onChange={(e) => setForm((prev) => ({ ...prev, order_type: e.target.value }))}>
-            {ORDER_TYPES.map((type) => (
+          <select
+            value={form.order_type}
+            onChange={(e) =>
+              setForm((prev) => ({
+                ...prev,
+                order_type: e.target.value,
+                title_subcategory: "",
+                title_product: "",
+                total_amount: ""
+              }))
+            }
+          >
+            {SALES_TYPES.map((type) => (
               <option key={type.value} value={type.value}>
                 {type.label}
               </option>
             ))}
           </select>
-          <select
+          <input
             required
-            value={form.title_category}
+            list="orders-subcategory-options"
+            placeholder="Sub-categoria"
+            value={form.title_subcategory}
             onChange={(e) =>
-              setForm((prev) => ({ ...prev, title_category: e.target.value, title_product: "", total_amount: "" }))
+              setForm((prev) => ({ ...prev, title_subcategory: e.target.value, title_product: "", total_amount: "" }))
             }
-          >
-            <option value="">Título da oportunidade</option>
-            {OPPORTUNITY_TITLES.map((title) => (
-              <option key={title} value={title}>
-                {title}
-              </option>
+          />
+          <datalist id="orders-subcategory-options">
+            {getSubcategoriesByType(form.order_type).map((subcategory) => (
+              <option key={subcategory} value={subcategory} />
             ))}
-          </select>
+          </datalist>
           <input
             required
             list="orders-product-options"
@@ -145,7 +163,7 @@ export default function OrdersModule() {
             onChange={(e) =>
               setForm((prev) => {
                 const nextProduct = e.target.value;
-                const mappedPrice = resolveEstimatedValueByProduct(prev.title_category, nextProduct);
+                const mappedPrice = resolveEstimatedValueByProduct(prev.title_subcategory, nextProduct);
                 return {
                   ...prev,
                   title_product: nextProduct,
@@ -153,10 +171,10 @@ export default function OrdersModule() {
                 };
               })
             }
-            disabled={!form.title_category}
+            disabled={!form.title_subcategory}
           />
           <datalist id="orders-product-options">
-            {(OPPORTUNITY_PRODUCTS[form.title_category] || []).map((product) => (
+            {(PRODUCTS_BY_SUBCATEGORY[form.title_subcategory] || []).map((product) => (
               <option key={product} value={product} />
             ))}
           </datalist>
@@ -197,7 +215,7 @@ export default function OrdersModule() {
                 <tr key={order.id}>
                   <td>{order.order_number}</td>
                   <td>{order.companies?.trade_name || "-"}</td>
-                  <td>{order.order_type}</td>
+                  <td>{orderTypeLabel(order.order_type)}</td>
                   <td>{(order.items || []).map((item) => item.item_description).join(", ") || "-"}</td>
                   <td>{brl(order.total_amount)}</td>
                 </tr>
