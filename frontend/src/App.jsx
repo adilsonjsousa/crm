@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { isSupabaseConfigured } from "./lib/supabase";
-import { searchGlobalRecords } from "./lib/revenueApi";
+import { listUpcomingBirthdays, searchGlobalRecords } from "./lib/revenueApi";
 import DashboardModule from "./modules/DashboardModule";
 import CompaniesModule from "./modules/CompaniesModule";
 import PipelineModule from "./modules/PipelineModule";
@@ -57,6 +57,8 @@ export default function App() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [birthdayAlerts, setBirthdayAlerts] = useState([]);
+  const [birthdayError, setBirthdayError] = useState("");
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") return "light";
     const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -68,6 +70,39 @@ export default function App() {
     document.documentElement.setAttribute("data-theme", theme);
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadBirthdayAlerts() {
+      if (!isSupabaseConfigured) {
+        if (active) {
+          setBirthdayAlerts([]);
+          setBirthdayError("");
+        }
+        return;
+      }
+
+      try {
+        const alerts = await listUpcomingBirthdays(7);
+        if (!active) return;
+        setBirthdayAlerts(alerts);
+        setBirthdayError("");
+      } catch (err) {
+        if (!active) return;
+        setBirthdayAlerts([]);
+        setBirthdayError(err.message);
+      }
+    }
+
+    loadBirthdayAlerts();
+    const refreshTimer = window.setInterval(loadBirthdayAlerts, 10 * 60 * 1000);
+
+    return () => {
+      active = false;
+      window.clearInterval(refreshTimer);
+    };
+  }, []);
 
   const activeModule = useMemo(() => {
     if (activeTab === "companies") {
@@ -91,6 +126,21 @@ export default function App() {
       }).format(new Date()),
     []
   );
+  const birthdaySummary = useMemo(() => {
+    const todayCount = birthdayAlerts.filter((item) => item.days_until === 0).length;
+    return {
+      total: birthdayAlerts.length,
+      todayCount
+    };
+  }, [birthdayAlerts]);
+
+  function formatBirthdayShort(dateValue) {
+    if (!dateValue) return "--/--";
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit"
+    }).format(new Date(`${dateValue}T00:00:00`));
+  }
 
   async function runGlobalSearch() {
     const term = globalSearch.trim();
@@ -276,6 +326,44 @@ export default function App() {
         {!isSupabaseConfigured ? (
           <section className="warning-box">
             <strong>Configuração pendente:</strong> defina `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` no arquivo `.env`.
+          </section>
+        ) : null}
+
+        {isSupabaseConfigured && (birthdaySummary.total > 0 || birthdayError) ? (
+          <section className="birthday-alert-box">
+            <div className="birthday-alert-header">
+              <strong>🎉 Alertas de aniversário</strong>
+              <button type="button" className="btn-ghost btn-table-action" onClick={() => openCompanyQuickAction("contact")}>
+                Ver contatos
+              </button>
+            </div>
+
+            {birthdayError ? <p className="error-text">{birthdayError}</p> : null}
+
+            {!birthdayError ? (
+              <p className="birthday-alert-summary">
+                {birthdaySummary.todayCount
+                  ? `${birthdaySummary.todayCount} contato(s) fazem aniversário hoje`
+                  : `Próximos aniversários (${birthdaySummary.total})`}
+              </p>
+            ) : null}
+
+            {!birthdayError && birthdayAlerts.length ? (
+              <ul className="birthday-alert-list">
+                {birthdayAlerts.slice(0, 6).map((item) => (
+                  <li key={item.id} className="birthday-alert-item">
+                    <div>
+                      <p className="birthday-alert-name">{item.full_name}</p>
+                      <p className="birthday-alert-company">{item.company_name}</p>
+                    </div>
+                    <span className="birthday-alert-date">
+                      {item.days_until === 0 ? "Hoje" : `Em ${item.days_until} dia(s) · ${formatBirthdayShort(item.next_birthday)}`}
+                      {item.age_turning ? ` · ${item.age_turning} anos` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </section>
         ) : null}
 

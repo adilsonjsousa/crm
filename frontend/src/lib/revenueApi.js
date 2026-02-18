@@ -44,6 +44,53 @@ function normalizeSearchTerm(term) {
     .slice(0, 80);
 }
 
+function normalizeDateOnly(value) {
+  const date = value instanceof Date ? new Date(value) : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function parseBirthDate(value) {
+  const [yearRaw, monthRaw, dayRaw] = String(value || "").split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  if (!Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { year, month, day };
+}
+
+function buildBirthdayDate(year, month, day) {
+  const candidate = new Date(year, month - 1, day);
+  // Ex.: 29/02 em ano não bissexto. Normaliza para último dia do mês.
+  if (candidate.getMonth() !== month - 1 || candidate.getDate() !== day) {
+    return new Date(year, month, 0);
+  }
+  return candidate;
+}
+
+function computeUpcomingBirthday(birthDate, referenceDate = new Date()) {
+  const parts = parseBirthDate(birthDate);
+  const today = normalizeDateOnly(referenceDate);
+  if (!parts || !today) return null;
+
+  let nextBirthday = buildBirthdayDate(today.getFullYear(), parts.month, parts.day);
+  if (nextBirthday < today) {
+    nextBirthday = buildBirthdayDate(today.getFullYear() + 1, parts.month, parts.day);
+  }
+
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const daysUntil = Math.round((nextBirthday.getTime() - today.getTime()) / msPerDay);
+  const ageTurning = Number.isInteger(parts.year) && parts.year > 1900 ? nextBirthday.getFullYear() - parts.year : null;
+
+  return {
+    daysUntil,
+    nextBirthday,
+    ageTurning
+  };
+}
+
 export async function getDashboardKpis() {
   const supabase = ensureSupabase();
 
@@ -168,6 +215,44 @@ export async function listContacts() {
     .limit(30);
   if (error) throw new Error(normalizeError(error, "Falha ao listar contatos."));
   return data || [];
+}
+
+export async function listUpcomingBirthdays(daysAhead = 7) {
+  const supabase = ensureSupabase();
+  const horizon = Number(daysAhead);
+  const safeDaysAhead = Number.isFinite(horizon) ? Math.max(0, Math.min(60, Math.floor(horizon))) : 7;
+
+  const { data, error } = await supabase
+    .from("contacts")
+    .select("id,full_name,birth_date,companies:company_id(trade_name)")
+    .not("birth_date", "is", null)
+    .limit(500);
+
+  if (error) throw new Error(normalizeError(error, "Falha ao buscar alertas de aniversário."));
+
+  const upcoming = (data || [])
+    .map((contact) => {
+      const computed = computeUpcomingBirthday(contact.birth_date);
+      if (!computed) return null;
+      if (computed.daysUntil < 0 || computed.daysUntil > safeDaysAhead) return null;
+
+      return {
+        id: contact.id,
+        full_name: contact.full_name || "Contato",
+        company_name: contact.companies?.trade_name || "SEM VÍNCULO",
+        birth_date: contact.birth_date,
+        days_until: computed.daysUntil,
+        next_birthday: computed.nextBirthday.toISOString().slice(0, 10),
+        age_turning: computed.ageTurning
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.days_until !== b.days_until) return a.days_until - b.days_until;
+      return String(a.full_name).localeCompare(String(b.full_name), "pt-BR");
+    });
+
+  return upcoming;
 }
 
 export async function createContact(payload) {
