@@ -374,6 +374,99 @@ textarea {
   border-radius: 12px;
 }
 
+.pipeline-board {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(220px, 1fr));
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.pipeline-column {
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--surface-3);
+  min-height: 210px;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.pipeline-column.is-over {
+  border-color: var(--border-strong);
+  background: linear-gradient(170deg, rgba(127, 192, 255, 0.2), var(--surface-3));
+}
+
+.pipeline-column-header {
+  padding: 10px;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pipeline-column-header span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.pipeline-column-header strong {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.pipeline-column-body {
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-height: 160px;
+}
+
+.pipeline-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-2);
+  padding: 9px;
+  cursor: grab;
+  box-shadow: 0 6px 14px rgba(40, 73, 126, 0.12);
+}
+
+.pipeline-card:active {
+  cursor: grabbing;
+}
+
+.pipeline-card.is-dragging {
+  opacity: 0.55;
+}
+
+.pipeline-card-title {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.pipeline-card-company {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.pipeline-card-value {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: var(--accent-1);
+  font-weight: 700;
+}
+
+.pipeline-empty {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -470,6 +563,10 @@ tbody tr:hover {
 
   .two-col {
     grid-template-columns: 1fr;
+  }
+
+  .pipeline-board {
+    grid-template-columns: repeat(6, minmax(190px, 1fr));
   }
 }
 

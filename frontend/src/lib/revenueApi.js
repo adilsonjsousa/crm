@@ -1,4 +1,5 @@
 import { ensureSupabase } from "./supabase";
+import { PIPELINE_STAGES, sortByStageOrder, stageStatus } from "./pipelineStages";
 
 function normalizeError(error, fallback) {
   return error?.message || fallback;
@@ -67,8 +68,7 @@ export async function getPipelineByStage() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("opportunities")
-    .select("stage, estimated_value")
-    .neq("status", "lost");
+    .select("stage, estimated_value");
 
   if (error) throw new Error(normalizeError(error, "Falha ao buscar funil."));
 
@@ -80,7 +80,14 @@ export async function getPipelineByStage() {
     return acc;
   }, {});
 
-  return Object.values(grouped);
+  const rows = PIPELINE_STAGES.map((stage) => ({
+    stage: stage.value,
+    stageLabel: stage.label,
+    totalDeals: grouped[stage.value]?.totalDeals || 0,
+    totalValue: grouped[stage.value]?.totalValue || 0
+  }));
+
+  return sortByStageOrder(rows);
 }
 
 export async function listCompanies() {
@@ -152,6 +159,29 @@ export async function createOpportunity(payload) {
   const supabase = ensureSupabase();
   const { error } = await supabase.from("opportunities").insert(payload);
   if (error) throw new Error(normalizeError(error, "Falha ao criar oportunidade."));
+}
+
+export async function updateOpportunityStage({ opportunityId, fromStage, toStage }) {
+  const supabase = ensureSupabase();
+  const { error: updateError } = await supabase
+    .from("opportunities")
+    .update({
+      stage: toStage,
+      status: stageStatus(toStage)
+    })
+    .eq("id", opportunityId);
+
+  if (updateError) throw new Error(normalizeError(updateError, "Falha ao atualizar etapa da oportunidade."));
+
+  const { error: historyError } = await supabase.from("opportunity_stage_history").insert({
+    opportunity_id: opportunityId,
+    from_stage: fromStage,
+    to_stage: toStage
+  });
+
+  if (historyError) {
+    console.warn("Falha ao registrar histórico de etapa:", historyError.message);
+  }
 }
 
 export async function listTickets() {

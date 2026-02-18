@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import KpiCard from "../components/KpiCard";
 import { getDashboardKpis, getPipelineByStage } from "../lib/revenueApi";
+import { stageLabel } from "../lib/pipelineStages";
 
 function brl(value) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
@@ -64,7 +65,7 @@ export default function DashboardModule() {
           <tbody>
             {pipeline.map((row) => (
               <tr key={row.stage}>
-                <td>{row.stage}</td>
+                <td>{row.stageLabel || stageLabel(row.stage)}</td>
                 <td>{row.totalDeals}</td>
                 <td>{brl(row.totalValue)}</td>
               </tr>
