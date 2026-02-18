@@ -18,7 +18,7 @@ const OPPORTUNITY_TITLES = [
   "SUBLIMAÇÃO TEXTIL"
 ];
 
-const OPPORTUNITY_SUBCATEGORIES = {
+const OPPORTUNITY_PRODUCTS = {
   "ACABAMENTOS GRÁFICOS": [
     "Plotter de Recorte T-24 (60cms)",
     "Plotter de Recorte T-48 (120cms)",
@@ -47,6 +47,15 @@ const OPPORTUNITY_SUBCATEGORIES = {
   "SUBLIMAÇÃO TEXTIL": ["EPSON SURECOLOR F9470", "MIMAKI TS100-1600", "CALANDRA TÊXTIL 1.8M"]
 };
 
+// Catalogo de preco por produto. Pode ser preenchido com os valores da planilha.
+// Exemplo de formato: { "PRODUÇÃO COLOR": { "CANON imagePRESS V700": 125000 } }
+const PRODUCT_PRICE_CATALOG = Object.fromEntries(
+  Object.entries(OPPORTUNITY_PRODUCTS).map(([title, products]) => [
+    title,
+    Object.fromEntries(products.map((product) => [product, null]))
+  ])
+);
+
 function brl(value) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
 }
@@ -55,36 +64,49 @@ function normalizeTitlePart(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
 
-function composeOpportunityTitle(titleCategory, titleSubcategory) {
+function composeOpportunityTitle(titleCategory, titleProduct) {
   const category = normalizeTitlePart(titleCategory);
-  const subcategory = normalizeTitlePart(titleSubcategory);
+  const product = normalizeTitlePart(titleProduct);
   if (!category) return "";
-  if (!subcategory) return category;
-  return `${category} > ${subcategory}`;
+  if (!product) return category;
+  return `${category} > ${product}`;
 }
 
 function parseOpportunityTitle(rawTitle) {
   const normalized = normalizeTitlePart(rawTitle);
   if (!normalized) {
-    return { title_category: "", title_subcategory: "" };
+    return { title_category: "", title_product: "" };
   }
 
   const parts = normalized.split(">");
   const category = normalizeTitlePart(parts.shift());
-  const subcategory = normalizeTitlePart(parts.join(">"));
+  const product = normalizeTitlePart(parts.join(">"));
 
   if (OPPORTUNITY_TITLES.includes(category)) {
-    return { title_category: category, title_subcategory: subcategory };
+    return { title_category: category, title_product: product };
   }
 
-  return { title_category: "", title_subcategory: normalized };
+  return { title_category: "", title_product: normalized };
+}
+
+function resolveEstimatedValueByProduct(titleCategory, titleProduct) {
+  const category = normalizeTitlePart(titleCategory);
+  const product = normalizeTitlePart(titleProduct);
+  if (!category || !product) return null;
+
+  const rawValue = PRODUCT_PRICE_CATALOG?.[category]?.[product];
+  if (rawValue === null || rawValue === undefined || rawValue === "") return null;
+
+  const numericValue = Number(rawValue);
+  if (!Number.isFinite(numericValue)) return null;
+  return numericValue;
 }
 
 function emptyOpportunityForm(defaultCompanyId = "") {
   return {
     company_id: defaultCompanyId,
     title_category: "",
-    title_subcategory: "",
+    title_product: "",
     stage: "lead",
     estimated_value: "",
     expected_close_date: ""
@@ -138,19 +160,19 @@ export default function PipelineModule() {
 
     try {
       const titleCategory = normalizeTitlePart(form.title_category);
-      const titleSubcategory = normalizeTitlePart(form.title_subcategory);
+      const titleProduct = normalizeTitlePart(form.title_product);
       if (!titleCategory) {
         setError("Selecione o título da oportunidade.");
         return;
       }
-      if (!titleSubcategory) {
-        setError("Informe a sub-categoria da oportunidade.");
+      if (!titleProduct) {
+        setError("Informe o produto da oportunidade.");
         return;
       }
 
       const payload = {
         company_id: form.company_id,
-        title: composeOpportunityTitle(titleCategory, titleSubcategory),
+        title: composeOpportunityTitle(titleCategory, titleProduct),
         stage: form.stage,
         status: stageStatus(form.stage),
         estimated_value: Number(form.estimated_value || 0),
@@ -249,7 +271,7 @@ export default function PipelineModule() {
     setForm({
       company_id: item.company_id || "",
       title_category: parsedTitle.title_category,
-      title_subcategory: parsedTitle.title_subcategory,
+      title_product: parsedTitle.title_product,
       stage: item.stage || "lead",
       estimated_value: String(item.estimated_value ?? ""),
       expected_close_date: item.expected_close_date || ""
@@ -283,9 +305,7 @@ export default function PipelineModule() {
           <select
             required
             value={form.title_category}
-            onChange={(e) =>
-              setForm((prev) => ({ ...prev, title_category: e.target.value, title_subcategory: "" }))
-            }
+            onChange={(e) => setForm((prev) => ({ ...prev, title_category: e.target.value, title_product: "", estimated_value: "" }))}
           >
             <option value="">Selecione o título da oportunidade</option>
             {OPPORTUNITY_TITLES.map((title) => (
@@ -296,15 +316,25 @@ export default function PipelineModule() {
           </select>
           <input
             required
-            list="pipeline-subcategory-options"
-            placeholder="Sub-categoria (ex.: CANON imagePRESS V700)"
-            value={form.title_subcategory}
-            onChange={(e) => setForm((prev) => ({ ...prev, title_subcategory: e.target.value }))}
+            list="pipeline-product-options"
+            placeholder="Produto (ex.: CANON imagePRESS V700)"
+            value={form.title_product}
+            onChange={(e) =>
+              setForm((prev) => {
+                const nextProduct = e.target.value;
+                const mappedEstimatedValue = resolveEstimatedValueByProduct(prev.title_category, nextProduct);
+                return {
+                  ...prev,
+                  title_product: nextProduct,
+                  estimated_value: mappedEstimatedValue === null ? "" : String(mappedEstimatedValue)
+                };
+              })
+            }
             disabled={!form.title_category}
           />
-          <datalist id="pipeline-subcategory-options">
-            {(OPPORTUNITY_SUBCATEGORIES[form.title_category] || []).map((subcategory) => (
-              <option key={subcategory} value={subcategory} />
+          <datalist id="pipeline-product-options">
+            {(OPPORTUNITY_PRODUCTS[form.title_category] || []).map((product) => (
+              <option key={product} value={product} />
             ))}
           </datalist>
           <input
