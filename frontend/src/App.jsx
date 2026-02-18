@@ -52,6 +52,9 @@ export default function App() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [searchExecuted, setSearchExecuted] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [searchSuggestions, setSearchSuggestions] = useState([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") return "light";
     const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -122,6 +125,47 @@ export default function App() {
     setActiveTab(tab);
   }
 
+  function selectSuggestion(item) {
+    setSearchFocused(false);
+    setActiveTab(item.tab);
+    setSearchExecuted(true);
+    setSearchError("");
+    setSearchLoading(false);
+    setSearchResults([item]);
+  }
+
+  useEffect(() => {
+    let active = true;
+    const term = globalSearch.trim();
+
+    if (!isSupabaseConfigured || term.length < 2) {
+      setSearchSuggestions([]);
+      setSuggestionsLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setSuggestionsLoading(true);
+        const data = await searchGlobalRecords(term);
+        if (!active) return;
+        setSearchSuggestions(data.slice(0, 8));
+      } catch (_err) {
+        if (!active) return;
+        setSearchSuggestions([]);
+      } finally {
+        if (active) setSuggestionsLoading(false);
+      }
+    }, 260);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [globalSearch]);
+
   return (
     <div className="crm-layout">
       <aside className="crm-sidebar">
@@ -169,12 +213,41 @@ export default function App() {
               <input
                 value={globalSearch}
                 onChange={(event) => setGlobalSearch(event.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => {
+                  window.setTimeout(() => setSearchFocused(false), 120);
+                }}
                 placeholder="Pesquisar empresas, contatos, negócios, pedidos e chamados..."
               />
               <button type="submit" className="crm-search-btn" aria-label="Pesquisar">
                 🔍
               </button>
             </div>
+
+            {searchFocused && globalSearch.trim().length >= 2 ? (
+              <div className="search-suggestions">
+                {suggestionsLoading ? <p className="muted">Buscando sugestões...</p> : null}
+                {!suggestionsLoading && !searchSuggestions.length ? <p className="muted">Sem sugestões.</p> : null}
+                {!suggestionsLoading && searchSuggestions.length ? (
+                  <ul className="search-suggestions-list">
+                    {searchSuggestions.map((item) => (
+                      <li key={`suggestion-${item.type}-${item.id}`}>
+                        <button
+                          type="button"
+                          className="search-suggestion-btn"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => selectSuggestion(item)}
+                        >
+                          <span className="search-result-type">{item.type}</span>
+                          <strong>{item.title}</strong>
+                          <span>{item.subtitle}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
           </form>
           <div className="crm-topbar-actions">
             <button type="button" className="btn-ghost" onClick={() => setActiveTab("pipeline")}>
@@ -210,7 +283,7 @@ export default function App() {
             {!searchLoading && !searchError && searchResults.length ? (
               <ul className="search-results-list">
                 {searchResults.map((item) => (
-                  <li key={item.id}>
+                  <li key={`${item.type}-${item.id}`}>
                     <button type="button" className="search-result-btn" onClick={() => openSearchResult(item.tab)}>
                       <span className="search-result-type">{item.type}</span>
                       <strong>{item.title}</strong>
