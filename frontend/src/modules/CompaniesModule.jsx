@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { createCompany, listCompanies } from "../lib/revenueApi";
+import { useEffect, useMemo, useState } from "react";
+import { createCompany, findCompanyByCnpj, listCompanies } from "../lib/revenueApi";
 
 const SEGMENTOS = [
   "Tecnologia",
@@ -24,10 +24,33 @@ function maskCnpj(value) {
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
 }
 
+function isValidCnpj(value) {
+  const cnpj = cleanCnpj(value);
+  if (!/^\d{14}$/.test(cnpj)) return false;
+  if (/^(\d)\1{13}$/.test(cnpj)) return false;
+
+  function calcDigit(base, factor) {
+    let total = 0;
+    for (let i = 0; i < base.length; i += 1) {
+      total += Number(base[i]) * factor;
+      factor -= 1;
+      if (factor < 2) factor = 9;
+    }
+    const remainder = total % 11;
+    return remainder < 2 ? 0 : 11 - remainder;
+  }
+
+  const base12 = cnpj.slice(0, 12);
+  const digit1 = calcDigit(base12, 5);
+  const digit2 = calcDigit(`${base12}${digit1}`, 6);
+  return cnpj === `${base12}${digit1}${digit2}`;
+}
+
 export default function CompaniesModule() {
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [cnpjValidation, setCnpjValidation] = useState({ type: "idle", message: "" });
   const [form, setForm] = useState({
     cnpj: "",
     trade_name: "",
@@ -37,6 +60,59 @@ export default function CompaniesModule() {
     segmento: "",
     address_full: ""
   });
+
+  const cnpjDigits = useMemo(() => cleanCnpj(form.cnpj), [form.cnpj]);
+  const isCheckingCnpj = cnpjValidation.type === "checking";
+  const isCnpjBlocked = cnpjValidation.type === "invalid" || cnpjValidation.type === "duplicate";
+
+  useEffect(() => {
+    let active = true;
+
+    if (!cnpjDigits) {
+      setCnpjValidation({ type: "idle", message: "" });
+      return () => {
+        active = false;
+      };
+    }
+
+    if (cnpjDigits.length < 14) {
+      setCnpjValidation({ type: "idle", message: "Digite os 14 dígitos do CNPJ." });
+      return () => {
+        active = false;
+      };
+    }
+
+    if (!isValidCnpj(cnpjDigits)) {
+      setCnpjValidation({ type: "invalid", message: "CNPJ inválido (dígitos verificadores não conferem)." });
+      return () => {
+        active = false;
+      };
+    }
+
+    const timer = setTimeout(async () => {
+      setCnpjValidation({ type: "checking", message: "Validando CNPJ na base..." });
+      try {
+        const existing = await findCompanyByCnpj(cnpjDigits);
+        if (!active) return;
+        if (existing) {
+          setCnpjValidation({
+            type: "duplicate",
+            message: `CNPJ já cadastrado para "${existing.trade_name}".`
+          });
+          return;
+        }
+        setCnpjValidation({ type: "valid", message: "CNPJ válido e disponível." });
+      } catch (err) {
+        if (!active) return;
+        setCnpjValidation({ type: "invalid", message: err.message });
+      }
+    }, 350);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [cnpjDigits]);
 
   async function load() {
     setLoading(true);
@@ -58,10 +134,26 @@ export default function CompaniesModule() {
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
+    const normalizedCnpj = cleanCnpj(form.cnpj);
 
     try {
+      if (!isValidCnpj(normalizedCnpj)) {
+        setError("CNPJ inválido. Verifique o número informado.");
+        return;
+      }
+
+      const existing = await findCompanyByCnpj(normalizedCnpj);
+      if (existing) {
+        setError(`Este CNPJ já está cadastrado para "${existing.trade_name}".`);
+        setCnpjValidation({
+          type: "duplicate",
+          message: `CNPJ já cadastrado para "${existing.trade_name}".`
+        });
+        return;
+      }
+
       await createCompany({
-        cnpj: cleanCnpj(form.cnpj),
+        cnpj: normalizedCnpj,
         trade_name: form.trade_name,
         legal_name: form.legal_name,
         email: form.email || null,
@@ -70,6 +162,7 @@ export default function CompaniesModule() {
         address_full: form.address_full || null
       });
       setForm({ cnpj: "", trade_name: "", legal_name: "", email: "", phone: "", segmento: "", address_full: "" });
+      setCnpjValidation({ type: "idle", message: "" });
       await load();
     } catch (err) {
       setError(err.message);
@@ -87,6 +180,9 @@ export default function CompaniesModule() {
             value={form.cnpj}
             onChange={(e) => setForm((prev) => ({ ...prev, cnpj: maskCnpj(e.target.value) }))}
           />
+          {cnpjValidation.message ? (
+            <p className={`cnpj-status cnpj-status-${cnpjValidation.type}`}>{cnpjValidation.message}</p>
+          ) : null}
           <input
             required
             placeholder="Nome Fantasia"
@@ -125,7 +221,9 @@ export default function CompaniesModule() {
             value={form.address_full}
             onChange={(e) => setForm((prev) => ({ ...prev, address_full: e.target.value }))}
           />
-          <button type="submit" className="btn-primary">Salvar empresa</button>
+          <button type="submit" className="btn-primary" disabled={isCheckingCnpj || isCnpjBlocked}>
+            {isCheckingCnpj ? "Validando CNPJ..." : "Salvar empresa"}
+          </button>
         </form>
         {error ? <p className="error-text">{error}</p> : null}
       </article>

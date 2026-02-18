@@ -59,6 +59,18 @@ export async function listCompanies() {
   return data || [];
 }
 
+export async function findCompanyByCnpj(cnpj) {
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("companies")
+    .select("id,trade_name,cnpj")
+    .eq("cnpj", cnpj)
+    .maybeSingle();
+
+  if (error) throw new Error(normalizeError(error, "Falha ao validar CNPJ na base."));
+  return data;
+}
+
 export async function createCompany(payload) {
   const supabase = ensureSupabase();
   const { error } = await supabase.from("companies").insert(payload);

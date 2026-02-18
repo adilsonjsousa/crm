@@ -29,6 +29,7 @@
   --brand-3: #2d66da;
 
   --accent-1: #2269bf;
+  --success: #1f8b4d;
   --danger: #d9495a;
   --warning-border: rgba(215, 158, 33, 0.38);
   --warning-bg: rgba(255, 239, 199, 0.82);
@@ -71,6 +72,7 @@
   --brand-3: #2a6be4;
 
   --accent-1: #a3e7ff;
+  --success: #4fd48f;
   --danger: #ff6b7c;
   --warning-border: rgba(255, 196, 80, 0.35);
   --warning-bg: rgba(117, 80, 18, 0.16);
@@ -319,6 +321,14 @@ textarea {
   transform: translateY(0);
 }
 
+.btn-primary:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  filter: grayscale(0.08);
+  box-shadow: none;
+  transform: none;
+}
+
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -392,6 +402,25 @@ tbody tr:hover {
 .error-text {
   color: var(--danger);
   margin-top: 8px;
+}
+
+.cnpj-status {
+  margin: -2px 0 2px;
+  font-size: 0.84rem;
+}
+
+.cnpj-status-idle,
+.cnpj-status-checking {
+  color: var(--text-muted);
+}
+
+.cnpj-status-valid {
+  color: var(--success);
+}
+
+.cnpj-status-invalid,
+.cnpj-status-duplicate {
+  color: var(--danger);
 }
 
 .muted {
