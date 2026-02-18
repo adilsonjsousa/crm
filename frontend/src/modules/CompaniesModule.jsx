@@ -6,7 +6,8 @@ import {
   listCompanies,
   listCompanyOptions,
   listContacts,
-  lookupCompanyDataByCnpj
+  lookupCompanyDataByCnpj,
+  updateCompany
 } from "../lib/revenueApi";
 
 const SEGMENTOS = [
@@ -39,6 +40,16 @@ const EMPTY_CONTACT_FORM = {
   email: "",
   whatsapp: "",
   birth_date: ""
+};
+
+const EMPTY_EDIT_COMPANY_FORM = {
+  cnpj: "",
+  trade_name: "",
+  legal_name: "",
+  email: "",
+  phone: "",
+  segmento: "",
+  address_full: ""
 };
 
 function cleanCnpj(value) {
@@ -94,6 +105,10 @@ export default function CompaniesModule() {
   const [cnpjValidation, setCnpjValidation] = useState({ type: "idle", message: "" });
   const [form, setForm] = useState(EMPTY_COMPANY_FORM);
   const [contactForm, setContactForm] = useState(EMPTY_CONTACT_FORM);
+  const [editingCompanyId, setEditingCompanyId] = useState("");
+  const [editForm, setEditForm] = useState(EMPTY_EDIT_COMPANY_FORM);
+  const [editError, setEditError] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const cnpjDigits = useMemo(() => cleanCnpj(form.cnpj), [form.cnpj]);
   const hasPrimaryContactData = useMemo(
@@ -302,6 +317,69 @@ export default function CompaniesModule() {
     }
   }
 
+  function startEditCompany(company) {
+    setEditError("");
+    setEditingCompanyId(company.id);
+    setEditForm({
+      cnpj: maskCnpj(company.cnpj),
+      trade_name: company.trade_name || "",
+      legal_name: company.legal_name || "",
+      email: company.email || "",
+      phone: company.phone || "",
+      segmento: company.segmento || "",
+      address_full: company.address_full || ""
+    });
+  }
+
+  function cancelEditCompany() {
+    setEditingCompanyId("");
+    setEditForm(EMPTY_EDIT_COMPANY_FORM);
+    setEditError("");
+    setSavingEdit(false);
+  }
+
+  async function handleEditCompanySubmit(event) {
+    event.preventDefault();
+    setEditError("");
+    const normalizedCnpj = cleanCnpj(editForm.cnpj);
+
+    try {
+      if (!editingCompanyId) {
+        setEditError("Selecione uma empresa para editar.");
+        return;
+      }
+
+      if (!isValidCnpj(normalizedCnpj)) {
+        setEditError("CNPJ inválido. Verifique o número informado.");
+        return;
+      }
+
+      const existing = await findCompanyByCnpj(normalizedCnpj);
+      if (existing && existing.id !== editingCompanyId) {
+        setEditError(`Este CNPJ já está cadastrado para "${existing.trade_name}".`);
+        return;
+      }
+
+      setSavingEdit(true);
+      await updateCompany(editingCompanyId, {
+        cnpj: normalizedCnpj,
+        trade_name: editForm.trade_name,
+        legal_name: editForm.legal_name,
+        email: editForm.email || null,
+        phone: editForm.phone || null,
+        segmento: editForm.segmento || null,
+        address_full: editForm.address_full || null
+      });
+
+      cancelEditCompany();
+      await load();
+    } catch (err) {
+      setEditError(err.message);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
   return (
     <section className="module">
       {error ? <p className="error-text">{error}</p> : null}
@@ -384,6 +462,69 @@ export default function CompaniesModule() {
         </article>
 
         <article className="panel">
+          <h2>Editar empresa cadastrada</h2>
+          {editingCompanyId ? (
+            <form className="form-grid" onSubmit={handleEditCompanySubmit}>
+              <input
+                required
+                placeholder="CNPJ"
+                value={editForm.cnpj}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, cnpj: maskCnpj(event.target.value) }))}
+              />
+              <input
+                required
+                placeholder="Nome Fantasia"
+                value={editForm.trade_name}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, trade_name: event.target.value }))}
+              />
+              <input
+                required
+                placeholder="Razão Social"
+                value={editForm.legal_name}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, legal_name: event.target.value }))}
+              />
+              <input
+                placeholder="E-mail"
+                value={editForm.email}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, email: event.target.value }))}
+              />
+              <input
+                placeholder="Telefone"
+                value={editForm.phone}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, phone: event.target.value }))}
+              />
+              <select
+                value={editForm.segmento}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, segmento: event.target.value }))}
+              >
+                <option value="">Segmento</option>
+                {SEGMENTOS.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+              <textarea
+                placeholder="Endereço completo"
+                value={editForm.address_full}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, address_full: event.target.value }))}
+              />
+              <div className="inline-actions">
+                <button type="submit" className="btn-primary" disabled={savingEdit}>
+                  {savingEdit ? "Salvando..." : "Salvar alterações"}
+                </button>
+                <button type="button" className="btn-ghost" onClick={cancelEditCompany}>
+                  Cancelar edição
+                </button>
+              </div>
+              {editError ? <p className="error-text">{editError}</p> : null}
+            </form>
+          ) : (
+            <p className="muted">Clique em “Editar” na lista para alterar os dados de uma empresa.</p>
+          )}
+        </article>
+
+        <article className="panel">
           <h3>Últimas empresas</h3>
           {loading ? <p className="muted">Carregando...</p> : null}
           <div className="table-wrap">
@@ -393,6 +534,7 @@ export default function CompaniesModule() {
                   <th>Nome Fantasia</th>
                   <th>CNPJ</th>
                   <th>Segmento</th>
+                  <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -401,6 +543,11 @@ export default function CompaniesModule() {
                     <td>{company.trade_name}</td>
                     <td>{maskCnpj(company.cnpj)}</td>
                     <td>{company.segmento || "-"}</td>
+                    <td>
+                      <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditCompany(company)}>
+                        Editar
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

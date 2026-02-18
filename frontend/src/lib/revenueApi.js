@@ -145,6 +145,12 @@ export async function createCompany(payload) {
   return data;
 }
 
+export async function updateCompany(companyId, payload) {
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("companies").update(payload).eq("id", companyId);
+  if (error) throw new Error(normalizeError(error, "Falha ao atualizar empresa."));
+}
+
 export async function listContacts() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase

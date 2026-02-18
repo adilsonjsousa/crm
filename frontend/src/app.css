@@ -421,6 +421,17 @@ textarea {
   font-weight: 700;
 }
 
+.btn-table-action {
+  padding: 6px 10px;
+  font-size: 0.78rem;
+}
+
+.inline-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .theme-toggle {
   width: 100%;
   border: 1px solid var(--border-soft);
