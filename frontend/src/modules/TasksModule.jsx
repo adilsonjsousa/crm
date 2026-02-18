@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { createTask, listCompanyOptions, listTasks, updateTask } from "../lib/revenueApi";
+import { createTask, listCompanyOptions, listTasks, logTaskFlowComment, updateTask } from "../lib/revenueApi";
 
-const TASK_TYPES = [
-  { value: "commercial", label: "Comercial" },
-  { value: "technical", label: "Técnica" }
+const ACTIVITY_OPTIONS = [
+  "Visita",
+  "Contato Telefonico",
+  "Envio de Proposta"
 ];
 
 const TASK_PRIORITIES = [
@@ -22,10 +23,6 @@ const TASK_STATUSES = [
 
 function statusLabel(value) {
   return TASK_STATUSES.find((item) => item.value === value)?.label || value;
-}
-
-function typeLabel(value) {
-  return TASK_TYPES.find((item) => item.value === value)?.label || value;
 }
 
 function priorityLabel(value) {
@@ -98,8 +95,7 @@ export default function TasksModule() {
   const [dragOverStatus, setDragOverStatus] = useState("");
   const [form, setForm] = useState({
     company_id: "",
-    title: "",
-    task_type: "commercial",
+    activity: "Visita",
     priority: "medium",
     status: "todo",
     scheduled_start_local: "",
@@ -163,6 +159,23 @@ export default function TasksModule() {
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
+    const activity = String(form.activity || "").trim();
+    const description = String(form.description || "").trim();
+    const dueDate = String(form.due_date || "").trim();
+
+    if (!activity) {
+      setError("Selecione a atividade.");
+      return;
+    }
+    if (!dueDate) {
+      setError("Informe a data limite.");
+      return;
+    }
+    if (!description) {
+      setError("Descrição é obrigatória.");
+      return;
+    }
+
     setSaving(true);
     try {
       const nextStatus = form.status;
@@ -174,23 +187,22 @@ export default function TasksModule() {
         return;
       }
 
-      const dueDate = form.due_date || (form.scheduled_start_local ? form.scheduled_start_local.slice(0, 10) : null);
       await createTask({
         company_id: form.company_id || null,
-        title: String(form.title || "").trim(),
-        task_type: form.task_type,
+        title: activity,
+        task_type: "commercial",
         priority: form.priority,
         status: nextStatus,
         due_date: dueDate,
         scheduled_start_at: scheduledStartAt,
         scheduled_end_at: scheduledEndAt,
-        description: form.description || null,
+        description,
         completed_at: nextStatus === "done" ? new Date().toISOString() : null
       });
 
       setForm((prev) => ({
         ...prev,
-        title: "",
+        activity: "Visita",
         description: "",
         scheduled_start_local: "",
         scheduled_end_local: "",
@@ -205,8 +217,23 @@ export default function TasksModule() {
     }
   }
 
+  function requestFlowComment(task, nextStatus) {
+    const fromLabel = statusLabel(task.status);
+    const toLabel = statusLabel(nextStatus);
+    const typedComment = window.prompt(`Comentário obrigatório para mover "${task.title}" de ${fromLabel} para ${toLabel}:`);
+    if (typedComment === null) return null;
+    return String(typedComment || "").trim();
+  }
+
   async function handleStatusChange(task, nextStatus) {
     if (!task || task.status === nextStatus) return;
+
+    const flowComment = requestFlowComment(task, nextStatus);
+    if (flowComment === null) return;
+    if (!flowComment) {
+      setError("Comentário obrigatório para mudar o fluxo da agenda.");
+      return;
+    }
 
     const previousStatus = task.status;
     const previousCompletedAt = task.completed_at || null;
@@ -224,6 +251,12 @@ export default function TasksModule() {
       await updateTask(task.id, {
         status: nextStatus,
         completed_at: nextCompletedAt
+      });
+      await logTaskFlowComment({
+        taskId: task.id,
+        fromStatus: previousStatus,
+        toStatus: nextStatus,
+        comment: flowComment
       });
     } catch (err) {
       setTasks((prev) =>
@@ -284,16 +317,14 @@ export default function TasksModule() {
                 </option>
               ))}
             </select>
-            <input
+            <select
               required
-              placeholder="Título da tarefa"
-              value={form.title}
-              onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
-            />
-            <select value={form.task_type} onChange={(e) => setForm((prev) => ({ ...prev, task_type: e.target.value }))}>
-              {TASK_TYPES.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
+              value={form.activity}
+              onChange={(e) => setForm((prev) => ({ ...prev, activity: e.target.value }))}
+            >
+              {ACTIVITY_OPTIONS.map((activity) => (
+                <option key={activity} value={activity}>
+                  {activity}
                 </option>
               ))}
             </select>
@@ -323,11 +354,13 @@ export default function TasksModule() {
             />
             <input
               type="date"
+              required
               value={form.due_date}
               onChange={(e) => setForm((prev) => ({ ...prev, due_date: e.target.value }))}
             />
             <textarea
-              placeholder="Descrição"
+              required
+              placeholder="Descrição (obrigatória)"
               value={form.description}
               onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
             />
@@ -366,7 +399,7 @@ export default function TasksModule() {
                 <li key={`upcoming-${task.id}`} className="activity-item">
                   <div>
                     <p className="activity-title">{task.title}</p>
-                    <p className="activity-meta">{task.companies?.trade_name || "SEM VÍNCULO"} · {typeLabel(task.task_type)}</p>
+                    <p className="activity-meta">{task.companies?.trade_name || "SEM VÍNCULO"}</p>
                   </div>
                   <span className="activity-date">{formatDateTime(task.scheduled_start_at)}</span>
                 </li>
@@ -405,7 +438,6 @@ export default function TasksModule() {
                     <p className="agenda-card-company">{task.companies?.trade_name || "SEM VÍNCULO"}</p>
                     <div className="agenda-card-meta">
                       <span className={`badge badge-priority-${task.priority}`}>{priorityLabel(task.priority)}</span>
-                      <span>{typeLabel(task.task_type)}</span>
                     </div>
                     <p className="agenda-card-due">{scheduleLabel(task)}</p>
                   </article>
@@ -423,12 +455,11 @@ export default function TasksModule() {
           <table>
             <thead>
               <tr>
-                <th>Tarefa</th>
+                <th>Atividade</th>
                 <th>Empresa</th>
-                <th>Tipo</th>
                 <th>Prioridade</th>
                 <th>Agendamento</th>
-                <th>Prazo</th>
+                <th>Data limite</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -437,7 +468,6 @@ export default function TasksModule() {
                 <tr key={task.id}>
                   <td>{task.title}</td>
                   <td>{task.companies?.trade_name || "-"}</td>
-                  <td>{typeLabel(task.task_type)}</td>
                   <td>
                     <span className={`badge badge-priority-${task.priority}`}>{priorityLabel(task.priority)}</span>
                   </td>
@@ -461,7 +491,7 @@ export default function TasksModule() {
               ))}
               {!listRows.length ? (
                 <tr>
-                  <td colSpan={7} className="muted">
+                  <td colSpan={6} className="muted">
                     Nenhuma tarefa encontrada.
                   </td>
                 </tr>

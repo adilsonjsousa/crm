@@ -375,6 +375,27 @@ export async function updateTask(taskId, payload) {
   if (error) throw new Error(normalizeError(error, "Falha ao atualizar tarefa."));
 }
 
+export async function logTaskFlowComment({ taskId, fromStatus, toStatus, comment }) {
+  const supabase = ensureSupabase();
+  const normalizedComment = String(comment || "").trim();
+  if (!taskId || !normalizedComment) {
+    throw new Error("Comentário obrigatório para registrar mudança de fluxo.");
+  }
+
+  const { error } = await supabase.from("event_log").insert({
+    entity_type: "task",
+    entity_id: taskId,
+    event_name: "task_flow_status_changed",
+    payload: {
+      from_status: fromStatus || null,
+      to_status: toStatus || null,
+      comment: normalizedComment
+    }
+  });
+
+  if (error) throw new Error(normalizeError(error, "Falha ao registrar comentário da mudança de fluxo."));
+}
+
 export async function listOrders() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
