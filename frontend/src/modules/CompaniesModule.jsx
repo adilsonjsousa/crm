@@ -1,16 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  createCompanyInteraction,
   createCompany,
   createContact,
   findCompanyByCnpj,
   listCompanies,
+  listCompanyContacts,
   listCompanyHistory,
+  listCompanyInteractions,
+  listCompanyOpportunities,
+  listCompanyOpportunityStageHistory,
   listCompanyOptions,
+  listCompanyTasks,
   listContacts,
   lookupCompanyDataByCnpj,
   updateCompany,
   updateContact
 } from "../lib/revenueApi";
+import { stageLabel } from "../lib/pipelineStages";
 
 const SEGMENTOS = [
   "Tecnologia",
@@ -61,6 +68,40 @@ const EMPTY_EDIT_CONTACT_FORM = {
   whatsapp: "",
   birth_date: ""
 };
+
+const CUSTOMER_TABS = [
+  { id: "history", label: "Histórico" },
+  { id: "opportunities", label: "Propostas" },
+  { id: "tasks", label: "Agenda" },
+  { id: "interactions", label: "Interações" }
+];
+
+function localDateTimeNow() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hour = String(now.getHours()).padStart(2, "0");
+  const minute = String(now.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function emptyInteractionForm() {
+  return {
+    contact_id: "",
+    interaction_type: "whatsapp",
+    direction: "outbound",
+    subject: "",
+    content: "",
+    whatsapp_number: "",
+    phone_number: "",
+    occurred_at_local: localDateTimeNow(),
+    provider: "",
+    provider_conversation_id: "",
+    provider_call_id: "",
+    recording_url: ""
+  };
+}
 
 function cleanCnpj(value) {
   return String(value || "").replace(/\D/g, "");
@@ -117,6 +158,15 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function formatDate(value) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  }).format(new Date(`${value}T00:00:00`));
+}
+
 function taskStatusLabel(value) {
   const map = {
     todo: "A Fazer",
@@ -125,6 +175,45 @@ function taskStatusLabel(value) {
     cancelled: "Cancelada"
   };
   return map[value] || String(value || "-");
+}
+
+function opportunityStatusLabel(value) {
+  const map = {
+    open: "Aberta",
+    won: "Ganha",
+    lost: "Perdida",
+    on_hold: "Em espera"
+  };
+  return map[value] || String(value || "-");
+}
+
+function interactionTypeLabel(value) {
+  const map = {
+    whatsapp: "WhatsApp",
+    call: "Chamada",
+    note: "Anotação"
+  };
+  return map[value] || String(value || "-");
+}
+
+function directionLabel(value) {
+  const map = {
+    inbound: "Entrada",
+    outbound: "Saída"
+  };
+  return map[value] || "-";
+}
+
+function normalizePhoneDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function toIsoFromLocalInput(localValue) {
+  const raw = String(localValue || "").trim();
+  if (!raw) return new Date().toISOString();
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString();
+  return parsed.toISOString();
 }
 
 function upperLettersOnly(value) {
@@ -152,8 +241,18 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
   const [editContactForm, setEditContactForm] = useState(EMPTY_EDIT_CONTACT_FORM);
   const [editContactError, setEditContactError] = useState("");
   const [savingContactEdit, setSavingContactEdit] = useState(false);
-  const [historyRows, setHistoryRows] = useState([]);
-  const [historyCompanyId, setHistoryCompanyId] = useState("");
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [selectedCustomerTab, setSelectedCustomerTab] = useState("history");
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [customerError, setCustomerError] = useState("");
+  const [customerHistoryRows, setCustomerHistoryRows] = useState([]);
+  const [customerOpportunities, setCustomerOpportunities] = useState([]);
+  const [customerOpportunityStageRows, setCustomerOpportunityStageRows] = useState([]);
+  const [customerTasks, setCustomerTasks] = useState([]);
+  const [customerContacts, setCustomerContacts] = useState([]);
+  const [customerInteractions, setCustomerInteractions] = useState([]);
+  const [interactionForm, setInteractionForm] = useState(() => emptyInteractionForm());
+  const [savingInteraction, setSavingInteraction] = useState(false);
   const companyPanelRef = useRef(null);
   const contactPanelRef = useRef(null);
 
@@ -177,6 +276,62 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
     }
     return map;
   }, [companies, companyOptions]);
+  const selectedCompany = useMemo(() => {
+    return companies.find((item) => item.id === selectedCompanyId) || companyOptions.find((item) => item.id === selectedCompanyId) || null;
+  }, [companies, companyOptions, selectedCompanyId]);
+  const interactionWhatsDigits = useMemo(
+    () => normalizePhoneDigits(interactionForm.whatsapp_number || interactionForm.phone_number),
+    [interactionForm.phone_number, interactionForm.whatsapp_number]
+  );
+  const interactionPhoneDigits = useMemo(
+    () => normalizePhoneDigits(interactionForm.phone_number || interactionForm.whatsapp_number),
+    [interactionForm.phone_number, interactionForm.whatsapp_number]
+  );
+  const interactionWhatsappHref = interactionWhatsDigits ? `https://wa.me/${interactionWhatsDigits}` : "";
+  const interactionPhoneHref = interactionPhoneDigits ? `tel:${interactionPhoneDigits}` : "";
+  const timelineRows = useMemo(() => {
+    const eventRows = customerHistoryRows.map((row) => {
+      const payload = row.payload || {};
+      if (row.event_name === "task_flow_status_changed") {
+        return {
+          id: `event-${row.id}`,
+          happened_at: row.happened_at,
+          type: "agenda",
+          title: payload.task_title || "Atividade",
+          details: `${taskStatusLabel(payload.from_status)} -> ${taskStatusLabel(payload.to_status)}`,
+          note: payload.comment || "-"
+        };
+      }
+      return {
+        id: `event-${row.id}`,
+        happened_at: row.happened_at,
+        type: "evento",
+        title: row.event_name,
+        details: "-",
+        note: payload.comment || JSON.stringify(payload || {})
+      };
+    });
+
+    const stageRows = customerOpportunityStageRows.map((row) => ({
+      id: `stage-${row.id}`,
+      happened_at: row.changed_at,
+      type: "pipeline",
+      title: row.opportunities?.title || "Proposta",
+      details: `${stageLabel(row.from_stage) || "-"} -> ${stageLabel(row.to_stage) || "-"}`,
+      note: "Mudança de etapa da proposta"
+    }));
+
+    const interactionRows = customerInteractions.map((row) => ({
+      id: `interaction-${row.id}`,
+      happened_at: row.occurred_at || row.created_at,
+      type: interactionTypeLabel(row.interaction_type),
+      title: row.subject || interactionTypeLabel(row.interaction_type),
+      details: `${directionLabel(row.direction)} · ${row.contacts?.full_name || "Sem contato definido"}`,
+      note: row.content || "-"
+    }));
+
+    return [...eventRows, ...stageRows, ...interactionRows].sort((a, b) => new Date(b.happened_at).getTime() - new Date(a.happened_at).getTime());
+  }, [customerHistoryRows, customerInteractions, customerOpportunityStageRows]);
 
   useEffect(() => {
     let active = true;
@@ -265,7 +420,6 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         listCompanyOptions(),
         listContacts()
       ]);
-      const historyData = await listCompanyHistory({ companyId: historyCompanyId, limit: 120 });
 
       const normalizedOptions = optionsData.length
         ? optionsData
@@ -274,7 +428,6 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       setCompanies(companiesData);
       setCompanyOptions(normalizedOptions);
       setContacts(contactsData);
-      setHistoryRows(historyData);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -284,7 +437,48 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
 
   useEffect(() => {
     load();
-  }, [historyCompanyId]);
+  }, []);
+
+  async function loadCustomerWorkspace(companyId) {
+    if (!companyId) {
+      setCustomerHistoryRows([]);
+      setCustomerOpportunities([]);
+      setCustomerOpportunityStageRows([]);
+      setCustomerTasks([]);
+      setCustomerContacts([]);
+      setCustomerInteractions([]);
+      setCustomerError("");
+      return;
+    }
+
+    setCustomerLoading(true);
+    setCustomerError("");
+    try {
+      const [historyData, opportunityData, opportunityStageData, taskData, contactData, interactionData] = await Promise.all([
+        listCompanyHistory({ companyId, limit: 220 }),
+        listCompanyOpportunities(companyId),
+        listCompanyOpportunityStageHistory(companyId),
+        listCompanyTasks(companyId),
+        listCompanyContacts(companyId),
+        listCompanyInteractions(companyId)
+      ]);
+
+      setCustomerHistoryRows(historyData);
+      setCustomerOpportunities(opportunityData);
+      setCustomerOpportunityStageRows(opportunityStageData);
+      setCustomerTasks(taskData);
+      setCustomerContacts(contactData);
+      setCustomerInteractions(interactionData);
+    } catch (err) {
+      setCustomerError(err.message);
+    } finally {
+      setCustomerLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadCustomerWorkspace(selectedCompanyId);
+  }, [selectedCompanyId]);
 
   useEffect(() => {
     if (!focusRequest) return;
@@ -349,6 +543,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       setCnpjValidation({ type: "idle", message: "" });
       setContactForm((prev) => ({ ...prev, company_id: createdCompany.id, full_name: "", email: "", whatsapp: "", birth_date: "" }));
       await load();
+      setSelectedCompanyId(createdCompany.id);
     } catch (err) {
       setError(err.message);
     }
@@ -374,6 +569,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
 
       setContactForm((prev) => ({ ...prev, full_name: "", email: "", whatsapp: "", birth_date: "" }));
       await load();
+      if (selectedCompanyId) await loadCustomerWorkspace(selectedCompanyId);
     } catch (err) {
       setError(err.message);
     }
@@ -435,6 +631,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
 
       cancelEditCompany();
       await load();
+      if (selectedCompanyId) await loadCustomerWorkspace(selectedCompanyId);
     } catch (err) {
       setEditError(err.message);
     } finally {
@@ -487,10 +684,81 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
 
       cancelEditContact();
       await load();
+      if (selectedCompanyId) await loadCustomerWorkspace(selectedCompanyId);
     } catch (err) {
       setEditContactError(err.message);
     } finally {
       setSavingContactEdit(false);
+    }
+  }
+
+  function openCustomerWorkspace(company) {
+    if (!company?.id) return;
+    setSelectedCompanyId(company.id);
+    setSelectedCustomerTab("history");
+    setInteractionForm(emptyInteractionForm());
+  }
+
+  function handleInteractionContactChange(contactId) {
+    const contact = customerContacts.find((item) => item.id === contactId);
+    setInteractionForm((prev) => ({
+      ...prev,
+      contact_id: contactId,
+      whatsapp_number: contact?.whatsapp || prev.whatsapp_number,
+      phone_number: contact?.phone || prev.phone_number
+    }));
+  }
+
+  async function handleInteractionSubmit(event) {
+    event.preventDefault();
+    if (!selectedCompanyId) {
+      setCustomerError("Selecione um cliente para registrar interações.");
+      return;
+    }
+
+    const content = String(interactionForm.content || "").trim();
+    if (!content) {
+      setCustomerError("Descreva a conversa/interação com o cliente.");
+      return;
+    }
+
+    const whatsappNumber = String(interactionForm.whatsapp_number || "").trim();
+    const phoneNumber = String(interactionForm.phone_number || "").trim();
+    if (interactionForm.interaction_type === "whatsapp" && !whatsappNumber && !phoneNumber) {
+      setCustomerError("Informe o WhatsApp envolvido na conversa.");
+      return;
+    }
+    if (interactionForm.interaction_type === "call" && !phoneNumber && !whatsappNumber) {
+      setCustomerError("Informe o telefone/WhatsApp da chamada.");
+      return;
+    }
+
+    setSavingInteraction(true);
+    setCustomerError("");
+    try {
+      await createCompanyInteraction({
+        company_id: selectedCompanyId,
+        contact_id: interactionForm.contact_id || null,
+        interaction_type: interactionForm.interaction_type,
+        direction: interactionForm.direction,
+        subject: interactionForm.subject || null,
+        content,
+        whatsapp_number: whatsappNumber || null,
+        phone_number: phoneNumber || null,
+        occurred_at: toIsoFromLocalInput(interactionForm.occurred_at_local),
+        provider: interactionForm.provider || null,
+        provider_conversation_id: interactionForm.provider_conversation_id || null,
+        provider_call_id: interactionForm.provider_call_id || null,
+        recording_url: interactionForm.recording_url || null
+      });
+
+      setInteractionForm(emptyInteractionForm());
+      await loadCustomerWorkspace(selectedCompanyId);
+      setSelectedCustomerTab("interactions");
+    } catch (err) {
+      setCustomerError(err.message);
+    } finally {
+      setSavingInteraction(false);
     }
   }
 
@@ -654,10 +922,17 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
               <tbody>
                 {companies.map((company) => (
                   <tr key={company.id}>
-                    <td>{company.trade_name}</td>
+                    <td>
+                      <button type="button" className="btn-inline-link" onClick={() => openCustomerWorkspace(company)}>
+                        {company.trade_name}
+                      </button>
+                    </td>
                     <td>{maskCnpj(company.cnpj)}</td>
                     <td>{company.segmento || "-"}</td>
                     <td>
+                      <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerWorkspace(company)}>
+                        Abrir aba
+                      </button>
                       <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditCompany(company)}>
                         Editar
                       </button>
@@ -796,54 +1071,359 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       </div>
 
       <article className="panel top-gap">
-        <h3>Histórico do cliente</h3>
-        <p className="muted">Registros de mudança no fluxo da agenda com comentário obrigatório.</p>
-        <div className="inline-actions">
-          <select value={historyCompanyId} onChange={(event) => setHistoryCompanyId(event.target.value)}>
-            <option value="">Todos os clientes</option>
-            {companyOptions.map((company) => (
-              <option key={`history-${company.id}`} value={company.id}>
-                {company.trade_name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="table-wrap top-gap">
-          <table>
-            <thead>
-              <tr>
-                <th>Data/Hora</th>
-                <th>Cliente</th>
-                <th>Atividade</th>
-                <th>Fluxo</th>
-                <th>Comentário</th>
-              </tr>
-            </thead>
-            <tbody>
-              {historyRows.map((row) => {
-                const payload = row.payload || {};
-                const fromLabel = taskStatusLabel(payload.from_status);
-                const toLabel = taskStatusLabel(payload.to_status);
-                return (
-                  <tr key={row.id}>
-                    <td>{formatDateTime(row.happened_at)}</td>
-                    <td>{companyNameById.get(row.entity_id) || "SEM VÍNCULO"}</td>
-                    <td>{payload.task_title || "Atividade"}</td>
-                    <td>{`${fromLabel} -> ${toLabel}`}</td>
-                    <td>{payload.comment || "-"}</td>
-                  </tr>
-                );
-              })}
-              {!historyRows.length ? (
-                <tr>
-                  <td colSpan={5} className="muted">
-                    Nenhum registro no histórico para o filtro selecionado.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+        <h3>Aba do cliente (360)</h3>
+        {!selectedCompanyId ? (
+          <p className="muted">Clique no nome do cliente em “Últimas empresas” para abrir o histórico, propostas, agenda e interações.</p>
+        ) : (
+          <>
+            <p className="muted">
+              Cliente selecionado: <strong>{selectedCompany?.trade_name || companyNameById.get(selectedCompanyId) || "Cliente"}</strong>
+            </p>
+            <div className="inline-actions company-tabs">
+              {CUSTOMER_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`btn-ghost btn-table-action ${selectedCustomerTab === tab.id ? "is-active" : ""}`}
+                  onClick={() => setSelectedCustomerTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {customerError ? <p className="error-text">{customerError}</p> : null}
+            {customerLoading ? <p className="muted top-gap">Carregando dados do cliente...</p> : null}
+
+            {!customerLoading && selectedCustomerTab === "history" ? (
+              <div className="table-wrap top-gap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Data/Hora</th>
+                      <th>Origem</th>
+                      <th>Item</th>
+                      <th>Detalhe</th>
+                      <th>Resumo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {timelineRows.map((row) => (
+                      <tr key={row.id}>
+                        <td>{formatDateTime(row.happened_at)}</td>
+                        <td>{row.type}</td>
+                        <td>{row.title || "-"}</td>
+                        <td>{row.details || "-"}</td>
+                        <td>{row.note || "-"}</td>
+                      </tr>
+                    ))}
+                    {!timelineRows.length ? (
+                      <tr>
+                        <td colSpan={5} className="muted">
+                          Ainda não há histórico para este cliente.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            {!customerLoading && selectedCustomerTab === "opportunities" ? (
+              <>
+                <div className="table-wrap top-gap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Proposta</th>
+                        <th>Etapa</th>
+                        <th>Status</th>
+                        <th>Valor estimado</th>
+                        <th>Fechamento previsto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customerOpportunities.map((item) => (
+                        <tr key={item.id}>
+                          <td>{item.title}</td>
+                          <td>{stageLabel(item.stage)}</td>
+                          <td>{opportunityStatusLabel(item.status)}</td>
+                          <td>{Number(item.estimated_value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
+                          <td>{formatDate(item.expected_close_date)}</td>
+                        </tr>
+                      ))}
+                      {!customerOpportunities.length ? (
+                        <tr>
+                          <td colSpan={5} className="muted">
+                            Nenhuma proposta para este cliente.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="table-wrap top-gap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Data/Hora</th>
+                        <th>Proposta</th>
+                        <th>Etapa anterior</th>
+                        <th>Nova etapa</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customerOpportunityStageRows.map((row) => (
+                        <tr key={row.id}>
+                          <td>{formatDateTime(row.changed_at)}</td>
+                          <td>{row.opportunities?.title || "-"}</td>
+                          <td>{stageLabel(row.from_stage) || "-"}</td>
+                          <td>{stageLabel(row.to_stage) || "-"}</td>
+                        </tr>
+                      ))}
+                      {!customerOpportunityStageRows.length ? (
+                        <tr>
+                          <td colSpan={4} className="muted">
+                            Sem movimentações de etapa para este cliente.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
+
+            {!customerLoading && selectedCustomerTab === "tasks" ? (
+              <div className="table-wrap top-gap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Atividade</th>
+                      <th>Etapa da agenda</th>
+                      <th>Prioridade</th>
+                      <th>Agendamento</th>
+                      <th>Data limite</th>
+                      <th>Descrição</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customerTasks.map((task) => (
+                      <tr key={task.id}>
+                        <td>{task.title}</td>
+                        <td>{taskStatusLabel(task.status)}</td>
+                        <td>{task.priority || "-"}</td>
+                        <td>
+                          {task.scheduled_start_at
+                            ? `${formatDateTime(task.scheduled_start_at)}${task.scheduled_end_at ? ` até ${formatDateTime(task.scheduled_end_at)}` : ""}`
+                            : "-"}
+                        </td>
+                        <td>{formatDate(task.due_date)}</td>
+                        <td>{task.description || "-"}</td>
+                      </tr>
+                    ))}
+                    {!customerTasks.length ? (
+                      <tr>
+                        <td colSpan={6} className="muted">
+                          Nenhuma atividade de agenda para este cliente.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            {!customerLoading && selectedCustomerTab === "interactions" ? (
+              <>
+                <div className="table-wrap top-gap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Contato</th>
+                        <th>WhatsApp</th>
+                        <th>Telefone</th>
+                        <th>Ações rápidas</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customerContacts.map((contact) => {
+                        const quickWhatsapp = normalizePhoneDigits(contact.whatsapp || contact.phone);
+                        const quickPhone = normalizePhoneDigits(contact.phone || contact.whatsapp);
+                        return (
+                          <tr key={`quick-${contact.id}`}>
+                            <td>{contact.full_name}</td>
+                            <td>{contact.whatsapp || "-"}</td>
+                            <td>{contact.phone || "-"}</td>
+                            <td>
+                              <div className="inline-actions">
+                                <button
+                                  type="button"
+                                  className="btn-ghost btn-table-action"
+                                  onClick={() =>
+                                    setInteractionForm((prev) => ({
+                                      ...prev,
+                                      contact_id: contact.id,
+                                      whatsapp_number: contact.whatsapp || prev.whatsapp_number,
+                                      phone_number: contact.phone || prev.phone_number
+                                    }))
+                                  }
+                                >
+                                  Usar no registro
+                                </button>
+                                {quickWhatsapp ? (
+                                  <a href={`https://wa.me/${quickWhatsapp}`} target="_blank" rel="noreferrer" className="btn-ghost btn-table-action">
+                                    Abrir WhatsApp
+                                  </a>
+                                ) : null}
+                                {quickPhone ? (
+                                  <a href={`tel:${quickPhone}`} className="btn-ghost btn-table-action">
+                                    Iniciar chamada
+                                  </a>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {!customerContacts.length ? (
+                        <tr>
+                          <td colSpan={4} className="muted">
+                            Este cliente ainda não possui contatos vinculados.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+
+                <h4 className="top-gap">Registrar conversa/interação</h4>
+                <form className="form-grid" onSubmit={handleInteractionSubmit}>
+                  <select value={interactionForm.interaction_type} onChange={(event) => setInteractionForm((prev) => ({ ...prev, interaction_type: event.target.value }))}>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="call">Chamada</option>
+                    <option value="note">Anotação</option>
+                  </select>
+                  <select value={interactionForm.direction} onChange={(event) => setInteractionForm((prev) => ({ ...prev, direction: event.target.value }))}>
+                    <option value="outbound">Saída</option>
+                    <option value="inbound">Entrada</option>
+                  </select>
+                  <select value={interactionForm.contact_id} onChange={(event) => handleInteractionContactChange(event.target.value)}>
+                    <option value="">Sem contato específico</option>
+                    {customerContacts.map((contact) => (
+                      <option key={contact.id} value={contact.id}>
+                        {contact.full_name}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    placeholder="WhatsApp envolvido"
+                    value={interactionForm.whatsapp_number}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, whatsapp_number: event.target.value }))}
+                  />
+                  <input
+                    placeholder="Telefone da chamada"
+                    value={interactionForm.phone_number}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, phone_number: event.target.value }))}
+                  />
+                  <input
+                    type="datetime-local"
+                    value={interactionForm.occurred_at_local}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, occurred_at_local: event.target.value }))}
+                  />
+                  <input
+                    placeholder="Assunto"
+                    value={interactionForm.subject}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, subject: event.target.value }))}
+                  />
+                  <input
+                    placeholder="Ferramenta integrada (ex.: Twilio)"
+                    value={interactionForm.provider}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, provider: event.target.value }))}
+                  />
+                  <input
+                    placeholder="ID conversa (WhatsApp)"
+                    value={interactionForm.provider_conversation_id}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, provider_conversation_id: event.target.value }))}
+                  />
+                  <input
+                    placeholder="ID conversa/chamada (ferramenta)"
+                    value={interactionForm.provider_call_id}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, provider_call_id: event.target.value }))}
+                  />
+                  <input
+                    placeholder="Link da gravação da chamada"
+                    value={interactionForm.recording_url}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, recording_url: event.target.value }))}
+                  />
+                  <textarea
+                    required
+                    placeholder="Descrição da conversa/interação (obrigatório)"
+                    value={interactionForm.content}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, content: event.target.value }))}
+                  />
+                  <div className="inline-actions">
+                    <button type="submit" className="btn-primary" disabled={savingInteraction}>
+                      {savingInteraction ? "Salvando..." : "Salvar interação"}
+                    </button>
+                    {interactionWhatsappHref ? (
+                      <a href={interactionWhatsappHref} target="_blank" rel="noreferrer" className="btn-ghost btn-table-action">
+                        Abrir WhatsApp
+                      </a>
+                    ) : null}
+                    {interactionPhoneHref ? (
+                      <a href={interactionPhoneHref} className="btn-ghost btn-table-action">
+                        Iniciar chamada
+                      </a>
+                    ) : null}
+                  </div>
+                </form>
+
+                <div className="table-wrap top-gap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Data/Hora</th>
+                        <th>Tipo</th>
+                        <th>Contato</th>
+                        <th>Canal</th>
+                        <th>Resumo</th>
+                        <th>Gravação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customerInteractions.map((row) => (
+                        <tr key={row.id}>
+                          <td>{formatDateTime(row.occurred_at || row.created_at)}</td>
+                          <td>{interactionTypeLabel(row.interaction_type)}</td>
+                          <td>{row.contacts?.full_name || "-"}</td>
+                          <td>{row.whatsapp_number || row.phone_number || "-"}</td>
+                          <td>{row.content || "-"}</td>
+                          <td>
+                            {row.recording_url ? (
+                              <a href={row.recording_url} target="_blank" rel="noreferrer">
+                                Ouvir gravação
+                              </a>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {!customerInteractions.length ? (
+                        <tr>
+                          <td colSpan={6} className="muted">
+                            Sem interações registradas para este cliente.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
+          </>
+        )}
       </article>
     </section>
   );

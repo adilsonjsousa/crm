@@ -413,7 +413,7 @@ export async function logTaskFlowComment({ taskId, companyId, taskTitle, fromSta
   if (error) throw new Error(normalizeError(error, "Falha ao registrar comentário da mudança de fluxo."));
 }
 
-export async function listCompanyHistory({ companyId = "", limit = 120 } = {}) {
+export async function listCompanyHistory({ companyId = "", eventName = "", limit = 120 } = {}) {
   const supabase = ensureSupabase();
   const safeLimit = Number.isFinite(limit) ? Math.max(10, Math.min(300, Math.floor(limit))) : 120;
 
@@ -421,17 +421,117 @@ export async function listCompanyHistory({ companyId = "", limit = 120 } = {}) {
     .from("event_log")
     .select("id,entity_id,event_name,payload,happened_at")
     .eq("entity_type", "company")
-    .eq("event_name", "task_flow_status_changed")
     .order("happened_at", { ascending: false })
     .limit(safeLimit);
 
   if (companyId) {
     query = query.eq("entity_id", companyId);
   }
+  if (eventName) {
+    query = query.eq("event_name", eventName);
+  }
 
   const { data, error } = await query;
   if (error) throw new Error(normalizeError(error, "Falha ao listar histórico do cliente."));
   return data || [];
+}
+
+export async function listCompanyOpportunities(companyId) {
+  if (!companyId) return [];
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("opportunities")
+    .select("id,title,stage,status,estimated_value,expected_close_date,created_at,updated_at")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(120);
+  if (error) throw new Error(normalizeError(error, "Falha ao listar propostas do cliente."));
+  return data || [];
+}
+
+export async function listCompanyOpportunityStageHistory(companyId) {
+  if (!companyId) return [];
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("opportunity_stage_history")
+    .select("id,opportunity_id,from_stage,to_stage,changed_at,opportunities!inner(id,title,company_id)")
+    .eq("opportunities.company_id", companyId)
+    .order("changed_at", { ascending: false })
+    .limit(200);
+  if (error) throw new Error(normalizeError(error, "Falha ao listar histórico de etapas das propostas."));
+  return data || [];
+}
+
+export async function listCompanyTasks(companyId) {
+  if (!companyId) return [];
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,created_at,updated_at")
+    .eq("company_id", companyId)
+    .order("scheduled_start_at", { ascending: true, nullsFirst: false })
+    .order("due_date", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) throw new Error(normalizeError(error, "Falha ao listar tarefas do cliente."));
+  return data || [];
+}
+
+export async function listCompanyContacts(companyId) {
+  if (!companyId) return [];
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("contacts")
+    .select("id,full_name,email,phone,whatsapp,birth_date")
+    .eq("company_id", companyId)
+    .order("full_name", { ascending: true })
+    .limit(300);
+  if (error) throw new Error(normalizeError(error, "Falha ao listar contatos do cliente."));
+  return data || [];
+}
+
+export async function listCompanyInteractions(companyId) {
+  if (!companyId) return [];
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("company_interactions")
+    .select(
+      "id,company_id,contact_id,interaction_type,direction,subject,content,whatsapp_number,phone_number,occurred_at,provider,provider_conversation_id,provider_call_id,recording_url,created_at,contacts:contact_id(full_name,whatsapp,phone)"
+    )
+    .eq("company_id", companyId)
+    .order("occurred_at", { ascending: false })
+    .limit(300);
+  if (error) throw new Error(normalizeError(error, "Falha ao listar interações do cliente."));
+  return data || [];
+}
+
+export async function createCompanyInteraction(payload) {
+  const supabase = ensureSupabase();
+  const normalizedPayload = {
+    company_id: payload.company_id,
+    contact_id: payload.contact_id || null,
+    interaction_type: payload.interaction_type,
+    direction: payload.direction || null,
+    subject: payload.subject || null,
+    content: String(payload.content || "").trim(),
+    whatsapp_number: payload.whatsapp_number || null,
+    phone_number: payload.phone_number || null,
+    occurred_at: payload.occurred_at || new Date().toISOString(),
+    provider: payload.provider || null,
+    provider_conversation_id: payload.provider_conversation_id || null,
+    provider_call_id: payload.provider_call_id || null,
+    recording_url: payload.recording_url || null
+  };
+
+  if (!normalizedPayload.company_id) {
+    throw new Error("Selecione o cliente para registrar a interação.");
+  }
+  if (!normalizedPayload.content) {
+    throw new Error("Descreva a conversa/interação com o cliente.");
+  }
+
+  const { error } = await supabase.from("company_interactions").insert(normalizedPayload);
+  if (error) throw new Error(normalizeError(error, "Falha ao registrar interação do cliente."));
 }
 
 export async function listOrders() {

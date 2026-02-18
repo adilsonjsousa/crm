@@ -636,6 +636,39 @@ textarea {
   font-size: 0.78rem;
 }
 
+a.btn-ghost,
+a.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  border-style: solid;
+  border-width: 1px;
+  padding: 9px 10px;
+}
+
+a.btn-table-action {
+  padding: 6px 10px;
+}
+
+.btn-inline-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--accent-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.company-tabs .is-active {
+  border-color: var(--accent-1);
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
+
 .status-select {
   max-width: 148px;
   margin-right: 6px;
