@@ -45,6 +45,36 @@ const PAGE_META = {
   }
 };
 
+function cleanPhoneDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function normalizeWhatsAppNumber(value) {
+  const digits = cleanPhoneDigits(value);
+  if (!digits) return "";
+  if (digits.startsWith("55")) return digits;
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
+}
+
+function birthdayWhatsAppMessage(alertItem) {
+  return [
+    `Ola, ${alertItem.full_name}!`,
+    "Passando para te desejar um feliz aniversario!",
+    "Que seu dia seja excelente.",
+    "",
+    "Abracos,",
+    "Equipe Comercial"
+  ].join("\n");
+}
+
+function buildBirthdayWhatsAppUrl(alertItem) {
+  const normalizedNumber = normalizeWhatsAppNumber(alertItem.whatsapp);
+  if (!normalizedNumber) return "";
+  const text = encodeURIComponent(birthdayWhatsAppMessage(alertItem));
+  return `https://wa.me/${normalizedNumber}?text=${text}`;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [companiesFocusTarget, setCompaniesFocusTarget] = useState("company");
@@ -350,18 +380,33 @@ export default function App() {
 
             {!birthdayError && birthdayAlerts.length ? (
               <ul className="birthday-alert-list">
-                {birthdayAlerts.slice(0, 6).map((item) => (
-                  <li key={item.id} className="birthday-alert-item">
-                    <div>
-                      <p className="birthday-alert-name">{item.full_name}</p>
-                      <p className="birthday-alert-company">{item.company_name}</p>
-                    </div>
-                    <span className="birthday-alert-date">
-                      {item.days_until === 0 ? "Hoje" : `Em ${item.days_until} dia(s) · ${formatBirthdayShort(item.next_birthday)}`}
-                      {item.age_turning ? ` · ${item.age_turning} anos` : ""}
-                    </span>
-                  </li>
-                ))}
+                {birthdayAlerts.slice(0, 6).map((item) => {
+                  const whatsappUrl = buildBirthdayWhatsAppUrl(item);
+                  return (
+                    <li key={item.id} className="birthday-alert-item">
+                      <div>
+                        {whatsappUrl ? (
+                          <a
+                            className="birthday-alert-name-link"
+                            href={whatsappUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Clique para abrir o WhatsApp com mensagem pronta"
+                          >
+                            {item.full_name}
+                          </a>
+                        ) : (
+                          <p className="birthday-alert-name">{item.full_name}</p>
+                        )}
+                        <p className="birthday-alert-company">{item.company_name}</p>
+                      </div>
+                      <span className="birthday-alert-date">
+                        {item.days_until === 0 ? "Hoje" : `Em ${item.days_until} dia(s) · ${formatBirthdayShort(item.next_birthday)}`}
+                        {item.age_turning ? ` · ${item.age_turning} anos` : ""}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             ) : null}
           </section>

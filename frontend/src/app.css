@@ -444,6 +444,19 @@ body {
   font-weight: 700;
 }
 
+.birthday-alert-name-link {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--text-main);
+  text-decoration: none;
+}
+
+.birthday-alert-name-link:hover {
+  color: var(--accent-2);
+  text-decoration: underline;
+}
+
 .birthday-alert-company {
   margin: 2px 0 0;
   font-size: 0.76rem;

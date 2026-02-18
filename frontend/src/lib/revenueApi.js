@@ -224,7 +224,7 @@ export async function listUpcomingBirthdays(daysAhead = 7) {
 
   const { data, error } = await supabase
     .from("contacts")
-    .select("id,full_name,birth_date,companies:company_id(trade_name)")
+    .select("id,full_name,birth_date,whatsapp,phone,companies:company_id(trade_name)")
     .not("birth_date", "is", null)
     .limit(500);
 
@@ -240,6 +240,7 @@ export async function listUpcomingBirthdays(daysAhead = 7) {
         id: contact.id,
         full_name: contact.full_name || "Contato",
         company_name: contact.companies?.trade_name || "SEM VÍNCULO",
+        whatsapp: String(contact.whatsapp || contact.phone || "").trim(),
         birth_date: contact.birth_date,
         days_until: computed.daysUntil,
         next_birthday: computed.nextBirthday.toISOString().slice(0, 10),
