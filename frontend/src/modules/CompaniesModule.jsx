@@ -96,6 +96,14 @@ function formatBirthDate(value) {
   }).format(new Date(`${value}T00:00:00`));
 }
 
+function upperLettersOnly(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-ZÀ-ÖØ-Ý\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trimStart();
+}
+
 export default function CompaniesModule() {
   const [companies, setCompanies] = useState([]);
   const [companyOptions, setCompanyOptions] = useState([]);
@@ -175,8 +183,8 @@ export default function CompaniesModule() {
         if (lookupData) {
           setForm((prev) => ({
             ...prev,
-            trade_name: lookupData.trade_name || prev.trade_name,
-            legal_name: lookupData.legal_name || prev.legal_name,
+            trade_name: upperLettersOnly(lookupData.trade_name) || prev.trade_name,
+            legal_name: upperLettersOnly(lookupData.legal_name) || prev.legal_name,
             email: lookupData.email || prev.email,
             phone: lookupData.phone || prev.phone,
             address_full: lookupData.address_full || prev.address_full,
@@ -259,8 +267,8 @@ export default function CompaniesModule() {
 
       const createdCompany = await createCompany({
         cnpj: normalizedCnpj,
-        trade_name: form.trade_name,
-        legal_name: form.legal_name,
+        trade_name: upperLettersOnly(form.trade_name),
+        legal_name: upperLettersOnly(form.legal_name),
         email: form.email || null,
         phone: form.phone || null,
         segmento: form.segmento || null,
@@ -270,7 +278,7 @@ export default function CompaniesModule() {
       if (hasPrimaryContactData) {
         await createContact({
           company_id: createdCompany.id,
-          full_name: form.contact_name,
+          full_name: upperLettersOnly(form.contact_name),
           email: form.contact_email || null,
           whatsapp: form.contact_whatsapp || null,
           birth_date: form.contact_birth_date || null,
@@ -304,7 +312,7 @@ export default function CompaniesModule() {
 
       await createContact({
         company_id: contactForm.company_id,
-        full_name: contactForm.full_name,
+        full_name: upperLettersOnly(contactForm.full_name),
         email: contactForm.email || null,
         whatsapp: contactForm.whatsapp || null,
         birth_date: contactForm.birth_date || null
@@ -322,8 +330,8 @@ export default function CompaniesModule() {
     setEditingCompanyId(company.id);
     setEditForm({
       cnpj: maskCnpj(company.cnpj),
-      trade_name: company.trade_name || "",
-      legal_name: company.legal_name || "",
+      trade_name: upperLettersOnly(company.trade_name || ""),
+      legal_name: upperLettersOnly(company.legal_name || ""),
       email: company.email || "",
       phone: company.phone || "",
       segmento: company.segmento || "",
@@ -363,8 +371,8 @@ export default function CompaniesModule() {
       setSavingEdit(true);
       await updateCompany(editingCompanyId, {
         cnpj: normalizedCnpj,
-        trade_name: editForm.trade_name,
-        legal_name: editForm.legal_name,
+        trade_name: upperLettersOnly(editForm.trade_name),
+        legal_name: upperLettersOnly(editForm.legal_name),
         email: editForm.email || null,
         phone: editForm.phone || null,
         segmento: editForm.segmento || null,
@@ -401,13 +409,13 @@ export default function CompaniesModule() {
               required
               placeholder="Nome Fantasia"
               value={form.trade_name}
-              onChange={(event) => setForm((prev) => ({ ...prev, trade_name: event.target.value }))}
+              onChange={(event) => setForm((prev) => ({ ...prev, trade_name: upperLettersOnly(event.target.value) }))}
             />
             <input
               required
               placeholder="Razão Social"
               value={form.legal_name}
-              onChange={(event) => setForm((prev) => ({ ...prev, legal_name: event.target.value }))}
+              onChange={(event) => setForm((prev) => ({ ...prev, legal_name: upperLettersOnly(event.target.value) }))}
             />
             <input
               placeholder="E-mail"
@@ -437,7 +445,7 @@ export default function CompaniesModule() {
             <input
               placeholder="Nome do contato"
               value={form.contact_name}
-              onChange={(event) => setForm((prev) => ({ ...prev, contact_name: event.target.value }))}
+              onChange={(event) => setForm((prev) => ({ ...prev, contact_name: upperLettersOnly(event.target.value) }))}
             />
             <input
               placeholder="E-mail do contato"
@@ -475,13 +483,13 @@ export default function CompaniesModule() {
                 required
                 placeholder="Nome Fantasia"
                 value={editForm.trade_name}
-                onChange={(event) => setEditForm((prev) => ({ ...prev, trade_name: event.target.value }))}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, trade_name: upperLettersOnly(event.target.value) }))}
               />
               <input
                 required
                 placeholder="Razão Social"
                 value={editForm.legal_name}
-                onChange={(event) => setEditForm((prev) => ({ ...prev, legal_name: event.target.value }))}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, legal_name: upperLettersOnly(event.target.value) }))}
               />
               <input
                 placeholder="E-mail"
@@ -576,7 +584,7 @@ export default function CompaniesModule() {
               required
               placeholder="Nome do contato"
               value={contactForm.full_name}
-              onChange={(event) => setContactForm((prev) => ({ ...prev, full_name: event.target.value }))}
+              onChange={(event) => setContactForm((prev) => ({ ...prev, full_name: upperLettersOnly(event.target.value) }))}
             />
             <input
               placeholder="E-mail"
