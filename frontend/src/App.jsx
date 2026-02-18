@@ -332,7 +332,7 @@ export default function App() {
         {isSupabaseConfigured && (birthdaySummary.total > 0 || birthdayError) ? (
           <section className="birthday-alert-box">
             <div className="birthday-alert-header">
-              <strong>🎉 Alertas de aniversário</strong>
+              <strong>Alertas de aniversário</strong>
               <button type="button" className="btn-ghost btn-table-action" onClick={() => openCompanyQuickAction("contact")}>
                 Ver contatos
               </button>
