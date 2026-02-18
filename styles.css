@@ -30,6 +30,41 @@ body {
   color: #fff;
 }
 
+.topbar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.user-badge {
+  padding: 8px 10px;
+  border: 1px solid #b8ddd1;
+  border-radius: 10px;
+  color: #dff7ef;
+  font-size: 0.86rem;
+}
+
+.auth-shell {
+  min-height: calc(100vh - 120px);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 14px 30px rgba(10, 41, 34, 0.08);
+}
+
+.hidden-by-permission {
+  display: none !important;
+}
+
 .topbar h1 {
   margin: 0;
   font-size: 1.6rem;
@@ -128,6 +163,105 @@ button {
 
 .kpi strong {
   font-size: 1.2rem;
+}
+
+.dashboard-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.mini-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: linear-gradient(180deg, #ffffff, #f9fcfb);
+}
+
+.mini-card h3 {
+  margin: 0 0 10px;
+  font-size: 0.94rem;
+}
+
+.bars-chart {
+  display: grid;
+  gap: 8px;
+}
+
+.bar-row {
+  display: grid;
+  gap: 4px;
+}
+
+.bar-row small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: #e5efeb;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0c5f4b, #00a67e);
+}
+
+.donut-wrap {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.donut {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  background: conic-gradient(#0c5f4b 0deg, #0c5f4b 120deg, #f3a712 120deg, #f3a712 230deg, #dce5e2 230deg);
+  position: relative;
+}
+
+.donut::after {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.legend {
+  display: grid;
+  gap: 6px;
+}
+
+.legend-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.84rem;
+}
+
+.legend-line span {
+  color: var(--muted);
+}
+
+.timeline-list {
+  display: grid;
+  gap: 8px;
+}
+
+.timeline-item {
+  border-left: 3px solid #0c5f4b;
+  padding-left: 8px;
+  font-size: 0.84rem;
+}
+
+.timeline-item small {
+  color: var(--muted);
 }
 
 .table-wrap {
@@ -255,6 +389,10 @@ td {
   }
 
   .form-grid.cols-4 {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-grid {
     grid-template-columns: 1fr;
   }
 }

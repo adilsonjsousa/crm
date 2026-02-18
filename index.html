@@ -7,29 +7,64 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="topbar">
+    <header class="topbar" id="topbar">
       <div>
         <h1>CRM Comercial + Técnica</h1>
         <p>Gestão integrada de clientes, oportunidades e suporte técnico.</p>
       </div>
-      <button id="btnExportar" class="btn btn-outline">Exportar dados</button>
+      <div class="topbar-actions">
+        <div id="usuarioLogado" class="user-badge">Não autenticado</div>
+        <button id="btnExportar" class="btn btn-outline" data-permission="export_data">Exportar dados</button>
+        <button id="btnLogout" class="btn btn-outline">Sair</button>
+      </div>
     </header>
 
-    <main class="layout">
-      <section class="card dashboard">
+    <section id="authScreen" class="auth-shell">
+      <article class="auth-card">
+        <h2>Acesso ao CRM</h2>
+        <form id="formLogin" class="form-grid">
+          <input name="email" type="email" placeholder="E-mail" required />
+          <input name="senha" type="password" placeholder="Senha" required />
+          <button type="submit" class="btn">Entrar</button>
+        </form>
+        <p id="loginStatus" class="helper-text"></p>
+      </article>
+    </section>
+
+    <main class="layout" id="appMain">
+      <section class="card dashboard" data-permission="view_dashboard">
         <h2>Dashboard</h2>
         <div id="kpis" class="kpi-grid"></div>
+        <div class="dashboard-grid">
+          <article class="mini-card">
+            <h3>Funil Comercial</h3>
+            <div id="graficoFunil" class="bars-chart"></div>
+          </article>
+          <article class="mini-card">
+            <h3>Chamados por Status</h3>
+            <div id="graficoChamados" class="donut-wrap"></div>
+          </article>
+          <article class="mini-card">
+            <h3>Próximas Atividades</h3>
+            <div id="graficoAtividades" class="timeline-list"></div>
+          </article>
+        </div>
       </section>
 
-      <section class="card">
+      <section class="card" data-permission="manage_clientes">
         <h2>Novo Cliente</h2>
         <form id="formCliente" class="form-grid">
-          <input name="nome" placeholder="Nome do cliente" required />
+          <input name="cnpj" id="clienteCnpj" placeholder="CNPJ (somente números ou formatado)" required />
+          <p id="cnpjStatus" class="helper-text"></p>
+          <input name="nome" placeholder="Nome Fantasia" required />
           <input name="empresa" placeholder="Empresa" required />
           <input name="email" type="email" placeholder="Email" required />
           <input name="telefone" placeholder="Telefone" required />
-          <input name="latitude" type="number" step="0.000001" placeholder="Latitude (opcional)" />
-          <input name="longitude" type="number" step="0.000001" placeholder="Longitude (opcional)" />
+          <input
+            name="enderecoCompleto"
+            placeholder="Endereço completo (rua, número, cidade, estado, país)"
+            required
+          />
           <input name="raioMetros" type="number" min="20" placeholder="Raio check-in em metros (opcional)" />
           <select name="segmento" required>
             <option value="">Segmento</option>
@@ -37,12 +72,15 @@
             <option>Indústria</option>
             <option>Serviços</option>
             <option>Varejo</option>
+            <option>Gráfica</option>
+            <option>Gráfica Digital</option>
+            <option>Comunicação visual</option>
           </select>
           <button type="submit" class="btn">Salvar cliente</button>
         </form>
       </section>
 
-      <section class="card">
+      <section class="card" data-permission="manage_oportunidades">
         <h2>Nova Oportunidade Comercial</h2>
         <form id="formOportunidade" class="form-grid">
           <select name="clienteId" id="oportunidadeCliente" required></select>
@@ -60,7 +98,7 @@
         </form>
       </section>
 
-      <section class="card">
+      <section class="card" data-permission="manage_chamados">
         <h2>Novo Chamado Técnico</h2>
         <form id="formChamado" class="form-grid">
           <select name="clienteId" id="chamadoCliente" required></select>
@@ -83,7 +121,7 @@
         </form>
       </section>
 
-      <section class="card full">
+      <section class="card full" data-permission="manage_omie">
         <h2>Integração ERP Omie</h2>
         <form id="formOmie" class="form-grid cols-4">
           <input name="appKey" id="omieAppKey" placeholder="App Key Omie" required />
@@ -104,17 +142,15 @@
         <p id="omieStatus" class="helper-text"></p>
       </section>
 
-      <section class="card">
+      <section class="card" data-permission="manage_atividades">
         <h2>Nova Atividade Comercial</h2>
         <form id="formAtividade" class="form-grid">
           <input name="titulo" placeholder="Título da atividade" required />
           <select name="clienteId" id="atividadeCliente" required></select>
           <select name="tipo" required>
-            <option>Ligação</option>
-            <option>Reunião</option>
-            <option>Follow-up</option>
-            <option>Demonstração</option>
-            <option>Proposta</option>
+            <option>Visita</option>
+            <option>Call</option>
+            <option>Envio de Proposta</option>
           </select>
           <input name="responsavel" placeholder="Responsável comercial" required />
           <input name="dataHora" type="datetime-local" required />
@@ -122,7 +158,7 @@
         </form>
       </section>
 
-      <section class="card">
+      <section class="card" data-permission="manage_sla">
         <h2>SLA Técnico</h2>
         <form id="formSla" class="form-grid">
           <input name="baixa" type="number" min="1" placeholder="SLA Baixa (h)" required />
@@ -134,7 +170,7 @@
         <p id="slaResumo" class="helper-text"></p>
       </section>
 
-      <section class="card full">
+      <section class="card full" data-permission="manage_checkin">
         <h2>Check-in de Visita por Geolocalização</h2>
         <form id="formCheckin" class="form-grid cols-4">
           <select name="clienteId" id="checkinCliente" required></select>
@@ -148,7 +184,7 @@
         <p id="checkinStatus" class="helper-text"></p>
       </section>
 
-      <section class="card full">
+      <section class="card full" data-permission="view_comercial">
         <div class="section-title">
           <h2>Pipeline Comercial</h2>
           <input id="filtroEtapa" placeholder="Filtrar por etapa" />
@@ -170,7 +206,7 @@
         </div>
       </section>
 
-      <section class="card full">
+      <section class="card full" data-permission="view_comercial">
         <h2>Calendário de Atividades Comerciais</h2>
         <div class="table-wrap">
           <table>
@@ -190,12 +226,12 @@
         </div>
       </section>
 
-      <section class="card full">
+      <section class="card full" data-permission="view_alertas">
         <h2>Alertas de SLA</h2>
         <div id="painelAlertas" class="alert-panel"></div>
       </section>
 
-      <section class="card full">
+      <section class="card full" data-permission="view_checkins">
         <h2>Histórico de Check-ins</h2>
         <div class="table-wrap">
           <table>
@@ -215,7 +251,7 @@
         </div>
       </section>
 
-      <section class="card full">
+      <section class="card full" data-permission="view_chamados">
         <h2>Chamados Técnicos</h2>
         <div class="table-wrap">
           <table>
@@ -236,21 +272,52 @@
         </div>
       </section>
 
-      <section class="card full">
+      <section class="card full" data-permission="view_clientes">
         <h2>Clientes</h2>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Nome</th>
+                <th>Nome Fantasia</th>
                 <th>Empresa</th>
+                <th>CNPJ</th>
                 <th>Email</th>
                 <th>Telefone</th>
                 <th>Segmento</th>
-                <th>Geo</th>
+                <th>Localização</th>
               </tr>
             </thead>
             <tbody id="tabelaClientes"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card full" data-permission="manage_users">
+        <h2>Usuários e Permissões</h2>
+        <form id="formUsuario" class="form-grid cols-4">
+          <input name="nome" placeholder="Nome do usuário" required />
+          <input name="email" type="email" placeholder="E-mail de login" required />
+          <input name="senha" type="password" placeholder="Senha temporária" required />
+          <select name="perfil" required>
+            <option value="comercial">Comercial</option>
+            <option value="tecnico">Técnico</option>
+            <option value="gestor">Gestor</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button type="submit" class="btn">Criar usuário</button>
+        </form>
+        <div class="table-wrap top-gap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>E-mail</th>
+                <th>Perfil</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tabelaUsuarios"></tbody>
           </table>
         </div>
       </section>

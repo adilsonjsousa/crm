@@ -1,55 +1,63 @@
-# CRM Comercial e Técnica
+# CRM Revenue Architecture
 
-CRM web para gestão comercial e suporte técnico, com calendário de atividades, SLA e integração Omie por proxy.
-
-## Funcionalidades
-- Cadastro de clientes
-- Pipeline comercial (lead até fechado)
-- Chamados técnicos com prioridade, status e monitor de SLA
-- Calendário de atividades comerciais (agenda por data/hora)
-- Check-in de vendedor por geolocalização na chegada ao cliente
-- Alertas de SLA em tela e notificação do navegador
-- Integração com ERP Omie (sincronização via endpoint backend/proxy)
-- Persistência local no navegador (`localStorage`)
-- Exportação dos dados em JSON
-
-## Como usar
-1. Abra `/Users/adilsonsousa/Documents/New project/index.html` no navegador.
-2. Cadastre clientes, oportunidades, chamados e atividades.
-3. Para check-in geográfico, preencha `latitude`, `longitude` e `raio` no cadastro do cliente.
-4. No painel de check-in, selecione cliente e vendedor para registrar chegada validada por distância.
-5. Ajuste as metas de SLA em horas por prioridade.
-6. Configure integração Omie com `App Key`, `App Secret` e URL do proxy.
-7. Use os botões de sincronização para importar dados do Omie.
-
-## Contrato esperado do proxy Omie
-Este frontend chama os endpoints abaixo com `POST` e body JSON:
-
-- `/api/omie/clientes`
-- `/api/omie/oportunidades`
-- `/api/omie/chamados`
-
-Body enviado:
-```json
-{
-  "appKey": "SUA_APP_KEY",
-  "appSecret": "SEU_APP_SECRET"
-}
-```
-
-Resposta esperada (todos):
-```json
-{
-  "items": []
-}
-```
-
-Exemplos de campos aceitos no `items`:
-- Clientes: `nome`, `empresa`, `email`, `telefone`, `segmento`, `latitude`, `longitude`, `raioMetros`
-- Oportunidades: `empresa`/`email`, `titulo`, `valor`, `etapa`, `proximoContato`
-- Chamados: `empresa`/`email`, `titulo`, `descricao`, `prioridade`, `status`, `responsavel`, `criadoEm`
+Projeto migrado para:
+- Frontend: React + Vite (`/frontend`)
+- Backend de dados/autenticação: Supabase (`/supabase/migrations`)
+- Repositório: GitHub
+- Deploy do frontend: Vercel
 
 ## Estrutura
-- `/Users/adilsonsousa/Documents/New project/index.html` interface
-- `/Users/adilsonsousa/Documents/New project/styles.css` estilos
-- `/Users/adilsonsousa/Documents/New project/app.js` lógica, SLA, calendário, check-in e integração Omie
+- `/Users/adilsonsousa/Documents/New project/frontend` app React
+- `/Users/adilsonsousa/Documents/New project/supabase/migrations` schema e políticas SQL
+- `/Users/adilsonsousa/Documents/New project/.github/workflows` CI e deploy
+- `/Users/adilsonsousa/Documents/New project/frontend/vercel.json` configuração de build para Vercel
+- `/Users/adilsonsousa/Documents/New project/docs/implementation-plan.md` plano ponta a ponta
+- `/Users/adilsonsousa/Documents/New project/docs/design-system.md` guia de UX/UI e design tokens
+
+## Setup local
+1. Entre em `frontend`.
+2. Copie `.env.example` para `.env` e preencha:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+3. Instale dependências e rode:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+## Supabase
+Aplique as migrações no projeto Supabase nesta ordem:
+1. `20260218_0001_init_revenue_architecture.sql`
+2. `20260218_0002_rls_initial.sql`
+3. `20260218_0003_seed_defaults.sql`
+
+## Vercel
+Deploy configurado para publicar o app React do diretório `frontend`.
+
+Configuração recomendada no Vercel (quando conectar o repositório):
+- Root Directory: `frontend`
+- Framework Preset: `Vite`
+
+Comandos esperados:
+- Build: `cd frontend && npm install && npm run build`
+- Output: `frontend/dist`
+
+## GitHub Actions
+- CI: `.github/workflows/frontend-ci.yml`
+- Deploy Vercel: `.github/workflows/deploy-vercel.yml`
+
+Secrets necessários para deploy:
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
+
+## MCP Supabase (Codex)
+Servidor MCP configurado para o projeto `shqsaclzbuzeuynpxdsq`.
+
+Pré-requisito:
+- Variável de ambiente `SUPABASE_ACCESS_TOKEN` disponível para o app do Codex.
+
+## Observação
+Os arquivos legados (`index.html`, `app.js`, `styles.css`) permanecem no repositório apenas como referência histórica e não fazem parte do novo frontend React.

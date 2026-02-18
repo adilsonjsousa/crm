@@ -6,6 +6,10 @@ const state = {
   chamados: [],
   atividades: [],
   checkins: [],
+  auth: {
+    users: [],
+    currentUserId: null
+  },
   integracaoOmie: {
     appKey: "",
     appSecret: "",
@@ -24,7 +28,17 @@ const state = {
 };
 
 const el = {
+  topbar: document.getElementById("topbar"),
+  authScreen: document.getElementById("authScreen"),
+  appMain: document.getElementById("appMain"),
+  formLogin: document.getElementById("formLogin"),
+  loginStatus: document.getElementById("loginStatus"),
+  usuarioLogado: document.getElementById("usuarioLogado"),
+  btnLogout: document.getElementById("btnLogout"),
   kpis: document.getElementById("kpis"),
+  graficoFunil: document.getElementById("graficoFunil"),
+  graficoChamados: document.getElementById("graficoChamados"),
+  graficoAtividades: document.getElementById("graficoAtividades"),
   formCliente: document.getElementById("formCliente"),
   formOportunidade: document.getElementById("formOportunidade"),
   formChamado: document.getElementById("formChamado"),
@@ -32,6 +46,11 @@ const el = {
   formSla: document.getElementById("formSla"),
   formOmie: document.getElementById("formOmie"),
   formCheckin: document.getElementById("formCheckin"),
+  clienteCnpj: document.getElementById("clienteCnpj"),
+  cnpjStatus: document.getElementById("cnpjStatus"),
+  clienteEmpresa: document.querySelector('#formCliente input[name="empresa"]'),
+  clienteTelefone: document.querySelector('#formCliente input[name="telefone"]'),
+  clienteEndereco: document.querySelector('#formCliente input[name="enderecoCompleto"]'),
   oportunidadeCliente: document.getElementById("oportunidadeCliente"),
   chamadoCliente: document.getElementById("chamadoCliente"),
   atividadeCliente: document.getElementById("atividadeCliente"),
@@ -42,6 +61,8 @@ const el = {
   tabelaChamados: document.getElementById("tabelaChamados"),
   tabelaAtividades: document.getElementById("tabelaAtividades"),
   tabelaCheckins: document.getElementById("tabelaCheckins"),
+  tabelaUsuarios: document.getElementById("tabelaUsuarios"),
+  formUsuario: document.getElementById("formUsuario"),
   filtroEtapa: document.getElementById("filtroEtapa"),
   btnExportar: document.getElementById("btnExportar"),
   omieAppKey: document.getElementById("omieAppKey"),
@@ -54,6 +75,45 @@ const el = {
   checkinStatus: document.getElementById("checkinStatus"),
   slaResumo: document.getElementById("slaResumo"),
   painelAlertas: document.getElementById("painelAlertas")
+};
+
+let cnpjLookupDebounce;
+const cnpjLookupCache = new Map();
+
+const ROLE_PERMISSIONS = {
+  admin: ["*"],
+  comercial: [
+    "view_dashboard",
+    "manage_clientes",
+    "manage_oportunidades",
+    "manage_atividades",
+    "manage_checkin",
+    "view_comercial",
+    "view_clientes",
+    "view_checkins",
+    "export_data"
+  ],
+  tecnico: [
+    "view_dashboard",
+    "manage_chamados",
+    "manage_sla",
+    "view_chamados",
+    "view_clientes",
+    "view_alertas"
+  ],
+  gestor: [
+    "view_dashboard",
+    "manage_clientes",
+    "manage_oportunidades",
+    "manage_atividades",
+    "manage_checkin",
+    "view_comercial",
+    "view_clientes",
+    "view_chamados",
+    "view_checkins",
+    "view_alertas",
+    "export_data"
+  ]
 };
 
 function uid(prefix) {
@@ -87,6 +147,221 @@ function toNumberOrNull(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function normalizeAddress(value) {
+  return String(value || "").trim();
+}
+
+function onlyDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function formatCnpj(value) {
+  const digits = onlyDigits(value);
+  if (digits.length !== 14) return value || "-";
+  return digits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+}
+
+function applyCnpjMask(value) {
+  const digits = onlyDigits(value).slice(0, 14);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 5) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+  if (digits.length <= 8) return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5)}`;
+  if (digits.length <= 12) return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8)}`;
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+}
+
+function isValidCnpj(value) {
+  const cnpj = onlyDigits(value);
+  if (cnpj.length !== 14) return false;
+  if (/^(\d)\1{13}$/.test(cnpj)) return false;
+
+  const calcDigit = (base, weights) => {
+    const sum = base
+      .split("")
+      .reduce((acc, digit, idx) => acc + Number(digit) * weights[idx], 0);
+    const remainder = sum % 11;
+    return remainder < 2 ? 0 : 11 - remainder;
+  };
+
+  const firstWeights = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  const secondWeights = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  const firstDigit = calcDigit(cnpj.slice(0, 12), firstWeights);
+  const secondDigit = calcDigit(cnpj.slice(0, 12) + firstDigit, secondWeights);
+  return cnpj === cnpj.slice(0, 12) + String(firstDigit) + String(secondDigit);
+}
+
+async function cnpjExists(cnpj) {
+  if (cnpjLookupCache.has(cnpj)) return cnpjLookupCache.get(cnpj);
+  const response = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, {
+    headers: { Accept: "application/json" }
+  });
+  if (response.status === 404) {
+    const result = { exists: false, reason: "CNPJ não encontrado na base pública." };
+    cnpjLookupCache.set(cnpj, result);
+    return result;
+  }
+  if (!response.ok) {
+    throw new Error(`Serviço de consulta indisponível (${response.status}).`);
+  }
+  const result = { exists: true, payload: await response.json() };
+  cnpjLookupCache.set(cnpj, result);
+  return result;
+}
+
+function enderecoFromReceita(payload) {
+  const parts = [
+    payload.descricao_tipo_de_logradouro,
+    payload.logradouro,
+    payload.numero,
+    payload.bairro,
+    payload.municipio,
+    payload.uf,
+    payload.cep
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean);
+  return parts.join(", ");
+}
+
+function applyCnpjAutofill(payload) {
+  const empresa = String(payload.nome_fantasia || payload.razao_social || "").trim();
+  const telefone = String(payload.ddd_telefone_1 || payload.ddd_telefone_2 || "").trim();
+  const endereco = enderecoFromReceita(payload);
+
+  if (empresa && !el.clienteEmpresa.value.trim()) el.clienteEmpresa.value = empresa;
+  if (telefone && !el.clienteTelefone.value.trim()) el.clienteTelefone.value = telefone;
+  if (endereco && !el.clienteEndereco.value.trim()) el.clienteEndereco.value = endereco;
+}
+
+function addressFromOmie(item) {
+  const fields = [
+    item.enderecoCompleto,
+    item.endereco,
+    item.logradouro,
+    item.numero,
+    item.bairro,
+    item.cidade,
+    item.estado,
+    item.cep,
+    item.pais
+  ];
+  return fields.filter(Boolean).join(", ");
+}
+
+async function geocodeAddress(address) {
+  const normalized = normalizeAddress(address);
+  if (!normalized) return { latitude: null, longitude: null };
+
+  const providers = [
+    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(normalized)}`,
+    `https://geocode.maps.co/search?q=${encodeURIComponent(normalized)}`
+  ];
+
+  for (const url of providers) {
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) continue;
+      const result = await response.json();
+      if (!Array.isArray(result) || !result.length) continue;
+
+      const latitude = Number(result[0].lat);
+      const longitude = Number(result[0].lon);
+      if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+        return { latitude, longitude };
+      }
+    } catch {
+      // Tenta provedor seguinte.
+    }
+  }
+
+  return { latitude: null, longitude: null };
+}
+
+function currentUser() {
+  return state.auth.users.find((u) => u.id === state.auth.currentUserId) || null;
+}
+
+function hasPermission(permission) {
+  const user = currentUser();
+  if (!user || user.ativo === false) return false;
+  const permissions = ROLE_PERMISSIONS[user.perfil] || [];
+  return permissions.includes("*") || permissions.includes(permission);
+}
+
+function ensurePermission(permission) {
+  if (hasPermission(permission)) return true;
+  alert("Você não tem permissão para esta ação.");
+  return false;
+}
+
+function applyPermissionVisibility() {
+  document.querySelectorAll("[data-permission]").forEach((node) => {
+    const permission = node.getAttribute("data-permission");
+    node.classList.toggle("hidden-by-permission", !hasPermission(permission));
+  });
+}
+
+function renderAuthState() {
+  const user = currentUser();
+  const authenticated = Boolean(user);
+
+  el.authScreen.style.display = authenticated ? "none" : "grid";
+  el.appMain.style.display = authenticated ? "grid" : "none";
+  el.btnLogout.style.display = authenticated ? "inline-block" : "none";
+  el.usuarioLogado.textContent = authenticated ? `${user.nome} (${user.perfil})` : "Não autenticado";
+  applyPermissionVisibility();
+}
+
+function ensureAuthSeed() {
+  if (state.auth.users.length) return false;
+  state.auth.users.push(
+    {
+      id: uid("usr"),
+      nome: "Administrador",
+      email: "admin@crm.local",
+      senha: "admin123",
+      perfil: "admin",
+      ativo: true
+    },
+    {
+      id: uid("usr"),
+      nome: "Vendas",
+      email: "comercial@crm.local",
+      senha: "comercial123",
+      perfil: "comercial",
+      ativo: true
+    },
+    {
+      id: uid("usr"),
+      nome: "Suporte",
+      email: "tecnico@crm.local",
+      senha: "tecnico123",
+      perfil: "tecnico",
+      ativo: true
+    }
+  );
+  return true;
+}
+
+function ensureUserExists(userData) {
+  const email = String(userData.email || "")
+    .trim()
+    .toLowerCase();
+  const exists = state.auth.users.some((u) => String(u.email || "").toLowerCase() === email);
+  if (exists) return false;
+  state.auth.users.push({
+    id: uid("usr"),
+    nome: userData.nome,
+    email,
+    senha: userData.senha,
+    perfil: userData.perfil,
+    ativo: true
+  });
+  return true;
+}
+
 function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
@@ -96,11 +371,20 @@ function load() {
   if (!raw) return;
   try {
     const parsed = JSON.parse(raw);
-    state.clientes = parsed.clientes || [];
+    state.clientes = (parsed.clientes || []).map((cliente) => ({
+      ...cliente,
+      cnpj: onlyDigits(cliente.cnpj || ""),
+      enderecoCompleto: normalizeAddress(cliente.enderecoCompleto || cliente.endereco || "")
+    }));
     state.oportunidades = parsed.oportunidades || [];
     state.chamados = parsed.chamados || [];
     state.atividades = parsed.atividades || [];
     state.checkins = parsed.checkins || [];
+    state.auth = {
+      ...state.auth,
+      ...(parsed.auth || {}),
+      users: (parsed.auth && parsed.auth.users) || []
+    };
     state.integracaoOmie = { ...state.integracaoOmie, ...(parsed.integracaoOmie || {}) };
     state.slaConfig = { ...state.slaConfig, ...(parsed.slaConfig || {}) };
     state.checkinConfig = { ...state.checkinConfig, ...(parsed.checkinConfig || {}) };
@@ -118,9 +402,11 @@ function ensureSeed() {
     id: clienteId,
     nome: "Larissa Melo",
     empresa: "Nexa Automação",
+    cnpj: "12345678000195",
     email: "larissa@nexa.com.br",
     telefone: "(11) 91234-5678",
     segmento: "Indústria",
+    enderecoCompleto: "Avenida Paulista, 1000, São Paulo, SP, Brasil",
     latitude: -23.55052,
     longitude: -46.633308,
     raioMetros: 200
@@ -240,19 +526,45 @@ function renderCheckinAtividadeOptions() {
 function renderClientes() {
   el.tabelaClientes.innerHTML = state.clientes
     .map((cliente) => {
+      const endereco = cliente.enderecoCompleto || "Endereço não informado";
       const hasGeo = Number.isFinite(cliente.latitude) && Number.isFinite(cliente.longitude);
-      const geo = hasGeo
-        ? `${cliente.latitude.toFixed(6)}, ${cliente.longitude.toFixed(6)} (raio ${Number(cliente.raioMetros || state.checkinConfig.raioPadraoMetros)}m)`
-        : "Sem georreferência";
+      const geo = hasGeo ? `${cliente.latitude.toFixed(6)}, ${cliente.longitude.toFixed(6)}` : "pendente";
+      const localizacao = `${endereco} | geo: ${geo} | raio ${Number(cliente.raioMetros || state.checkinConfig.raioPadraoMetros)}m`;
 
       return `
       <tr>
         <td>${cliente.nome}</td>
         <td>${cliente.empresa}</td>
+        <td>${formatCnpj(cliente.cnpj)}</td>
         <td>${cliente.email}</td>
         <td>${cliente.telefone}</td>
         <td>${cliente.segmento}</td>
-        <td>${geo}</td>
+        <td>${localizacao}</td>
+      </tr>
+    `;
+    })
+    .join("");
+}
+
+function renderUsuarios() {
+  if (!el.tabelaUsuarios) return;
+  const user = currentUser();
+
+  el.tabelaUsuarios.innerHTML = state.auth.users
+    .map((item) => {
+      const isSelf = user && user.id === item.id;
+      return `
+      <tr>
+        <td>${item.nome}</td>
+        <td>${item.email}</td>
+        <td>${item.perfil}</td>
+        <td>${item.ativo ? "Ativo" : "Inativo"}</td>
+        <td>
+          <div class="inline-actions">
+            <button data-user-toggle="${item.id}" ${isSelf ? "disabled" : ""}>${item.ativo ? "Bloquear" : "Ativar"}</button>
+            <button data-user-delete="${item.id}" ${isSelf ? "disabled" : ""}>Excluir</button>
+          </div>
+        </td>
       </tr>
     `;
     })
@@ -354,7 +666,10 @@ function renderCheckins() {
       const distancia = Number.isFinite(checkin.distanciaMetros)
         ? `${Math.round(checkin.distanciaMetros)} m`
         : "-";
-      const coords = `${checkin.latitude.toFixed(6)}, ${checkin.longitude.toFixed(6)}`;
+      const coords =
+        Number.isFinite(checkin.latitude) && Number.isFinite(checkin.longitude)
+          ? `${checkin.latitude.toFixed(6)}, ${checkin.longitude.toFixed(6)}`
+          : "-";
       return `
       <tr>
         <td>${formatDateTime(checkin.dataHora)}</td>
@@ -404,6 +719,97 @@ function renderKpis() {
     .join("");
 }
 
+function renderGraficoFunil() {
+  const etapas = ["Lead", "Qualificação", "Proposta", "Negociação", "Fechado"];
+  const counts = etapas.map((etapa) => ({
+    etapa,
+    total: state.oportunidades.filter((o) => o.etapa === etapa).length
+  }));
+  const max = Math.max(...counts.map((c) => c.total), 1);
+
+  el.graficoFunil.innerHTML = counts
+    .map(
+      (item) => `
+      <div class="bar-row">
+        <small>${item.etapa} (${item.total})</small>
+        <div class="bar-track">
+          <div class="bar-fill" style="width: ${(item.total / max) * 100}%"></div>
+        </div>
+      </div>
+    `
+    )
+    .join("");
+}
+
+function renderGraficoChamados() {
+  const statusMap = ["Aberto", "Em atendimento", "Aguardando cliente", "Resolvido"].map((status) => ({
+    status,
+    total: state.chamados.filter((c) => c.status === status).length
+  }));
+  const total = statusMap.reduce((acc, item) => acc + item.total, 0);
+
+  if (!total) {
+    el.graficoChamados.innerHTML = '<p class="helper-text">Sem chamados cadastrados.</p>';
+    return;
+  }
+
+  const colors = ["#0c5f4b", "#00a67e", "#f3a712", "#8aa7a0"];
+  let cursor = 0;
+  const segments = statusMap
+    .map((item, idx) => {
+      const angle = (item.total / total) * 360;
+      const part = `${colors[idx]} ${cursor}deg ${cursor + angle}deg`;
+      cursor += angle;
+      return part;
+    })
+    .join(", ");
+
+  el.graficoChamados.innerHTML = `
+    <div class="donut" style="background: conic-gradient(${segments});"></div>
+    <div class="legend">
+      ${statusMap
+        .map(
+          (item, idx) => `
+        <div class="legend-line">
+          <span style="color:${colors[idx]}">${item.status}</span>
+          <strong>${item.total}</strong>
+        </div>
+      `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderGraficoAtividades() {
+  const proximas = [...state.atividades]
+    .filter((a) => a.status !== "Concluída")
+    .sort((a, b) => new Date(a.dataHora) - new Date(b.dataHora))
+    .slice(0, 5);
+
+  if (!proximas.length) {
+    el.graficoAtividades.innerHTML = '<p class="helper-text">Nenhuma atividade pendente.</p>';
+    return;
+  }
+
+  el.graficoAtividades.innerHTML = proximas
+    .map(
+      (atividade) => `
+      <div class="timeline-item">
+        <strong>${atividade.tipo} - ${nomeCliente(atividade.clienteId)}</strong><br />
+        <small>${formatDateTime(atividade.dataHora)} | ${atividade.responsavel}</small>
+      </div>
+    `
+    )
+    .join("");
+}
+
+function renderDashboardVisual() {
+  renderGraficoFunil();
+  renderGraficoChamados();
+  renderGraficoAtividades();
+}
+
 function renderSlaSummary() {
   el.slaResumo.textContent = `Metas atuais (h) -> Baixa: ${state.slaConfig.Baixa}, Média: ${state.slaConfig["Média"]}, Alta: ${
     state.slaConfig.Alta
@@ -451,13 +857,16 @@ function renderAlertas() {
 }
 
 function refreshAll() {
+  renderAuthState();
   renderClienteOptions();
   renderClientes();
+  renderUsuarios();
   renderOportunidades();
   renderChamados();
   renderAtividades();
   renderCheckins();
   renderKpis();
+  renderDashboardVisual();
   renderSlaSummary();
   renderOmieConfig();
   renderAlertas();
@@ -548,11 +957,29 @@ function getCurrentPosition() {
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: 15000,
-      maximumAge: 0
-    });
+    navigator.geolocation.getCurrentPosition(
+      resolve,
+      (error) => {
+        if (error && error.code === 1) {
+          reject(new Error("permissão de localização negada no navegador"));
+          return;
+        }
+        if (error && error.code === 2) {
+          reject(new Error("localização indisponível no dispositivo"));
+          return;
+        }
+        if (error && error.code === 3) {
+          reject(new Error("tempo esgotado ao obter localização"));
+          return;
+        }
+        reject(new Error("não foi possível obter a localização atual"));
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0
+      }
+    );
   });
 }
 
@@ -563,10 +990,16 @@ async function registerCheckin(clienteId, vendedor, observacao, atividadeId) {
     return;
   }
 
-  if (!Number.isFinite(cliente.latitude) || !Number.isFinite(cliente.longitude)) {
-    el.checkinStatus.textContent =
-      "Este cliente não possui latitude/longitude cadastradas. Atualize o cadastro para validar o check-in.";
-    return;
+  let clienteTemGeo = Number.isFinite(cliente.latitude) && Number.isFinite(cliente.longitude);
+  if (!clienteTemGeo && cliente.enderecoCompleto) {
+    el.checkinStatus.textContent = "Localizando endereço do cliente para validar check-in...";
+    const geo = await geocodeAddress(cliente.enderecoCompleto);
+    if (Number.isFinite(geo.latitude) && Number.isFinite(geo.longitude)) {
+      cliente.latitude = geo.latitude;
+      cliente.longitude = geo.longitude;
+      clienteTemGeo = true;
+      save();
+    }
   }
 
   el.checkinStatus.textContent = "Capturando localização atual do vendedor...";
@@ -576,9 +1009,15 @@ async function registerCheckin(clienteId, vendedor, observacao, atividadeId) {
     const latitudeAtual = position.coords.latitude;
     const longitudeAtual = position.coords.longitude;
     const raioPermitido = Number(cliente.raioMetros || state.checkinConfig.raioPadraoMetros);
-    const distancia = calculateDistanceMeters(latitudeAtual, longitudeAtual, cliente.latitude, cliente.longitude);
-    const dentroDoRaio = distancia <= raioPermitido;
-    const resultado = dentroDoRaio ? "Dentro do raio" : "Fora do raio";
+    const distancia = clienteTemGeo
+      ? calculateDistanceMeters(latitudeAtual, longitudeAtual, cliente.latitude, cliente.longitude)
+      : null;
+    const dentroDoRaio = Number.isFinite(distancia) ? distancia <= raioPermitido : false;
+    const resultado = Number.isFinite(distancia)
+      ? dentroDoRaio
+        ? "Dentro do raio"
+        : "Fora do raio"
+      : "Sem validação de distância";
 
     const checkinId = uid("chk");
     state.checkins.push({
@@ -595,7 +1034,7 @@ async function registerCheckin(clienteId, vendedor, observacao, atividadeId) {
       resultado
     });
 
-    if (atividadeId && dentroDoRaio) {
+    if (atividadeId && (dentroDoRaio || !Number.isFinite(distancia))) {
       const atividade = state.atividades.find((a) => a.id === atividadeId);
       if (atividade) {
         atividade.status = "Check-in realizado";
@@ -603,7 +1042,14 @@ async function registerCheckin(clienteId, vendedor, observacao, atividadeId) {
       }
     }
 
-    if (!dentroDoRaio) {
+    if (!clienteTemGeo) {
+      pushAlert(
+        "warn",
+        `Check-in sem validação: ${nomeCliente(clienteId)}`,
+        `${vendedor} registrou check-in, mas o endereço do cliente não foi geolocalizado.`,
+        `checkin_sem_geo_${checkinId}`
+      );
+    } else if (!dentroDoRaio) {
       pushAlert(
         "warn",
         `Check-in fora do raio: ${nomeCliente(clienteId)}`,
@@ -615,7 +1061,9 @@ async function registerCheckin(clienteId, vendedor, observacao, atividadeId) {
     state.checkins = state.checkins.slice(-500);
     save();
     refreshAll();
-    el.checkinStatus.textContent = `Check-in registrado: ${resultado} (${Math.round(distancia)}m de distância).`;
+    el.checkinStatus.textContent = Number.isFinite(distancia)
+      ? `Check-in registrado: ${resultado} (${Math.round(distancia)}m de distância).`
+      : "Check-in registrado sem validação de distância (endereço do cliente não localizado).";
   } catch (error) {
     el.checkinStatus.textContent = `Falha no check-in: ${error.message || "permissão de localização negada"}.`;
   }
@@ -655,9 +1103,11 @@ async function syncOmie(resource) {
           id: uid("cli"),
           nome: item.nome || item.contato || "Sem nome",
           empresa: item.empresa || item.fantasia || "Sem empresa",
+          cnpj: onlyDigits(item.cnpj || ""),
           email: item.email || "nao-informado@omie",
           telefone: item.telefone || "-",
           segmento: item.segmento || "Omie",
+          enderecoCompleto: normalizeAddress(addressFromOmie(item)),
           latitude: toNumberOrNull(item.latitude),
           longitude: toNumberOrNull(item.longitude),
           raioMetros: Number(item.raioMetros || state.checkinConfig.raioPadraoMetros)
@@ -707,21 +1157,145 @@ async function syncOmie(resource) {
   }
 }
 
-el.formCliente.addEventListener("submit", (event) => {
+el.formLogin.addEventListener("submit", (event) => {
   event.preventDefault();
   const data = new FormData(event.currentTarget);
+  const email = String(data.get("email") || "")
+    .trim()
+    .toLowerCase();
+  const senha = String(data.get("senha") || "").trim();
 
-  const latitude = toNumberOrNull(data.get("latitude"));
-  const longitude = toNumberOrNull(data.get("longitude"));
+  const user = state.auth.users.find((u) => u.email.toLowerCase() === email && u.senha === senha && u.ativo !== false);
+  if (!user) {
+    el.loginStatus.textContent = "Credenciais inválidas ou usuário inativo.";
+    return;
+  }
+
+  state.auth.currentUserId = user.id;
+  save();
+  el.loginStatus.textContent = "";
+  event.currentTarget.reset();
+  refreshAll();
+});
+
+el.btnLogout.addEventListener("click", () => {
+  state.auth.currentUserId = null;
+  save();
+  refreshAll();
+});
+
+el.formUsuario.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!ensurePermission("manage_users")) return;
+
+  const data = new FormData(event.currentTarget);
+  const email = String(data.get("email") || "")
+    .trim()
+    .toLowerCase();
+  const exists = state.auth.users.some((u) => u.email.toLowerCase() === email);
+  if (exists) {
+    alert("Já existe usuário com este e-mail.");
+    return;
+  }
+
+  state.auth.users.push({
+    id: uid("usr"),
+    nome: String(data.get("nome") || "").trim(),
+    email,
+    senha: String(data.get("senha") || "").trim(),
+    perfil: String(data.get("perfil") || "comercial"),
+    ativo: true
+  });
+
+  save();
+  refreshAll();
+  event.currentTarget.reset();
+});
+
+el.tabelaUsuarios.addEventListener("click", (event) => {
+  if (!ensurePermission("manage_users")) return;
+  const toggleId = event.target.getAttribute("data-user-toggle");
+  const deleteId = event.target.getAttribute("data-user-delete");
+  const user = currentUser();
+
+  if (toggleId) {
+    const target = state.auth.users.find((u) => u.id === toggleId);
+    if (!target || (user && target.id === user.id)) return;
+    target.ativo = !target.ativo;
+    save();
+    refreshAll();
+  }
+
+  if (deleteId) {
+    if (user && user.id === deleteId) return;
+    state.auth.users = state.auth.users.filter((u) => u.id !== deleteId);
+    save();
+    refreshAll();
+  }
+});
+
+el.formCliente.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!ensurePermission("manage_clientes")) return;
+  const data = new FormData(event.currentTarget);
+
+  const cnpj = onlyDigits(data.get("cnpj"));
+  if (!isValidCnpj(cnpj)) {
+    el.clienteCnpj.setCustomValidity("CNPJ inválido. Verifique e tente novamente.");
+    el.clienteCnpj.reportValidity();
+    return;
+  }
+  el.clienteCnpj.setCustomValidity("");
+
+  const cnpjDuplicado = state.clientes.some((c) => onlyDigits(c.cnpj) === cnpj);
+  if (cnpjDuplicado) {
+    el.clienteCnpj.setCustomValidity("Este CNPJ já está cadastrado.");
+    el.clienteCnpj.reportValidity();
+    return;
+  }
+  el.clienteCnpj.setCustomValidity("");
+  el.cnpjStatus.textContent = "Validando existência do CNPJ...";
+
+  try {
+    const cnpjLookup = await cnpjExists(cnpj);
+    if (!cnpjLookup.exists) {
+      el.clienteCnpj.setCustomValidity(cnpjLookup.reason);
+      el.clienteCnpj.reportValidity();
+      el.cnpjStatus.textContent = cnpjLookup.reason;
+      return;
+    }
+    el.cnpjStatus.textContent = "CNPJ validado na base pública.";
+  } catch (error) {
+    el.clienteCnpj.setCustomValidity("Não foi possível validar existência do CNPJ agora.");
+    el.clienteCnpj.reportValidity();
+    el.cnpjStatus.textContent = error.message;
+    return;
+  }
+
+  const enderecoCompleto = normalizeAddress(data.get("enderecoCompleto"));
   const raioMetros = Number(data.get("raioMetros") || state.checkinConfig.raioPadraoMetros);
+  let latitude = null;
+  let longitude = null;
+
+  if (enderecoCompleto) {
+    try {
+      const geo = await geocodeAddress(enderecoCompleto);
+      latitude = toNumberOrNull(geo.latitude);
+      longitude = toNumberOrNull(geo.longitude);
+    } catch {
+      el.checkinStatus.textContent = "Cliente salvo, mas não foi possível geocodificar o endereço agora.";
+    }
+  }
 
   state.clientes.push({
     id: uid("cli"),
     nome: data.get("nome"),
     empresa: data.get("empresa"),
+    cnpj,
     email: data.get("email"),
     telefone: data.get("telefone"),
     segmento: data.get("segmento"),
+    enderecoCompleto,
     latitude,
     longitude,
     raioMetros
@@ -730,10 +1304,65 @@ el.formCliente.addEventListener("submit", (event) => {
   save();
   refreshAll();
   event.currentTarget.reset();
+  el.clienteCnpj.setCustomValidity("");
+  el.cnpjStatus.textContent = "";
+});
+
+el.clienteCnpj.addEventListener("input", () => {
+  clearTimeout(cnpjLookupDebounce);
+  el.clienteCnpj.value = applyCnpjMask(el.clienteCnpj.value);
+  const value = onlyDigits(el.clienteCnpj.value);
+  el.cnpjStatus.textContent = "";
+  if (!value) {
+    el.clienteCnpj.setCustomValidity("");
+    return;
+  }
+  if (value.length < 14) {
+    el.clienteCnpj.setCustomValidity("CNPJ incompleto.");
+    return;
+  }
+  if (!isValidCnpj(value)) {
+    el.clienteCnpj.setCustomValidity("CNPJ inválido.");
+    return;
+  }
+
+  el.clienteCnpj.setCustomValidity("");
+  cnpjLookupDebounce = setTimeout(async () => {
+    el.cnpjStatus.textContent = "Consultando CNPJ para autopreenchimento...";
+    try {
+      const lookup = await cnpjExists(value);
+      if (!lookup.exists) {
+        el.cnpjStatus.textContent = lookup.reason;
+        return;
+      }
+      applyCnpjAutofill(lookup.payload);
+      el.cnpjStatus.textContent = "Dados da empresa preenchidos automaticamente.";
+    } catch (error) {
+      el.cnpjStatus.textContent = `Consulta indisponível: ${error.message}`;
+    }
+  }, 500);
+});
+
+el.clienteCnpj.addEventListener("blur", async () => {
+  const cnpj = onlyDigits(el.clienteCnpj.value);
+  if (!cnpj || cnpj.length !== 14 || !isValidCnpj(cnpj)) return;
+  el.cnpjStatus.textContent = "Consultando existência do CNPJ...";
+  try {
+    const lookup = await cnpjExists(cnpj);
+    if (lookup.exists) {
+      applyCnpjAutofill(lookup.payload);
+      el.cnpjStatus.textContent = "CNPJ encontrado. Dados sugeridos preenchidos.";
+    } else {
+      el.cnpjStatus.textContent = lookup.reason;
+    }
+  } catch (error) {
+    el.cnpjStatus.textContent = `Consulta indisponível: ${error.message}`;
+  }
 });
 
 el.formOportunidade.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!ensurePermission("manage_oportunidades")) return;
   const data = new FormData(event.currentTarget);
 
   state.oportunidades.push({
@@ -752,6 +1381,7 @@ el.formOportunidade.addEventListener("submit", (event) => {
 
 el.formChamado.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!ensurePermission("manage_chamados")) return;
   const data = new FormData(event.currentTarget);
 
   const createdIso = new Date().toISOString();
@@ -774,6 +1404,7 @@ el.formChamado.addEventListener("submit", (event) => {
 
 el.formAtividade.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!ensurePermission("manage_atividades")) return;
   const data = new FormData(event.currentTarget);
 
   state.atividades.push({
@@ -793,6 +1424,7 @@ el.formAtividade.addEventListener("submit", (event) => {
 
 el.formSla.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!ensurePermission("manage_sla")) return;
   const data = new FormData(event.currentTarget);
 
   state.slaConfig.Baixa = Number(data.get("baixa"));
@@ -807,6 +1439,7 @@ el.formSla.addEventListener("submit", (event) => {
 
 el.formOmie.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!ensurePermission("manage_omie")) return;
   const data = new FormData(event.currentTarget);
 
   state.integracaoOmie.appKey = String(data.get("appKey") || "").trim();
@@ -819,6 +1452,7 @@ el.formOmie.addEventListener("submit", (event) => {
 
 el.formCheckin.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!ensurePermission("manage_checkin")) return;
   const data = new FormData(event.currentTarget);
   await registerCheckin(
     String(data.get("clienteId") || ""),
@@ -832,11 +1466,21 @@ el.checkinCliente.addEventListener("change", () => {
   renderCheckinAtividadeOptions();
 });
 
-el.btnOmieSyncClientes.addEventListener("click", () => syncOmie("clientes"));
-el.btnOmieSyncOportunidades.addEventListener("click", () => syncOmie("oportunidades"));
-el.btnOmieSyncChamados.addEventListener("click", () => syncOmie("chamados"));
+el.btnOmieSyncClientes.addEventListener("click", () => {
+  if (!ensurePermission("manage_omie")) return;
+  syncOmie("clientes");
+});
+el.btnOmieSyncOportunidades.addEventListener("click", () => {
+  if (!ensurePermission("manage_omie")) return;
+  syncOmie("oportunidades");
+});
+el.btnOmieSyncChamados.addEventListener("click", () => {
+  if (!ensurePermission("manage_omie")) return;
+  syncOmie("chamados");
+});
 
 el.tabelaOportunidades.addEventListener("click", (event) => {
+  if (!ensurePermission("manage_oportunidades")) return;
   const nextId = event.target.getAttribute("data-next-stage");
   const deleteId = event.target.getAttribute("data-delete-opp");
 
@@ -856,6 +1500,7 @@ el.tabelaOportunidades.addEventListener("click", (event) => {
 });
 
 el.tabelaChamados.addEventListener("click", (event) => {
+  if (!ensurePermission("manage_chamados")) return;
   const nextId = event.target.getAttribute("data-next-status");
   const deleteId = event.target.getAttribute("data-delete-ticket");
 
@@ -875,6 +1520,7 @@ el.tabelaChamados.addEventListener("click", (event) => {
 });
 
 el.tabelaAtividades.addEventListener("click", (event) => {
+  if (!ensurePermission("manage_atividades")) return;
   const doneId = event.target.getAttribute("data-atividade-done");
   const deleteId = event.target.getAttribute("data-atividade-delete");
 
@@ -898,6 +1544,7 @@ el.filtroEtapa.addEventListener("input", () => {
 });
 
 el.btnExportar.addEventListener("click", () => {
+  if (!ensurePermission("export_data")) return;
   const blob = new Blob([JSON.stringify(state, null, 2)], {
     type: "application/json"
   });
@@ -914,7 +1561,18 @@ if ("Notification" in window && Notification.permission === "default") {
 }
 
 load();
+const authSeeded = ensureAuthSeed();
+const testUserAdded = ensureUserExists({
+  nome: "Adilson",
+  email: "adilson@helyo.com.br",
+  senha: "123456",
+  perfil: "admin"
+});
 ensureSeed();
+if (!state.auth.users.some((u) => u.id === state.auth.currentUserId && u.ativo !== false)) {
+  state.auth.currentUserId = null;
+}
+if (authSeeded || testUserAdded) save();
 refreshAll();
 runSlaMonitor();
 setInterval(runSlaMonitor, 60 * 1000);
