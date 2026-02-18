@@ -265,7 +265,7 @@ export async function listOrders() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("sales_orders")
-    .select("id,order_number,order_type,status,total_amount,order_date,companies:company_id(trade_name)")
+    .select("id,order_number,order_type,status,total_amount,order_date,companies:company_id(trade_name),items:sales_order_items(item_description)")
     .order("order_date", { ascending: false })
     .limit(30);
   if (error) throw new Error(normalizeError(error, "Falha ao listar pedidos."));
@@ -274,8 +274,26 @@ export async function listOrders() {
 
 export async function createOrder(payload) {
   const supabase = ensureSupabase();
-  const { error } = await supabase.from("sales_orders").insert(payload);
+  const orderPayload = { ...payload };
+  const orderItems = Array.isArray(orderPayload.items) ? orderPayload.items : [];
+  delete orderPayload.items;
+
+  const { data, error } = await supabase.from("sales_orders").insert(orderPayload).select("id").single();
   if (error) throw new Error(normalizeError(error, "Falha ao criar pedido."));
+
+  const normalizedItems = orderItems
+    .map((item) => ({
+      sales_order_id: data.id,
+      item_description: String(item.item_description || "").trim(),
+      quantity: Number(item.quantity || 1),
+      unit_price: Number(item.unit_price || 0)
+    }))
+    .filter((item) => item.item_description);
+
+  if (normalizedItems.length) {
+    const { error: itemError } = await supabase.from("sales_order_items").insert(normalizedItems);
+    if (itemError) throw new Error(normalizeError(itemError, "Falha ao criar itens do pedido."));
+  }
 }
 
 export async function listCompanyOptions() {

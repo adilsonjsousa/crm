@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createOrder, listCompanyOptions, listOrders } from "../lib/revenueApi";
+import { OPPORTUNITY_PRODUCTS, OPPORTUNITY_TITLES, resolveEstimatedValueByProduct } from "../lib/productCatalog";
 
 const ORDER_TYPES = [
   { value: "equipment", label: "Equipamento" },
@@ -20,6 +21,8 @@ export default function OrdersModule() {
     order_number: "",
     order_type: "equipment",
     status: "pending",
+    title_category: "",
+    title_product: "",
     total_amount: "",
     order_date: ""
   });
@@ -47,18 +50,40 @@ export default function OrdersModule() {
     setError("");
 
     try {
+      if (!String(form.title_category || "").trim()) {
+        setError("Selecione o título da oportunidade.");
+        return;
+      }
+      if (!String(form.title_product || "").trim()) {
+        setError("Selecione o produto.");
+        return;
+      }
+
+      const fallbackPrice = resolveEstimatedValueByProduct(form.title_category, form.title_product);
+      const totalAmount = Number(form.total_amount || fallbackPrice || 0);
+      const itemDescription = `${form.title_category} > ${form.title_product}`;
+
       await createOrder({
         company_id: form.company_id,
         order_number: form.order_number,
         order_type: form.order_type,
         status: form.status,
-        total_amount: Number(form.total_amount || 0),
-        order_date: form.order_date || new Date().toISOString().slice(0, 10)
+        total_amount: totalAmount,
+        order_date: form.order_date || new Date().toISOString().slice(0, 10),
+        items: [
+          {
+            item_description: itemDescription,
+            quantity: 1,
+            unit_price: totalAmount
+          }
+        ]
       });
 
       setForm((prev) => ({
         ...prev,
         order_number: "",
+        title_category: "",
+        title_product: "",
         total_amount: "",
         order_date: ""
       }));
@@ -98,6 +123,43 @@ export default function OrdersModule() {
               </option>
             ))}
           </select>
+          <select
+            required
+            value={form.title_category}
+            onChange={(e) =>
+              setForm((prev) => ({ ...prev, title_category: e.target.value, title_product: "", total_amount: "" }))
+            }
+          >
+            <option value="">Título da oportunidade</option>
+            {OPPORTUNITY_TITLES.map((title) => (
+              <option key={title} value={title}>
+                {title}
+              </option>
+            ))}
+          </select>
+          <input
+            required
+            list="orders-product-options"
+            placeholder="Produto"
+            value={form.title_product}
+            onChange={(e) =>
+              setForm((prev) => {
+                const nextProduct = e.target.value;
+                const mappedPrice = resolveEstimatedValueByProduct(prev.title_category, nextProduct);
+                return {
+                  ...prev,
+                  title_product: nextProduct,
+                  total_amount: mappedPrice === null ? prev.total_amount : String(mappedPrice)
+                };
+              })
+            }
+            disabled={!form.title_category}
+          />
+          <datalist id="orders-product-options">
+            {(OPPORTUNITY_PRODUCTS[form.title_category] || []).map((product) => (
+              <option key={product} value={product} />
+            ))}
+          </datalist>
           <input
             type="number"
             min="0"
@@ -126,6 +188,7 @@ export default function OrdersModule() {
                 <th>Pedido</th>
                 <th>Empresa</th>
                 <th>Tipo</th>
+                <th>Produtos</th>
                 <th>Total</th>
               </tr>
             </thead>
@@ -135,6 +198,7 @@ export default function OrdersModule() {
                   <td>{order.order_number}</td>
                   <td>{order.companies?.trade_name || "-"}</td>
                   <td>{order.order_type}</td>
+                  <td>{(order.items || []).map((item) => item.item_description).join(", ") || "-"}</td>
                   <td>{brl(order.total_amount)}</td>
                 </tr>
               ))}
