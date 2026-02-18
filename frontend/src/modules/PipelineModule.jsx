@@ -8,14 +8,75 @@ import {
 } from "../lib/revenueApi";
 import { PIPELINE_STAGES, canMoveToStage, stageLabel, stageStatus } from "../lib/pipelineStages";
 
+const OPPORTUNITY_TITLES = [
+  "ACABAMENTOS GRÁFICOS",
+  "COMUNICAÇÃO VISUAL",
+  "PRODUÇÃO COLOR",
+  "PRODUÇÃO MONO",
+  "OFFICE COLOR",
+  "OFFICE MONO",
+  "SUBLIMAÇÃO TEXTIL"
+];
+
+const OPPORTUNITY_SUBCATEGORIES = {
+  "ACABAMENTOS GRÁFICOS": [
+    "LAMINAÇÃO",
+    "VERNIZ UV",
+    "CORTE E VINCO",
+    "HOT STAMPING",
+    "DOBRA E COLAGEM"
+  ],
+  "COMUNICAÇÃO VISUAL": ["BANNER", "ADESIVO", "LONA", "PLACA EM PVC", "FACHADA"],
+  "PRODUÇÃO COLOR": [
+    "CANON imagePRESS V700",
+    "XEROX VERSANT 280",
+    "RICOH PRO C5300",
+    "KONICA MINOLTA ACCURIOPRESS C4080"
+  ],
+  "PRODUÇÃO MONO": ["XEROX PRIMELINK B9100", "RICOH PRO 8300S", "CANON VARIOPRINT 115"],
+  "OFFICE COLOR": ["CANON IR ADV C3926", "HP COLOR LASERJET E783", "KYOCERA TASKALFA 2554CI"],
+  "OFFICE MONO": ["BROTHER DCP-B7650", "KYOCERA ECOSYS M3655IDN", "XEROX B315"],
+  "SUBLIMAÇÃO TEXTIL": ["EPSON SURECOLOR F9470", "MIMAKI TS100-1600", "CALANDRA TÊXTIL 1.8M"]
+};
+
 function brl(value) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
+}
+
+function normalizeTitlePart(value) {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function composeOpportunityTitle(titleCategory, titleSubcategory) {
+  const category = normalizeTitlePart(titleCategory);
+  const subcategory = normalizeTitlePart(titleSubcategory);
+  if (!category) return "";
+  if (!subcategory) return category;
+  return `${category} > ${subcategory}`;
+}
+
+function parseOpportunityTitle(rawTitle) {
+  const normalized = normalizeTitlePart(rawTitle);
+  if (!normalized) {
+    return { title_category: "", title_subcategory: "" };
+  }
+
+  const parts = normalized.split(">");
+  const category = normalizeTitlePart(parts.shift());
+  const subcategory = normalizeTitlePart(parts.join(">"));
+
+  if (OPPORTUNITY_TITLES.includes(category)) {
+    return { title_category: category, title_subcategory: subcategory };
+  }
+
+  return { title_category: "", title_subcategory: normalized };
 }
 
 function emptyOpportunityForm(defaultCompanyId = "") {
   return {
     company_id: defaultCompanyId,
-    title: "",
+    title_category: "",
+    title_subcategory: "",
     stage: "lead",
     estimated_value: "",
     expected_close_date: ""
@@ -68,9 +129,20 @@ export default function PipelineModule() {
     setError("");
 
     try {
+      const titleCategory = normalizeTitlePart(form.title_category);
+      const titleSubcategory = normalizeTitlePart(form.title_subcategory);
+      if (!titleCategory) {
+        setError("Selecione o título da oportunidade.");
+        return;
+      }
+      if (!titleSubcategory) {
+        setError("Informe a sub-categoria da oportunidade.");
+        return;
+      }
+
       const payload = {
         company_id: form.company_id,
-        title: form.title,
+        title: composeOpportunityTitle(titleCategory, titleSubcategory),
         stage: form.stage,
         status: stageStatus(form.stage),
         estimated_value: Number(form.estimated_value || 0),
@@ -164,10 +236,12 @@ export default function PipelineModule() {
 
   function startEditOpportunity(item) {
     setError("");
+    const parsedTitle = parseOpportunityTitle(item.title);
     setEditingOpportunityId(item.id);
     setForm({
       company_id: item.company_id || "",
-      title: item.title || "",
+      title_category: parsedTitle.title_category,
+      title_subcategory: parsedTitle.title_subcategory,
       stage: item.stage || "lead",
       estimated_value: String(item.estimated_value ?? ""),
       expected_close_date: item.expected_close_date || ""
@@ -198,12 +272,33 @@ export default function PipelineModule() {
               </option>
             ))}
           </select>
+          <select
+            required
+            value={form.title_category}
+            onChange={(e) =>
+              setForm((prev) => ({ ...prev, title_category: e.target.value, title_subcategory: "" }))
+            }
+          >
+            <option value="">Selecione o título da oportunidade</option>
+            {OPPORTUNITY_TITLES.map((title) => (
+              <option key={title} value={title}>
+                {title}
+              </option>
+            ))}
+          </select>
           <input
             required
-            placeholder="Título da oportunidade"
-            value={form.title}
-            onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
+            list="pipeline-subcategory-options"
+            placeholder="Sub-categoria (ex.: CANON imagePRESS V700)"
+            value={form.title_subcategory}
+            onChange={(e) => setForm((prev) => ({ ...prev, title_subcategory: e.target.value }))}
+            disabled={!form.title_category}
           />
+          <datalist id="pipeline-subcategory-options">
+            {(OPPORTUNITY_SUBCATEGORIES[form.title_category] || []).map((subcategory) => (
+              <option key={subcategory} value={subcategory} />
+            ))}
+          </datalist>
           <input
             type="number"
             min="0"
