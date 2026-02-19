@@ -299,7 +299,7 @@ export async function listOpportunities() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("opportunities")
-    .select("id,company_id,title,stage,status,estimated_value,expected_close_date,created_at,companies:company_id(trade_name)")
+    .select("id,company_id,title,stage,status,estimated_value,expected_close_date,created_at,companies:company_id(trade_name,email,phone)")
     .order("created_at", { ascending: false })
     .limit(30);
   if (error) throw new Error(normalizeError(error, "Falha ao listar oportunidades."));
@@ -506,8 +506,9 @@ export async function listCompanyContacts(companyId) {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("contacts")
-    .select("id,full_name,email,phone,whatsapp,birth_date")
+    .select("id,full_name,email,phone,whatsapp,birth_date,is_primary")
     .eq("company_id", companyId)
+    .order("is_primary", { ascending: false })
     .order("full_name", { ascending: true })
     .limit(300);
   if (error) throw new Error(normalizeError(error, "Falha ao listar contatos do cliente."));

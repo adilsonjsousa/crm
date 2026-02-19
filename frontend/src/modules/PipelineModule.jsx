@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   createAutomatedProposalFromOpportunity,
+  createCompanyInteraction,
   createOpportunity,
+  listCompanyContacts,
   listCompanyOptions,
   listLatestOrdersByOpportunity,
   listOpportunities,
@@ -18,8 +20,170 @@ import {
   resolveEstimatedValueByProduct
 } from "../lib/productCatalog";
 
+const PROPOSAL_TEMPLATE_STORAGE_KEY = "crm.pipeline.proposal-template.v1";
+
+const DEFAULT_PROPOSAL_TEMPLATE = [
+  "Proposta Comercial {{numero_proposta}}",
+  "",
+  "Cliente: {{cliente_nome}}",
+  "Empresa: {{empresa_nome}}",
+  "Data de emissao: {{data_emissao}}",
+  "Validade: {{validade_dias}} dias",
+  "",
+  "Produto/Servico: {{produto}}",
+  "Categoria: {{categoria}}",
+  "Valor total: {{valor_total}}",
+  "",
+  "Condicoes de pagamento:",
+  "{{condicoes_pagamento}}",
+  "",
+  "Prazo de entrega:",
+  "{{prazo_entrega}}",
+  "",
+  "Garantia:",
+  "{{garantia}}",
+  "",
+  "Observacoes:",
+  "{{observacoes}}",
+  "",
+  "Atenciosamente,",
+  "Equipe Comercial"
+].join("\n");
+
 function brl(value) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
+}
+
+function cleanPhoneDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function normalizeWhatsAppNumber(value) {
+  const digits = cleanPhoneDigits(value);
+  if (!digits) return "";
+  if (digits.startsWith("55")) return digits;
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
+}
+
+function formatDateBr(dateValue) {
+  if (!dateValue) return "";
+  const parsed = new Date(`${dateValue}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return String(dateValue);
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  }).format(parsed);
+}
+
+function getStoredProposalTemplate() {
+  if (typeof window === "undefined") return DEFAULT_PROPOSAL_TEMPLATE;
+  const saved = window.localStorage.getItem(PROPOSAL_TEMPLATE_STORAGE_KEY);
+  return saved || DEFAULT_PROPOSAL_TEMPLATE;
+}
+
+function buildDraftProposalNumber(opportunityId = "") {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hour = String(now.getHours()).padStart(2, "0");
+  const minute = String(now.getMinutes()).padStart(2, "0");
+  const suffix = String(opportunityId || "")
+    .replace(/[^a-z0-9]/gi, "")
+    .slice(-6)
+    .toUpperCase();
+  return `RASC-${year}${month}${day}${hour}${minute}${suffix ? `-${suffix}` : ""}`;
+}
+
+function sanitizeFilePart(value) {
+  return String(value || "arquivo")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderProposalTemplate(template, variables) {
+  let output = String(template || "");
+  for (const [key, value] of Object.entries(variables || {})) {
+    const regex = new RegExp(`{{\\s*${key}\\s*}}`, "gi");
+    output = output.replace(regex, String(value ?? ""));
+  }
+  return output;
+}
+
+function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText }) {
+  const textHtml = escapeHtml(renderedText).replace(/\n/g, "<br />");
+  return `<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>${escapeHtml(proposalNumber || "Proposta Comercial")}</title>
+    <style>
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        margin: 24px;
+        color: #1f2937;
+      }
+      .header {
+        margin-bottom: 20px;
+      }
+      .header h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      .header p {
+        margin: 0;
+        color: #4b5563;
+        font-size: 14px;
+      }
+      .content {
+        border: 1px solid #d1d5db;
+        border-radius: 12px;
+        padding: 16px;
+        line-height: 1.55;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>${escapeHtml(proposalNumber || "Proposta Comercial")}</h1>
+      <p>${escapeHtml(companyName || "Cliente")}</p>
+    </div>
+    <div class="content">${textHtml}</div>
+  </body>
+</html>`;
+}
+
+function downloadFile({ fileName, content, mimeType }) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function pickPreferredContact(contacts = []) {
+  if (!contacts.length) return null;
+  return contacts.find((contact) => Boolean(contact.is_primary)) || contacts[0];
 }
 
 function emptyOpportunityForm(defaultCompanyId = "") {
@@ -31,6 +195,35 @@ function emptyOpportunityForm(defaultCompanyId = "") {
     stage: "lead",
     estimated_value: "",
     expected_close_date: ""
+  };
+}
+
+function createProposalDraft({ opportunity, linkedOrder, contacts }) {
+  const parsedTitle = parseOpportunityTitle(opportunity?.title || "");
+  const preferredContact = pickPreferredContact(contacts);
+  const today = new Date().toISOString().slice(0, 10);
+  const totalValue = Number(linkedOrder?.total_amount ?? opportunity?.estimated_value ?? 0);
+
+  return {
+    opportunity_id: opportunity?.id || "",
+    company_id: opportunity?.company_id || "",
+    proposal_number: linkedOrder?.order_number || buildDraftProposalNumber(opportunity?.id),
+    issue_date: today,
+    validity_days: "7",
+    category: parsedTitle.title_subcategory || "",
+    product: parsedTitle.title_product || String(opportunity?.title || "").trim(),
+    estimated_value: Number.isFinite(totalValue) ? totalValue : 0,
+    payment_terms: "50% de entrada e 50% na entrega/instalacao.",
+    delivery_terms: "Entrega em ate 15 dias uteis apos aprovacao.",
+    warranty_terms: "Garantia de 12 meses contra defeitos de fabricacao.",
+    notes: "",
+    contact_id: preferredContact?.id || "",
+    client_name: preferredContact?.full_name || opportunity?.companies?.trade_name || "Cliente",
+    client_email: preferredContact?.email || opportunity?.companies?.email || "",
+    client_whatsapp: preferredContact?.whatsapp || preferredContact?.phone || opportunity?.companies?.phone || "",
+    send_channel: "whatsapp",
+    enable_send: false,
+    template_body: getStoredProposalTemplate()
   };
 }
 
@@ -48,6 +241,10 @@ export default function PipelineModule() {
     if (typeof window === "undefined") return true;
     return window.localStorage.getItem("crm.pipeline.auto-proposal-mode") !== "0";
   });
+  const [proposalEditor, setProposalEditor] = useState(null);
+  const [proposalContacts, setProposalContacts] = useState([]);
+  const [proposalLoadingContacts, setProposalLoadingContacts] = useState(false);
+  const [sendingProposal, setSendingProposal] = useState(false);
   const [form, setForm] = useState(() => emptyOpportunityForm());
 
   const itemsByStage = useMemo(() => {
@@ -63,6 +260,40 @@ export default function PipelineModule() {
 
     return grouped;
   }, [items]);
+
+  const proposalVariables = useMemo(() => {
+    if (!proposalEditor) return {};
+    return {
+      numero_proposta: proposalEditor.proposal_number,
+      cliente_nome: proposalEditor.client_name,
+      empresa_nome:
+        items.find((item) => item.id === proposalEditor.opportunity_id)?.companies?.trade_name || proposalEditor.client_name,
+      data_emissao: formatDateBr(proposalEditor.issue_date),
+      validade_dias: proposalEditor.validity_days,
+      categoria: proposalEditor.category,
+      produto: proposalEditor.product,
+      valor_total: brl(proposalEditor.estimated_value),
+      condicoes_pagamento: proposalEditor.payment_terms,
+      prazo_entrega: proposalEditor.delivery_terms,
+      garantia: proposalEditor.warranty_terms,
+      observacoes: proposalEditor.notes || "Sem observacoes adicionais."
+    };
+  }, [items, proposalEditor]);
+
+  const renderedProposalText = useMemo(() => {
+    if (!proposalEditor) return "";
+    return renderProposalTemplate(proposalEditor.template_body, proposalVariables);
+  }, [proposalEditor, proposalVariables]);
+
+  const renderedProposalHtml = useMemo(() => {
+    if (!proposalEditor) return "";
+    return buildProposalDocumentHtml({
+      proposalNumber: proposalEditor.proposal_number,
+      companyName:
+        items.find((item) => item.id === proposalEditor.opportunity_id)?.companies?.trade_name || proposalEditor.client_name,
+      renderedText: renderedProposalText
+    });
+  }, [items, proposalEditor, renderedProposalText]);
 
   async function load() {
     setError("");
@@ -173,7 +404,7 @@ export default function PipelineModule() {
     if (currentOpportunity.stage === targetStage) return;
 
     if (!canMoveToStage(currentOpportunity.stage, targetStage)) {
-      setError(`Movimento inválido. Avance para a próxima etapa do funil (${stageLabel(currentOpportunity.stage)}).`);
+      setError(`Movimento invalido. Avance para a proxima etapa do funil (${stageLabel(currentOpportunity.stage)}).`);
       return;
     }
 
@@ -181,9 +412,7 @@ export default function PipelineModule() {
     setError("");
     setItems((prev) =>
       prev.map((item) =>
-        item.id === opportunityId
-          ? { ...item, stage: targetStage, status: stageStatus(targetStage) }
-          : item
+        item.id === opportunityId ? { ...item, stage: targetStage, status: stageStatus(targetStage) } : item
       )
     );
     if (editingOpportunityId === opportunityId) {
@@ -249,8 +478,16 @@ export default function PipelineModule() {
     try {
       const result = await createAutomatedProposalFromOpportunity(item);
       setProposalsByOpportunity((prev) => ({ ...prev, [item.id]: result }));
+      setProposalEditor((prev) => {
+        if (!prev || prev.opportunity_id !== item.id) return prev;
+        return {
+          ...prev,
+          proposal_number: result.order_number || prev.proposal_number,
+          estimated_value: Number(result.total_amount ?? prev.estimated_value)
+        };
+      });
       if (result.already_exists) {
-        setSuccess(`Essa oportunidade já possui proposta vinculada (${result.order_number}).`);
+        setSuccess(`Essa oportunidade ja possui proposta vinculada (${result.order_number}).`);
       } else {
         setSuccess(`Proposta criada automaticamente (${result.order_number}).`);
       }
@@ -261,18 +498,181 @@ export default function PipelineModule() {
     }
   }
 
+  async function handleOpenProposalModel(event, item) {
+    event.stopPropagation();
+    if (!item?.id) return;
+
+    setError("");
+    setSuccess("");
+    setProposalLoadingContacts(true);
+
+    try {
+      const contacts = item.company_id ? await listCompanyContacts(item.company_id) : [];
+      const linkedOrder = proposalsByOpportunity[item.id] || null;
+      setProposalContacts(contacts);
+      setProposalEditor(createProposalDraft({ opportunity: item, linkedOrder, contacts }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setProposalLoadingContacts(false);
+    }
+  }
+
+  function closeProposalEditor() {
+    setProposalEditor(null);
+    setProposalContacts([]);
+    setProposalLoadingContacts(false);
+  }
+
+  function handleProposalField(field, value) {
+    setProposalEditor((prev) => (prev ? { ...prev, [field]: value } : prev));
+  }
+
+  function handleProposalContactChange(contactId) {
+    const contact = proposalContacts.find((item) => item.id === contactId);
+    setProposalEditor((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, contact_id: contactId };
+      if (contact) {
+        next.client_name = contact.full_name || prev.client_name;
+        next.client_email = contact.email || prev.client_email;
+        next.client_whatsapp = contact.whatsapp || contact.phone || prev.client_whatsapp;
+      }
+      return next;
+    });
+  }
+
+  function handleSaveProposalTemplate() {
+    if (!proposalEditor || typeof window === "undefined") return;
+    window.localStorage.setItem(PROPOSAL_TEMPLATE_STORAGE_KEY, proposalEditor.template_body || DEFAULT_PROPOSAL_TEMPLATE);
+    setSuccess("Modelo de proposta salvo como padrao neste navegador.");
+  }
+
+  function handleSaveProposalDoc() {
+    if (!proposalEditor || !renderedProposalHtml) return;
+    const fileName = `${sanitizeFilePart(proposalEditor.proposal_number)}-${sanitizeFilePart(proposalEditor.client_name)}.doc`;
+    downloadFile({
+      fileName,
+      content: renderedProposalHtml,
+      mimeType: "application/msword"
+    });
+    setSuccess(`Arquivo DOC salvo (${fileName}).`);
+  }
+
+  function handleSaveProposalPdf() {
+    if (!proposalEditor || !renderedProposalHtml) return;
+    const printWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      setError("Permita pop-up no navegador para gerar o PDF.");
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(renderedProposalHtml);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+
+    setSuccess("Janela de impressao aberta. Selecione 'Salvar como PDF'.");
+  }
+
+  async function handleSendProposalToClient() {
+    if (!proposalEditor) return;
+    if (!proposalEditor.enable_send) {
+      setError("Ative a opcao 'Habilitar envio ao cliente'.");
+      return;
+    }
+
+    setSendingProposal(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const subject = `Proposta Comercial ${proposalEditor.proposal_number}`;
+      const payloadText = renderedProposalText.slice(0, 5800);
+      let interactionWarning = "";
+
+      if (proposalEditor.send_channel === "whatsapp") {
+        const normalizedWhats = normalizeWhatsAppNumber(proposalEditor.client_whatsapp);
+        if (!normalizedWhats) {
+          setError("Informe o WhatsApp do cliente para envio.");
+          return;
+        }
+
+        const text = encodeURIComponent(`${subject}\n\n${renderedProposalText}`);
+        window.open(`https://wa.me/${normalizedWhats}?text=${text}`, "_blank", "noopener,noreferrer");
+
+        try {
+          await createCompanyInteraction({
+            company_id: proposalEditor.company_id,
+            contact_id: proposalEditor.contact_id || null,
+            interaction_type: "whatsapp",
+            direction: "outbound",
+            subject,
+            content: payloadText,
+            whatsapp_number: normalizedWhats,
+            occurred_at: new Date().toISOString()
+          });
+        } catch (err) {
+          interactionWarning = err.message;
+        }
+
+        setSuccess(
+          interactionWarning
+            ? "WhatsApp aberto, mas nao foi possivel registrar no historico do cliente."
+            : "WhatsApp aberto com a proposta pronta para envio."
+        );
+        return;
+      }
+
+      const email = String(proposalEditor.client_email || "").trim();
+      if (!email) {
+        setError("Informe o e-mail do cliente para envio.");
+        return;
+      }
+
+      const body = encodeURIComponent(
+        `${subject}\n\n${renderedProposalText}\n\nAnexo: incluir o arquivo PDF ou DOC gerado no CRM.`
+      );
+      const mailtoUrl = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${body}`;
+      window.location.href = mailtoUrl;
+
+      try {
+        await createCompanyInteraction({
+          company_id: proposalEditor.company_id,
+          contact_id: proposalEditor.contact_id || null,
+          interaction_type: "note",
+          direction: "outbound",
+          subject,
+          content: `Proposta preparada para envio por e-mail para ${email}.\n\n${payloadText}`,
+          occurred_at: new Date().toISOString()
+        });
+      } catch (err) {
+        interactionWarning = err.message;
+      }
+
+      setSuccess(
+        interactionWarning
+          ? "Cliente de e-mail aberto, mas nao foi possivel registrar no historico do cliente."
+          : "Cliente de e-mail aberto. Anexe o PDF ou DOC antes de enviar."
+      );
+    } finally {
+      setSendingProposal(false);
+    }
+  }
+
   return (
     <section className="module">
       <article className="panel">
         <h2>Pipeline Comercial</h2>
-        <p className="muted">Arraste os cards para evoluir a oportunidade para a próxima etapa.</p>
+        <p className="muted">Arraste os cards para evoluir a oportunidade para a proxima etapa.</p>
         <div className="pipeline-automation-toggle">
           <label className="checkbox-inline">
             <input type="checkbox" checked={autoProposalMode} onChange={handleToggleAutoProposalMode} />
-            Modo automático de proposta
+            Modo automatico de proposta
           </label>
           <p className="pipeline-automation-help">
-            Com este modo ativo, cada card permite gerar uma proposta automaticamente no módulo Pedidos.
+            Com este modo ativo, cada card permite gerar uma proposta automaticamente no modulo Pedidos.
           </p>
         </div>
         <form className="form-grid" onSubmit={handleSubmit}>
@@ -376,7 +776,7 @@ export default function PipelineModule() {
             </button>
             {editingOpportunityId ? (
               <button type="button" className="btn-ghost" onClick={cancelEditOpportunity}>
-                Cancelar edição
+                Cancelar edicao
               </button>
             ) : null}
           </div>
@@ -422,6 +822,14 @@ export default function PipelineModule() {
                         </p>
                       ) : null}
                       <div className="pipeline-card-actions">
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onClick={(event) => handleOpenProposalModel(event, item)}
+                        >
+                          Modelo
+                        </button>
                         {autoProposalMode ? (
                           <button
                             type="button"
@@ -459,6 +867,168 @@ export default function PipelineModule() {
           ))}
         </div>
       </article>
+
+      {proposalEditor ? (
+        <article className="panel top-gap">
+          <div className="proposal-model-header">
+            <div>
+              <h3>Modelo de proposta</h3>
+              <p className="muted">
+                Personalize o texto da proposta, salve em PDF/DOC e, se desejar, habilite envio ao cliente.
+              </p>
+            </div>
+            <button type="button" className="btn-ghost btn-table-action" onClick={closeProposalEditor}>
+              Fechar
+            </button>
+          </div>
+
+          {proposalLoadingContacts ? <p className="muted">Carregando contatos do cliente...</p> : null}
+
+          <div className="proposal-model-grid">
+            <div className="proposal-model-form">
+              <div className="form-grid">
+                <input
+                  placeholder="Numero da proposta"
+                  value={proposalEditor.proposal_number}
+                  onChange={(event) => handleProposalField("proposal_number", event.target.value)}
+                />
+                <input
+                  type="date"
+                  value={proposalEditor.issue_date}
+                  onChange={(event) => handleProposalField("issue_date", event.target.value)}
+                />
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="Validade (dias)"
+                  value={proposalEditor.validity_days}
+                  onChange={(event) => handleProposalField("validity_days", event.target.value)}
+                />
+                <select value={proposalEditor.contact_id} onChange={(event) => handleProposalContactChange(event.target.value)}>
+                  <option value="">Selecionar contato do cliente</option>
+                  {proposalContacts.map((contact) => (
+                    <option key={contact.id} value={contact.id}>
+                      {contact.full_name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  placeholder="Nome do cliente"
+                  value={proposalEditor.client_name}
+                  onChange={(event) => handleProposalField("client_name", event.target.value)}
+                />
+                <input
+                  type="email"
+                  placeholder="E-mail do cliente"
+                  value={proposalEditor.client_email}
+                  onChange={(event) => handleProposalField("client_email", event.target.value)}
+                />
+                <input
+                  placeholder="WhatsApp do cliente"
+                  value={proposalEditor.client_whatsapp}
+                  onChange={(event) => handleProposalField("client_whatsapp", event.target.value)}
+                />
+                <input
+                  placeholder="Categoria"
+                  value={proposalEditor.category}
+                  onChange={(event) => handleProposalField("category", event.target.value)}
+                />
+                <input
+                  placeholder="Produto/servico"
+                  value={proposalEditor.product}
+                  onChange={(event) => handleProposalField("product", event.target.value)}
+                />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Valor da proposta"
+                  value={proposalEditor.estimated_value}
+                  onChange={(event) => handleProposalField("estimated_value", Number(event.target.value || 0))}
+                />
+                <textarea
+                  placeholder="Condicoes de pagamento"
+                  value={proposalEditor.payment_terms}
+                  onChange={(event) => handleProposalField("payment_terms", event.target.value)}
+                />
+                <textarea
+                  placeholder="Prazo de entrega"
+                  value={proposalEditor.delivery_terms}
+                  onChange={(event) => handleProposalField("delivery_terms", event.target.value)}
+                />
+                <textarea
+                  placeholder="Garantia"
+                  value={proposalEditor.warranty_terms}
+                  onChange={(event) => handleProposalField("warranty_terms", event.target.value)}
+                />
+                <textarea
+                  placeholder="Observacoes"
+                  value={proposalEditor.notes}
+                  onChange={(event) => handleProposalField("notes", event.target.value)}
+                />
+                <textarea
+                  className="proposal-template-input"
+                  placeholder="Modelo da proposta"
+                  value={proposalEditor.template_body}
+                  onChange={(event) => handleProposalField("template_body", event.target.value)}
+                />
+                <p className="proposal-placeholder-help">
+                  Placeholders:{" "}
+                  <code>{"{{numero_proposta}}"}</code>, <code>{"{{cliente_nome}}"}</code>,{" "}
+                  <code>{"{{empresa_nome}}"}</code>, <code>{"{{data_emissao}}"}</code>,{" "}
+                  <code>{"{{validade_dias}}"}</code>, <code>{"{{categoria}}"}</code>,{" "}
+                  <code>{"{{produto}}"}</code>, <code>{"{{valor_total}}"}</code>,{" "}
+                  <code>{"{{condicoes_pagamento}}"}</code>, <code>{"{{prazo_entrega}}"}</code>,{" "}
+                  <code>{"{{garantia}}"}</code>, <code>{"{{observacoes}}"}</code>
+                </p>
+                <div className="inline-actions">
+                  <button type="button" className="btn-ghost" onClick={handleSaveProposalTemplate}>
+                    Salvar modelo padrao
+                  </button>
+                  <button type="button" className="btn-primary" onClick={handleSaveProposalDoc}>
+                    Salvar .DOC
+                  </button>
+                  <button type="button" className="btn-primary" onClick={handleSaveProposalPdf}>
+                    Salvar .PDF
+                  </button>
+                </div>
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={proposalEditor.enable_send}
+                    onChange={(event) => handleProposalField("enable_send", event.target.checked)}
+                  />
+                  Habilitar envio ao cliente
+                </label>
+                {proposalEditor.enable_send ? (
+                  <div className="proposal-send-grid">
+                    <select
+                      value={proposalEditor.send_channel}
+                      onChange={(event) => handleProposalField("send_channel", event.target.value)}
+                    >
+                      <option value="whatsapp">Enviar por WhatsApp</option>
+                      <option value="email">Enviar por E-mail</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={handleSendProposalToClient}
+                      disabled={sendingProposal}
+                    >
+                      {sendingProposal ? "Enviando..." : "Enviar ao cliente"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <aside className="proposal-preview">
+              <h4>Previa da proposta</h4>
+              <pre>{renderedProposalText}</pre>
+            </aside>
+          </div>
+        </article>
+      ) : null}
     </section>
   );
 }

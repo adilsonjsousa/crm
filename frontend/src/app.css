@@ -1140,6 +1140,68 @@ tbody tr:hover {
   border-radius: 4px;
 }
 
+.proposal-model-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.proposal-model-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(300px, 1fr);
+  gap: 12px;
+}
+
+.proposal-model-form {
+  min-width: 0;
+}
+
+.proposal-template-input {
+  min-height: 220px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.8rem;
+}
+
+.proposal-placeholder-help {
+  margin: -2px 0 2px;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.proposal-placeholder-help code {
+  font-size: 0.72rem;
+}
+
+.proposal-send-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.proposal-preview {
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-surface-muted);
+  padding: 12px;
+}
+
+.proposal-preview h4 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+}
+
+.proposal-preview pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-main);
+}
+
 .top-gap {
   margin-top: 10px;
 }
@@ -1206,6 +1268,14 @@ tbody tr:hover {
 
   .agenda-board {
     grid-template-columns: repeat(4, minmax(180px, 1fr));
+  }
+
+  .proposal-model-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .proposal-send-grid {
+    grid-template-columns: 1fr;
   }
 }
 
