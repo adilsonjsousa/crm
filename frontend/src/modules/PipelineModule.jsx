@@ -624,6 +624,14 @@ export default function PipelineModule() {
     setSuccess("Modelo de proposta salvo como padrao neste navegador.");
   }
 
+  function handleResetProposalTemplate() {
+    setProposalEditor((prev) => (prev ? { ...prev, template_body: DEFAULT_PROPOSAL_TEMPLATE } : prev));
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(PROPOSAL_TEMPLATE_STORAGE_KEY);
+    }
+    setSuccess("Modelo padrao restaurado com sucesso.");
+  }
+
   function handleSaveProposalDoc() {
     if (!proposalEditor || !renderedProposalHtml) return;
     const fileName = `${sanitizeFilePart(proposalEditor.proposal_number)}-${sanitizeFilePart(proposalEditor.client_name)}.doc`;
@@ -863,6 +871,11 @@ export default function PipelineModule() {
         <h3>Funil de vendas</h3>
         {error ? <p className="error-text">{error}</p> : null}
         {success ? <p className="success-text">{success}</p> : null}
+        {!proposalEditor ? (
+          <p className="muted">
+            Para ver o conteudo da proposta, clique em <strong>Modelo</strong> em qualquer card do pipeline.
+          </p>
+        ) : null}
         <div className="pipeline-board">
           {PIPELINE_STAGES.map((stage) => (
             <section
@@ -1060,6 +1073,9 @@ export default function PipelineModule() {
                 <div className="inline-actions">
                   <button type="button" className="btn-ghost" onClick={handleSaveProposalTemplate}>
                     Salvar modelo padrao
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={handleResetProposalTemplate}>
+                    Restaurar modelo base
                   </button>
                   <button type="button" className="btn-primary" onClick={handleSaveProposalDoc}>
                     Salvar .DOC
