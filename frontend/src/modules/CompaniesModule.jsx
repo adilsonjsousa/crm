@@ -38,6 +38,11 @@ const EMPTY_COMPANY_FORM = {
   phone: "",
   segmento: "",
   address_full: "",
+  checkin_validation_mode: "geo",
+  checkin_radius_meters: "150",
+  checkin_latitude: "",
+  checkin_longitude: "",
+  checkin_pin: "",
   contact_name: "",
   contact_email: "",
   contact_whatsapp: "",
@@ -59,7 +64,12 @@ const EMPTY_EDIT_COMPANY_FORM = {
   email: "",
   phone: "",
   segmento: "",
-  address_full: ""
+  address_full: "",
+  checkin_validation_mode: "geo",
+  checkin_radius_meters: "150",
+  checkin_latitude: "",
+  checkin_longitude: "",
+  checkin_pin: ""
 };
 
 const EMPTY_EDIT_CONTACT_FORM = {
@@ -178,6 +188,29 @@ function taskStatusLabel(value) {
   return map[value] || String(value || "-");
 }
 
+function visitMethodLabel(value) {
+  const map = {
+    geo: "Geolocalização",
+    geo_pin: "Geolocalização + PIN"
+  };
+  return map[value] || "Geolocalização";
+}
+
+function visitExecutionSummary(task) {
+  if (!task) return "-";
+  const visitType = normalizeText(`${task.task_type || ""} ${task.title || ""}`);
+  if (!visitType.includes("visita") && !visitType.includes("visit")) return "-";
+  if (task.visit_checkout_at) {
+    return `Check-out ${formatDateTime(task.visit_checkout_at)} · ${task.visit_checkout_note || "Sem resumo"}`;
+  }
+  if (task.visit_checkin_at) {
+    const distance = Number(task.visit_checkin_distance_meters);
+    const distanceLabel = Number.isFinite(distance) ? ` · Distância ${Math.round(distance)}m` : "";
+    return `Check-in ${formatDateTime(task.visit_checkin_at)} (${visitMethodLabel(task.visit_checkin_method)})${distanceLabel}`;
+  }
+  return "Check-in pendente";
+}
+
 function opportunityStatusLabel(value) {
   const map = {
     open: "Aberta",
@@ -205,6 +238,13 @@ function directionLabel(value) {
   return map[value] || "-";
 }
 
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function normalizePhoneDigits(value) {
   return String(value || "").replace(/\D/g, "");
 }
@@ -223,6 +263,55 @@ function upperLettersOnly(value) {
     .replace(/[^A-ZÀ-ÖØ-Ý\s]/g, "")
     .replace(/\s+/g, " ")
     .trimStart();
+}
+
+function normalizeCheckinMode(value) {
+  return value === "geo_pin" ? "geo_pin" : "geo";
+}
+
+function normalizeCompanyCheckinConfig(raw) {
+  const mode = normalizeCheckinMode(raw?.checkin_validation_mode);
+  const radiusParsed = Number(String(raw?.checkin_radius_meters ?? "").trim().replace(",", "."));
+  const radius = Number.isFinite(radiusParsed) ? Math.round(radiusParsed) : 150;
+
+  if (radius < 30 || radius > 5000) {
+    throw new Error("Raio de check-in deve estar entre 30 e 5000 metros.");
+  }
+
+  const latRaw = String(raw?.checkin_latitude ?? "").trim().replace(",", ".");
+  const lngRaw = String(raw?.checkin_longitude ?? "").trim().replace(",", ".");
+  const hasLat = Boolean(latRaw);
+  const hasLng = Boolean(lngRaw);
+
+  if (hasLat !== hasLng) {
+    throw new Error("Informe latitude e longitude juntas para validar o raio de check-in.");
+  }
+
+  let latitude = null;
+  let longitude = null;
+  if (hasLat && hasLng) {
+    latitude = Number(latRaw);
+    longitude = Number(lngRaw);
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+      throw new Error("Latitude inválida para check-in.");
+    }
+    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      throw new Error("Longitude inválida para check-in.");
+    }
+  }
+
+  const pin = String(raw?.checkin_pin || "").trim();
+  if (mode === "geo_pin" && !pin) {
+    throw new Error("Informe um PIN para clientes com validação Geo + PIN.");
+  }
+
+  return {
+    checkin_validation_mode: mode,
+    checkin_radius_meters: radius,
+    checkin_latitude: latitude,
+    checkin_longitude: longitude,
+    checkin_pin: pin || null
+  };
 }
 
 export default function CompaniesModule({ focusTarget = "company", focusRequest = 0 }) {
@@ -306,6 +395,32 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
           title: payload.task_title || "Atividade",
           details: `${taskStatusLabel(payload.from_status)} -> ${taskStatusLabel(payload.to_status)}`,
           note: payload.comment || "-"
+        };
+      }
+      if (row.event_name === "task_visit_checkin") {
+        const distance = Number(payload.checkin_distance_meters);
+        const radius = Number(payload.target_radius_meters);
+        const distanceLabel = Number.isFinite(distance) ? `${Math.round(distance)}m` : "Sem referência de distância";
+        const radiusLabel = Number.isFinite(radius) ? ` (raio ${Math.round(radius)}m)` : "";
+        return {
+          id: `event-${row.id}`,
+          happened_at: row.happened_at,
+          type: "visita",
+          title: payload.task_title || "Visita",
+          details: `Check-in (${visitMethodLabel(payload.method)})`,
+          note: `${distanceLabel}${radiusLabel}${payload.checkin_note ? ` · ${payload.checkin_note}` : ""}`
+        };
+      }
+      if (row.event_name === "task_visit_checkout") {
+        const duration = Number(payload.duration_minutes);
+        const durationLabel = Number.isFinite(duration) ? `Duração ${duration} min` : "Duração não calculada";
+        return {
+          id: `event-${row.id}`,
+          happened_at: row.happened_at,
+          type: "visita",
+          title: payload.task_title || "Visita",
+          details: "Check-out concluído",
+          note: `${durationLabel}${payload.checkout_note ? ` · ${payload.checkout_note}` : ""}`
         };
       }
       return {
@@ -524,6 +639,8 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         return;
       }
 
+      const checkinConfig = normalizeCompanyCheckinConfig(form);
+
       const createdCompany = await createCompany({
         cnpj: normalizedCnpj,
         trade_name: upperLettersOnly(form.trade_name),
@@ -531,7 +648,8 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         email: form.email || null,
         phone: form.phone || null,
         segmento: form.segmento || null,
-        address_full: form.address_full || null
+        address_full: form.address_full || null,
+        ...checkinConfig
       });
 
       if (hasPrimaryContactData) {
@@ -591,7 +709,14 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       email: company.email || "",
       phone: company.phone || "",
       segmento: company.segmento || "",
-      address_full: company.address_full || ""
+      address_full: company.address_full || "",
+      checkin_validation_mode: normalizeCheckinMode(company.checkin_validation_mode),
+      checkin_radius_meters: String(company.checkin_radius_meters || 150),
+      checkin_latitude:
+        company.checkin_latitude === null || company.checkin_latitude === undefined ? "" : String(company.checkin_latitude),
+      checkin_longitude:
+        company.checkin_longitude === null || company.checkin_longitude === undefined ? "" : String(company.checkin_longitude),
+      checkin_pin: company.checkin_pin || ""
     });
   }
 
@@ -624,6 +749,8 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         return;
       }
 
+      const checkinConfig = normalizeCompanyCheckinConfig(editForm);
+
       setSavingEdit(true);
       await updateCompany(editingCompanyId, {
         cnpj: normalizedCnpj,
@@ -632,7 +759,8 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         email: editForm.email || null,
         phone: editForm.phone || null,
         segmento: editForm.segmento || null,
-        address_full: editForm.address_full || null
+        address_full: editForm.address_full || null,
+        ...checkinConfig
       });
 
       cancelEditCompany();
@@ -837,6 +965,45 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
               onChange={(event) => setForm((prev) => ({ ...prev, address_full: event.target.value }))}
             />
 
+            <h3>Check-in de visitas (opcional)</h3>
+            <select
+              value={form.checkin_validation_mode}
+              onChange={(event) => setForm((prev) => ({ ...prev, checkin_validation_mode: event.target.value }))}
+            >
+              <option value="geo">Somente geolocalização</option>
+              <option value="geo_pin">Geolocalização + PIN do cliente</option>
+            </select>
+            <input
+              type="number"
+              min="30"
+              max="5000"
+              step="1"
+              placeholder="Raio de validação (metros)"
+              value={form.checkin_radius_meters}
+              onChange={(event) => setForm((prev) => ({ ...prev, checkin_radius_meters: event.target.value }))}
+            />
+            <input
+              type="number"
+              step="0.000001"
+              placeholder="Latitude do cliente"
+              value={form.checkin_latitude}
+              onChange={(event) => setForm((prev) => ({ ...prev, checkin_latitude: event.target.value }))}
+            />
+            <input
+              type="number"
+              step="0.000001"
+              placeholder="Longitude do cliente"
+              value={form.checkin_longitude}
+              onChange={(event) => setForm((prev) => ({ ...prev, checkin_longitude: event.target.value }))}
+            />
+            {form.checkin_validation_mode === "geo_pin" ? (
+              <input
+                placeholder="PIN para validação no cliente"
+                value={form.checkin_pin}
+                onChange={(event) => setForm((prev) => ({ ...prev, checkin_pin: event.target.value }))}
+              />
+            ) : null}
+
             <h3>Contato principal (opcional)</h3>
             <input
               placeholder="Nome do contato"
@@ -913,6 +1080,44 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                 value={editForm.address_full}
                 onChange={(event) => setEditForm((prev) => ({ ...prev, address_full: event.target.value }))}
               />
+              <h3>Check-in de visitas (opcional)</h3>
+              <select
+                value={editForm.checkin_validation_mode}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, checkin_validation_mode: event.target.value }))}
+              >
+                <option value="geo">Somente geolocalização</option>
+                <option value="geo_pin">Geolocalização + PIN do cliente</option>
+              </select>
+              <input
+                type="number"
+                min="30"
+                max="5000"
+                step="1"
+                placeholder="Raio de validação (metros)"
+                value={editForm.checkin_radius_meters}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, checkin_radius_meters: event.target.value }))}
+              />
+              <input
+                type="number"
+                step="0.000001"
+                placeholder="Latitude do cliente"
+                value={editForm.checkin_latitude}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, checkin_latitude: event.target.value }))}
+              />
+              <input
+                type="number"
+                step="0.000001"
+                placeholder="Longitude do cliente"
+                value={editForm.checkin_longitude}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, checkin_longitude: event.target.value }))}
+              />
+              {editForm.checkin_validation_mode === "geo_pin" ? (
+                <input
+                  placeholder="PIN para validação no cliente"
+                  value={editForm.checkin_pin}
+                  onChange={(event) => setEditForm((prev) => ({ ...prev, checkin_pin: event.target.value }))}
+                />
+              ) : null}
               <div className="inline-actions">
                 <button type="submit" className="btn-primary" disabled={savingEdit}>
                   {savingEdit ? "Salvando..." : "Salvar alterações"}
@@ -1262,6 +1467,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                       <th>Prioridade</th>
                       <th>Agendamento</th>
                       <th>Data limite</th>
+                      <th>Execução em campo</th>
                       <th>Descrição</th>
                     </tr>
                   </thead>
@@ -1277,12 +1483,13 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                             : "-"}
                         </td>
                         <td>{formatDate(task.due_date)}</td>
+                        <td>{visitExecutionSummary(task)}</td>
                         <td>{task.description || "-"}</td>
                       </tr>
                     ))}
                     {!customerTasks.length ? (
                       <tr>
-                        <td colSpan={6} className="muted">
+                        <td colSpan={7} className="muted">
                           Nenhuma atividade de agenda para este cliente.
                         </td>
                       </tr>

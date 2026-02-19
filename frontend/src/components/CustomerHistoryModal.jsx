@@ -80,6 +80,14 @@ function taskStatusLabel(value) {
   return map[value] || String(value || "-");
 }
 
+function visitMethodLabel(value) {
+  const map = {
+    geo: "Geolocalizacao",
+    geo_pin: "Geolocalizacao + PIN"
+  };
+  return map[value] || "Geolocalizacao";
+}
+
 function opportunityStatusLabel(value) {
   const map = {
     open: "Aberta",
@@ -155,6 +163,19 @@ function nextTaskDateValue(task) {
     if (Number.isFinite(parsed)) return parsed;
   }
   return Number.POSITIVE_INFINITY;
+}
+
+function visitExecutionSummary(task) {
+  if (!isVisitTask(task)) return "-";
+  if (task.visit_checkout_at) {
+    return `Check-out ${formatDateTime(task.visit_checkout_at)} · ${task.visit_checkout_note || "Sem resumo"}`;
+  }
+  if (task.visit_checkin_at) {
+    const distance = Number(task.visit_checkin_distance_meters);
+    const distanceLabel = Number.isFinite(distance) ? ` · Distancia ${Math.round(distance)}m` : "";
+    return `Check-in ${formatDateTime(task.visit_checkin_at)} (${visitMethodLabel(task.visit_checkin_method)})${distanceLabel}`;
+  }
+  return "Check-in pendente";
 }
 
 export default function CustomerHistoryModal({ open, companyId, companyName, onClose }) {
@@ -268,6 +289,32 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
           item: payload.task_title || "Atividade",
           details: `${taskStatusLabel(payload.from_status)} -> ${taskStatusLabel(payload.to_status)}`,
           note: payload.comment || "-"
+        };
+      }
+      if (row.event_name === "task_visit_checkin") {
+        const distance = Number(payload.checkin_distance_meters);
+        const radius = Number(payload.target_radius_meters);
+        const distanceLabel = Number.isFinite(distance) ? `${Math.round(distance)}m` : "sem referencia de distancia";
+        const radiusLabel = Number.isFinite(radius) ? ` (raio ${Math.round(radius)}m)` : "";
+        return {
+          id: `event-${row.id}`,
+          happened_at: row.happened_at,
+          origin: "visita",
+          item: payload.task_title || "Visita",
+          details: `Check-in (${visitMethodLabel(payload.method)})`,
+          note: `${distanceLabel}${radiusLabel}${payload.checkin_note ? ` · ${payload.checkin_note}` : ""}`
+        };
+      }
+      if (row.event_name === "task_visit_checkout") {
+        const duration = Number(payload.duration_minutes);
+        const durationLabel = Number.isFinite(duration) ? `Duracao ${duration} min` : "Duracao nao calculada";
+        return {
+          id: `event-${row.id}`,
+          happened_at: row.happened_at,
+          origin: "visita",
+          item: payload.task_title || "Visita",
+          details: "Check-out concluido",
+          note: `${durationLabel}${payload.checkout_note ? ` · ${payload.checkout_note}` : ""}`
         };
       }
       return {
@@ -741,6 +788,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                   <th>Prioridade</th>
                   <th>Agendamento</th>
                   <th>Data limite</th>
+                  <th>Execucao em campo</th>
                   <th>Descricao</th>
                 </tr>
               </thead>
@@ -762,12 +810,13 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                         : "-"}
                     </td>
                     <td>{formatDate(task.due_date)}</td>
+                    <td>{visitExecutionSummary(task)}</td>
                     <td>{task.description || "-"}</td>
                   </tr>
                 ))}
                 {!tasks.length ? (
                   <tr>
-                    <td colSpan={7} className="muted">
+                    <td colSpan={8} className="muted">
                       Nenhuma atividade de agenda para este cliente.
                     </td>
                   </tr>

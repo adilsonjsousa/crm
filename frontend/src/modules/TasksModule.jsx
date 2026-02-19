@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { createTask, listCompanyOptions, listTasks, logTaskFlowComment, updateTask } from "../lib/revenueApi";
+import {
+  createTask,
+  listCompanyOptions,
+  listTasks,
+  logTaskFlowComment,
+  registerTaskCheckin,
+  registerTaskCheckout,
+  updateTask
+} from "../lib/revenueApi";
 
 const ACTIVITY_OPTIONS = [
   "Visita",
@@ -33,6 +41,25 @@ function isOpenStatus(value) {
   return value !== "done" && value !== "cancelled";
 }
 
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isVisitTask(task) {
+  const haystack = `${task?.task_type || ""} ${task?.title || ""}`;
+  const normalized = normalizeText(haystack);
+  return normalized.includes("visita") || normalized.includes("visit");
+}
+
+function parseFiniteNumber(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
 function formatDate(value) {
   if (!value) return "-";
   return new Intl.DateTimeFormat("pt-BR", {
@@ -51,6 +78,12 @@ function formatDateTime(value) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(value));
+}
+
+function formatMeters(value) {
+  const parsed = parseFiniteNumber(value);
+  if (parsed === null) return "-";
+  return `${Math.round(parsed)}m`;
 }
 
 function todayYmd() {
@@ -85,6 +118,67 @@ function scheduleLabel(task) {
   return dueLabel(task.due_date);
 }
 
+function visitMethodLabel(value) {
+  const map = {
+    geo: "Geolocalização",
+    geo_pin: "Geolocalização + PIN"
+  };
+  return map[value] || "Geolocalização";
+}
+
+function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
+  const earthRadius = 6371000;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadius * c;
+}
+
+function requestCurrentPosition() {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      reject(new Error("Seu navegador não suporta geolocalização."));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve(position),
+      (error) => {
+        const map = {
+          1: "Permissão de localização negada.",
+          2: "Não foi possível obter sua localização.",
+          3: "Tempo excedido ao buscar localização."
+        };
+        reject(new Error(map[error.code] || "Falha ao capturar sua geolocalização."));
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 20000,
+        maximumAge: 0
+      }
+    );
+  });
+}
+
+function punctualVisit(task) {
+  if (!task?.scheduled_start_at || !task?.visit_checkin_at) return false;
+  const scheduledAt = new Date(task.scheduled_start_at).getTime();
+  const checkinAt = new Date(task.visit_checkin_at).getTime();
+  if (!Number.isFinite(scheduledAt) || !Number.isFinite(checkinAt)) return false;
+  return Math.abs(checkinAt - scheduledAt) <= 15 * 60 * 1000;
+}
+
+function visitProgressLabel(task) {
+  if (!isVisitTask(task)) return "-";
+  if (task.visit_checkout_at) return `Check-out ${formatDateTime(task.visit_checkout_at)}`;
+  if (task.visit_checkin_at) return `Em visita desde ${formatDateTime(task.visit_checkin_at)}`;
+  return "Check-in pendente";
+}
+
 export default function TasksModule() {
   const [tasks, setTasks] = useState([]);
   const [companies, setCompanies] = useState([]);
@@ -93,6 +187,8 @@ export default function TasksModule() {
   const [onlyOpen, setOnlyOpen] = useState(true);
   const [draggingTaskId, setDraggingTaskId] = useState("");
   const [dragOverStatus, setDragOverStatus] = useState("");
+  const [checkinTaskId, setCheckinTaskId] = useState("");
+  const [checkoutTaskId, setCheckoutTaskId] = useState("");
   const [form, setForm] = useState({
     company_id: "",
     activity: "Visita",
@@ -124,10 +220,21 @@ export default function TasksModule() {
     const openTasks = tasks.filter((item) => isOpenStatus(item.status));
     const dueToday = openTasks.filter((item) => item.due_date === today).length;
     const overdue = openTasks.filter((item) => item.due_date && item.due_date < today).length;
+    const visits = tasks.filter((item) => isVisitTask(item));
+    const visitsDone = visits.filter((item) => Boolean(item.visit_checkout_at)).length;
+    const inField = visits.filter((item) => item.visit_checkin_at && !item.visit_checkout_at).length;
+    const withoutValidation = visits.filter((item) => isOpenStatus(item.status) && !item.visit_checkin_at).length;
+    const punctualCount = visits.filter((item) => Boolean(item.visit_checkout_at)).filter((item) => punctualVisit(item)).length;
+    const punctualRate = visitsDone ? Math.round((punctualCount / visitsDone) * 100) : null;
+
     return {
       openCount: openTasks.length,
       dueToday,
-      overdue
+      overdue,
+      visitsDone,
+      inField,
+      withoutValidation,
+      punctualRate
     };
   }, [tasks]);
 
@@ -228,6 +335,15 @@ export default function TasksModule() {
   async function handleStatusChange(task, nextStatus) {
     if (!task || task.status === nextStatus) return;
 
+    if (isVisitTask(task) && nextStatus === "in_progress" && !task.visit_checkin_at) {
+      setError("Para visitas, use o botão Check-in para iniciar o atendimento em campo.");
+      return;
+    }
+    if (isVisitTask(task) && nextStatus === "done" && !task.visit_checkout_at) {
+      setError("Para visitas, use o botão Check-out para concluir com resumo da visita.");
+      return;
+    }
+
     const flowComment = requestFlowComment(task, nextStatus);
     if (flowComment === null) return;
     if (!flowComment) {
@@ -269,6 +385,185 @@ export default function TasksModule() {
         )
       );
       setError(err.message);
+    }
+  }
+
+  function buildVisitHint(task) {
+    if (!isVisitTask(task)) return "-";
+    const hasGeoTarget = parseFiniteNumber(task?.companies?.checkin_latitude) !== null && parseFiniteNumber(task?.companies?.checkin_longitude) !== null;
+    const radius = parseFiniteNumber(task?.companies?.checkin_radius_meters) || 150;
+    if (!task.visit_checkin_at) {
+      if (!hasGeoTarget) return "Cliente sem coordenadas; check-in sem geofence.";
+      return `Raio alvo ${Math.round(radius)}m.`;
+    }
+
+    const distance = parseFiniteNumber(task.visit_checkin_distance_meters);
+    const method = visitMethodLabel(task.visit_checkin_method);
+    if (distance !== null) return `${method} · Distância ${formatMeters(distance)}.`;
+    if (!hasGeoTarget) return `${method} · Cliente sem coordenadas.`;
+    return `${method} · Distância não calculada.`;
+  }
+
+  async function handleCheckin(task) {
+    if (!task || !isVisitTask(task)) {
+      setError("Check-in disponível apenas para tarefas de visita.");
+      return;
+    }
+    if (task.status === "done" || task.status === "cancelled") {
+      setError("Não é possível fazer check-in em tarefa encerrada.");
+      return;
+    }
+    if (task.visit_checkin_at && !task.visit_checkout_at) {
+      setError("Esta visita já está em andamento. Faça o check-out para concluir.");
+      return;
+    }
+
+    setError("");
+    setCheckinTaskId(task.id);
+    const previousSnapshot = { ...task };
+    let optimisticApplied = false;
+
+    try {
+      const position = await requestCurrentPosition();
+      const latitude = Number(position.coords.latitude);
+      const longitude = Number(position.coords.longitude);
+      const accuracyMeters = Number(position.coords.accuracy);
+
+      const mode = task?.companies?.checkin_validation_mode === "geo_pin" ? "geo_pin" : "geo";
+      const configuredPin = String(task?.companies?.checkin_pin || "").trim();
+      if (mode === "geo_pin") {
+        if (!configuredPin) {
+          setError("Este cliente exige PIN, mas ainda não possui PIN cadastrado.");
+          return;
+        }
+        const typedPin = window.prompt(`Informe o PIN de validação para "${task.companies?.trade_name || "cliente"}":`);
+        if (typedPin === null) return;
+        if (String(typedPin || "").trim() !== configuredPin) {
+          setError("PIN inválido para check-in.");
+          return;
+        }
+      }
+
+      const targetLat = parseFiniteNumber(task?.companies?.checkin_latitude);
+      const targetLng = parseFiniteNumber(task?.companies?.checkin_longitude);
+      const targetRadius = parseFiniteNumber(task?.companies?.checkin_radius_meters) || 150;
+      let distanceMeters = null;
+
+      if (targetLat !== null && targetLng !== null) {
+        distanceMeters = haversineDistanceMeters(latitude, longitude, targetLat, targetLng);
+        if (distanceMeters > targetRadius) {
+          setError(`Check-in fora do raio do cliente. Distância ${formatMeters(distanceMeters)} · Raio ${Math.round(targetRadius)}m.`);
+          return;
+        }
+      }
+
+      const notePrompt = window.prompt("Observação de chegada (opcional):");
+      const note = notePrompt === null ? "" : String(notePrompt || "").trim();
+      const checkinAt = new Date().toISOString();
+      const nextStatus = task.status === "todo" ? "in_progress" : task.status;
+
+      setTasks((prev) =>
+        prev.map((item) =>
+          item.id === task.id
+            ? {
+                ...item,
+                status: nextStatus,
+                completed_at: null,
+                visit_checkin_at: checkinAt,
+                visit_checkin_latitude: latitude,
+                visit_checkin_longitude: longitude,
+                visit_checkin_accuracy_meters: accuracyMeters,
+                visit_checkin_distance_meters: distanceMeters,
+                visit_checkin_method: mode,
+                visit_checkin_note: note || null
+              }
+            : item
+        )
+      );
+      optimisticApplied = true;
+
+      await registerTaskCheckin({
+        taskId: task.id,
+        companyId: task.company_id || null,
+        taskTitle: task.title || "",
+        fromStatus: task.status,
+        toStatus: nextStatus,
+        checkinAt,
+        latitude,
+        longitude,
+        accuracyMeters: Number.isFinite(accuracyMeters) ? Number(accuracyMeters.toFixed(2)) : null,
+        distanceMeters: distanceMeters === null ? null : Number(distanceMeters.toFixed(2)),
+        method: mode,
+        note: note || null,
+        targetRadiusMeters: Math.round(targetRadius)
+      });
+    } catch (err) {
+      if (optimisticApplied) {
+        setTasks((prev) => prev.map((item) => (item.id === task.id ? previousSnapshot : item)));
+      }
+      setError(err.message || "Falha ao registrar check-in.");
+    } finally {
+      setCheckinTaskId("");
+    }
+  }
+
+  async function handleCheckout(task) {
+    if (!task || !isVisitTask(task)) {
+      setError("Check-out disponível apenas para tarefas de visita.");
+      return;
+    }
+    if (!task.visit_checkin_at) {
+      setError("Realize o check-in antes de concluir a visita.");
+      return;
+    }
+    if (task.visit_checkout_at) {
+      setError("Esta visita já possui check-out registrado.");
+      return;
+    }
+
+    const summaryPrompt = window.prompt("Resumo obrigatório da visita para concluir o check-out:");
+    if (summaryPrompt === null) return;
+    const summary = String(summaryPrompt || "").trim();
+    if (!summary) {
+      setError("Resumo obrigatório para concluir o check-out.");
+      return;
+    }
+
+    setError("");
+    setCheckoutTaskId(task.id);
+    const previousSnapshot = { ...task };
+
+    const checkoutAt = new Date().toISOString();
+    setTasks((prev) =>
+      prev.map((item) =>
+        item.id === task.id
+          ? {
+              ...item,
+              status: "done",
+              completed_at: checkoutAt,
+              visit_checkout_at: checkoutAt,
+              visit_checkout_note: summary
+            }
+          : item
+      )
+    );
+
+    try {
+      await registerTaskCheckout({
+        taskId: task.id,
+        companyId: task.company_id || null,
+        taskTitle: task.title || "",
+        fromStatus: task.status,
+        toStatus: "done",
+        checkoutAt,
+        summary,
+        checkinAt: task.visit_checkin_at
+      });
+    } catch (err) {
+      setTasks((prev) => prev.map((item) => (item.id === task.id ? previousSnapshot : item)));
+      setError(err.message || "Falha ao registrar check-out.");
+    } finally {
+      setCheckoutTaskId("");
     }
   }
 
@@ -388,6 +683,19 @@ export default function TasksModule() {
               <span>Em atraso</span>
               <strong>{summary.overdue}</strong>
             </article>
+            <article className="metric-tile">
+              <span>Visitas realizadas</span>
+              <strong>{summary.visitsDone}</strong>
+            </article>
+            <article className="metric-tile">
+              <span>Pontualidade</span>
+              <strong>{summary.punctualRate === null ? "-" : `${summary.punctualRate}%`}</strong>
+            </article>
+            <article className="metric-tile">
+              <span>Sem validação</span>
+              <strong>{summary.withoutValidation}</strong>
+              <small>{summary.inField} em campo</small>
+            </article>
           </div>
           <div className="inline-actions top-gap">
             <button type="button" className="btn-ghost btn-table-action" onClick={() => setOnlyOpen((prev) => !prev)}>
@@ -442,6 +750,7 @@ export default function TasksModule() {
                       <span className={`badge badge-priority-${task.priority}`}>{priorityLabel(task.priority)}</span>
                     </div>
                     <p className="agenda-card-due">{scheduleLabel(task)}</p>
+                    {isVisitTask(task) ? <p className="agenda-card-field-status">{visitProgressLabel(task)}</p> : null}
                   </article>
                 ))}
                 {!itemsByStatus[status.value]?.length ? <p className="pipeline-empty">Sem tarefas</p> : null}
@@ -463,6 +772,7 @@ export default function TasksModule() {
                 <th>Agendamento</th>
                 <th>Data limite</th>
                 <th>Status</th>
+                <th>Execução em campo</th>
               </tr>
             </thead>
             <tbody>
@@ -489,11 +799,59 @@ export default function TasksModule() {
                     </select>
                     <span className={`badge badge-status-${task.status}`}>{statusLabel(task.status)}</span>
                   </td>
+                  <td>
+                    {!isVisitTask(task) ? (
+                      <span className="muted">-</span>
+                    ) : (
+                      <div className="visit-checkin-cell">
+                        <span
+                          className={`badge visit-status-chip ${
+                            task.visit_checkout_at
+                              ? "visit-status-chip-done"
+                              : task.visit_checkin_at
+                                ? "visit-status-chip-progress"
+                                : "visit-status-chip-pending"
+                          }`}
+                        >
+                          {task.visit_checkout_at ? "Concluída" : task.visit_checkin_at ? "Em visita" : "Pendente"}
+                        </span>
+                        <p className="visit-checkin-summary">{visitProgressLabel(task)}</p>
+                        <p className="visit-checkin-summary muted">{buildVisitHint(task)}</p>
+                        <div className="visit-checkin-actions">
+                          {!task.visit_checkin_at ? (
+                            <button
+                              type="button"
+                              className="btn-ghost btn-table-action"
+                              onClick={() => handleCheckin(task)}
+                              disabled={
+                                checkinTaskId === task.id ||
+                                checkoutTaskId === task.id ||
+                                task.status === "done" ||
+                                task.status === "cancelled"
+                              }
+                            >
+                              {checkinTaskId === task.id ? "Registrando..." : "Check-in"}
+                            </button>
+                          ) : null}
+                          {task.visit_checkin_at && !task.visit_checkout_at ? (
+                            <button
+                              type="button"
+                              className="btn-ghost btn-table-action"
+                              onClick={() => handleCheckout(task)}
+                              disabled={checkoutTaskId === task.id || checkinTaskId === task.id}
+                            >
+                              {checkoutTaskId === task.id ? "Concluindo..." : "Check-out"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}
               {!listRows.length ? (
                 <tr>
-                  <td colSpan={6} className="muted">
+                  <td colSpan={7} className="muted">
                     Nenhuma tarefa encontrada.
                   </td>
                 </tr>

@@ -207,7 +207,9 @@ export async function getCompanyById(companyId) {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("companies")
-    .select("id,cnpj,trade_name,legal_name,email,phone,segmento,address_full")
+    .select(
+      "id,cnpj,trade_name,legal_name,email,phone,segmento,address_full,checkin_validation_mode,checkin_radius_meters,checkin_latitude,checkin_longitude,checkin_pin"
+    )
     .eq("id", normalizedCompanyId)
     .maybeSingle();
 
@@ -414,7 +416,9 @@ export async function listTasks() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("tasks")
-    .select("id,company_id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,created_at,companies:company_id(trade_name)")
+    .select(
+      "id,company_id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,visit_checkin_at,visit_checkin_latitude,visit_checkin_longitude,visit_checkin_accuracy_meters,visit_checkin_distance_meters,visit_checkin_method,visit_checkin_note,visit_checkout_at,visit_checkout_note,created_at,companies:company_id(trade_name,address_full,checkin_validation_mode,checkin_radius_meters,checkin_latitude,checkin_longitude,checkin_pin)"
+    )
     .order("scheduled_start_at", { ascending: true, nullsFirst: false })
     .order("due_date", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: false })
@@ -433,6 +437,132 @@ export async function updateTask(taskId, payload) {
   const supabase = ensureSupabase();
   const { error } = await supabase.from("tasks").update(payload).eq("id", taskId);
   if (error) throw new Error(normalizeError(error, "Falha ao atualizar tarefa."));
+}
+
+async function insertTaskVisitEvent({ taskId, companyId, eventName, payload, happenedAt }) {
+  const supabase = ensureSupabase();
+  const rows = [
+    {
+      entity_type: "task",
+      entity_id: taskId,
+      event_name: eventName,
+      payload,
+      happened_at: happenedAt || null
+    }
+  ];
+
+  if (companyId) {
+    rows.push({
+      entity_type: "company",
+      entity_id: companyId,
+      event_name: eventName,
+      payload,
+      happened_at: happenedAt || null
+    });
+  }
+
+  const { error } = await supabase.from("event_log").insert(rows);
+  if (error) throw new Error(normalizeError(error, "Falha ao registrar evento de visita."));
+}
+
+export async function registerTaskCheckin({
+  taskId,
+  companyId,
+  taskTitle,
+  fromStatus,
+  toStatus,
+  checkinAt,
+  latitude,
+  longitude,
+  accuracyMeters,
+  distanceMeters,
+  method,
+  note,
+  targetRadiusMeters
+}) {
+  const normalizedTaskId = String(taskId || "").trim();
+  if (!normalizedTaskId) throw new Error("Tarefa inválida para check-in.");
+
+  const when = checkinAt || new Date().toISOString();
+  await updateTask(normalizedTaskId, {
+    status: toStatus || "in_progress",
+    completed_at: null,
+    visit_checkin_at: when,
+    visit_checkin_latitude: latitude,
+    visit_checkin_longitude: longitude,
+    visit_checkin_accuracy_meters: accuracyMeters,
+    visit_checkin_distance_meters: distanceMeters,
+    visit_checkin_method: method || "geo",
+    visit_checkin_note: note || null
+  });
+
+  await insertTaskVisitEvent({
+    taskId: normalizedTaskId,
+    companyId,
+    eventName: "task_visit_checkin",
+    happenedAt: when,
+    payload: {
+      task_id: normalizedTaskId,
+      task_title: String(taskTitle || "").trim() || "Visita",
+      from_status: fromStatus || null,
+      to_status: toStatus || "in_progress",
+      method: method || "geo",
+      checkin_note: note || null,
+      checkin_latitude: latitude,
+      checkin_longitude: longitude,
+      checkin_accuracy_meters: accuracyMeters,
+      checkin_distance_meters: distanceMeters,
+      target_radius_meters: targetRadiusMeters || null
+    }
+  });
+}
+
+export async function registerTaskCheckout({
+  taskId,
+  companyId,
+  taskTitle,
+  fromStatus,
+  toStatus,
+  checkoutAt,
+  summary,
+  checkinAt
+}) {
+  const normalizedTaskId = String(taskId || "").trim();
+  if (!normalizedTaskId) throw new Error("Tarefa inválida para check-out.");
+  const checkoutNote = String(summary || "").trim();
+  if (!checkoutNote) throw new Error("Resumo obrigatório para concluir a visita.");
+
+  const when = checkoutAt || new Date().toISOString();
+  let durationMinutes = null;
+  if (checkinAt) {
+    const start = new Date(checkinAt).getTime();
+    const end = new Date(when).getTime();
+    if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
+      durationMinutes = Math.round((end - start) / 60000);
+    }
+  }
+
+  await updateTask(normalizedTaskId, {
+    status: toStatus || "done",
+    completed_at: when,
+    visit_checkout_at: when,
+    visit_checkout_note: checkoutNote
+  });
+
+  await insertTaskVisitEvent({
+    taskId: normalizedTaskId,
+    companyId,
+    eventName: "task_visit_checkout",
+    happenedAt: when,
+    payload: {
+      task_id: normalizedTaskId,
+      task_title: String(taskTitle || "").trim() || "Visita",
+      from_status: fromStatus || null,
+      to_status: toStatus || "done",
+      checkout_note: checkoutNote,
+      duration_minutes: durationMinutes
+    }
+  });
 }
 
 export async function logTaskFlowComment({ taskId, companyId, taskTitle, fromStatus, toStatus, comment }) {
@@ -527,7 +657,9 @@ export async function listCompanyTasks(companyId) {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("tasks")
-    .select("id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,created_at,updated_at")
+    .select(
+      "id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,visit_checkin_at,visit_checkin_latitude,visit_checkin_longitude,visit_checkin_accuracy_meters,visit_checkin_distance_meters,visit_checkin_method,visit_checkin_note,visit_checkout_at,visit_checkout_note,created_at,updated_at"
+    )
     .eq("company_id", companyId)
     .order("scheduled_start_at", { ascending: true, nullsFirst: false })
     .order("due_date", { ascending: true, nullsFirst: false })

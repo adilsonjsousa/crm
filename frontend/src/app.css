@@ -976,6 +976,55 @@ tbody tr:hover {
   font-weight: 700;
 }
 
+.agenda-card-field-status {
+  margin: 7px 0 0;
+  font-size: 0.72rem;
+  color: var(--text-sub);
+}
+
+.visit-checkin-cell {
+  min-width: 210px;
+  display: grid;
+  gap: 4px;
+}
+
+.visit-status-chip {
+  width: fit-content;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.visit-status-chip-pending {
+  background: rgba(122, 138, 168, 0.15);
+  border-color: rgba(122, 138, 168, 0.35);
+  color: #40557a;
+}
+
+.visit-status-chip-progress {
+  background: rgba(52, 118, 247, 0.14);
+  border-color: rgba(52, 118, 247, 0.35);
+  color: #1e5dc6;
+}
+
+.visit-status-chip-done {
+  background: rgba(23, 166, 115, 0.15);
+  border-color: rgba(23, 166, 115, 0.35);
+  color: #0c7f54;
+}
+
+.visit-checkin-summary {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-sub);
+}
+
+.visit-checkin-actions {
+  margin-top: 2px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .pipeline-board {
   display: grid;
   grid-template-columns: repeat(7, minmax(210px, 1fr));
