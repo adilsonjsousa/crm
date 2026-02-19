@@ -18,6 +18,7 @@ import {
   updateContact
 } from "../lib/revenueApi";
 import { stageLabel } from "../lib/pipelineStages";
+import CustomerHistoryModal from "../components/CustomerHistoryModal";
 
 const SEGMENTOS = [
   "Tecnologia",
@@ -253,6 +254,11 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
   const [customerInteractions, setCustomerInteractions] = useState([]);
   const [interactionForm, setInteractionForm] = useState(() => emptyInteractionForm());
   const [savingInteraction, setSavingInteraction] = useState(false);
+  const [customerHistoryModal, setCustomerHistoryModal] = useState({
+    open: false,
+    companyId: "",
+    companyName: ""
+  });
   const companyPanelRef = useRef(null);
   const contactPanelRef = useRef(null);
 
@@ -699,6 +705,22 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
     setInteractionForm(emptyInteractionForm());
   }
 
+  function openCustomerHistoryModal(company) {
+    if (!company?.id) return;
+    setCustomerHistoryModal({
+      open: true,
+      companyId: company.id,
+      companyName: company.trade_name || "Cliente"
+    });
+  }
+
+  function closeCustomerHistoryModal() {
+    setCustomerHistoryModal((prev) => ({
+      ...prev,
+      open: false
+    }));
+  }
+
   function handleInteractionContactChange(contactId) {
     const contact = customerContacts.find((item) => item.id === contactId);
     setInteractionForm((prev) => ({
@@ -923,13 +945,16 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                 {companies.map((company) => (
                   <tr key={company.id}>
                     <td>
-                      <button type="button" className="btn-inline-link" onClick={() => openCustomerWorkspace(company)}>
+                      <button type="button" className="btn-inline-link" onClick={() => openCustomerHistoryModal(company)}>
                         {company.trade_name}
                       </button>
                     </td>
                     <td>{maskCnpj(company.cnpj)}</td>
                     <td>{company.segmento || "-"}</td>
                     <td>
+                      <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerHistoryModal(company)}>
+                        Pop-up 360
+                      </button>
                       <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerWorkspace(company)}>
                         Abrir aba
                       </button>
@@ -1052,7 +1077,24 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
               <tbody>
                 {contacts.map((contact) => (
                   <tr key={contact.id}>
-                    <td>{contact.companies?.trade_name || "SEM VÍNCULO"}</td>
+                    <td>
+                      {contact.company_id ? (
+                        <button
+                          type="button"
+                          className="btn-inline-link"
+                          onClick={() =>
+                            openCustomerHistoryModal({
+                              id: contact.company_id,
+                              trade_name: contact.companies?.trade_name || "Cliente"
+                            })
+                          }
+                        >
+                          {contact.companies?.trade_name || "Cliente"}
+                        </button>
+                      ) : (
+                        "SEM VÍNCULO"
+                      )}
+                    </td>
                     <td>{contact.full_name}</td>
                     <td>{contact.email || "-"}</td>
                     <td>{contact.whatsapp || contact.phone || "-"}</td>
@@ -1073,11 +1115,27 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       <article className="panel top-gap">
         <h3>Aba do cliente (360)</h3>
         {!selectedCompanyId ? (
-          <p className="muted">Clique no nome do cliente em “Últimas empresas” para abrir o histórico, propostas, agenda e interações.</p>
+          <p className="muted">
+            Clique no nome do cliente em “Últimas empresas” para abrir o pop-up 360, ou use “Abrir aba” para trabalhar no painel abaixo.
+          </p>
         ) : (
           <>
-            <p className="muted">
+            <p className="muted inline-actions">
               Cliente selecionado: <strong>{selectedCompany?.trade_name || companyNameById.get(selectedCompanyId) || "Cliente"}</strong>
+              {selectedCompanyId ? (
+                <button
+                  type="button"
+                  className="btn-ghost btn-table-action"
+                  onClick={() =>
+                    openCustomerHistoryModal({
+                      id: selectedCompanyId,
+                      trade_name: selectedCompany?.trade_name || companyNameById.get(selectedCompanyId) || "Cliente"
+                    })
+                  }
+                >
+                  Abrir pop-up 360
+                </button>
+              ) : null}
             </p>
             <div className="inline-actions company-tabs">
               {CUSTOMER_TABS.map((tab) => (
@@ -1425,6 +1483,13 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
           </>
         )}
       </article>
+
+      <CustomerHistoryModal
+        open={customerHistoryModal.open}
+        companyId={customerHistoryModal.companyId}
+        companyName={customerHistoryModal.companyName}
+        onClose={closeCustomerHistoryModal}
+      />
     </section>
   );
 }
