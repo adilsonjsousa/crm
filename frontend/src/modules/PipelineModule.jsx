@@ -61,43 +61,134 @@ const BASIC_PROPOSAL_TEMPLATE = [
   "Equipe Comercial"
 ].join("\n");
 
-const RD_STATION_PROPOSAL_TEMPLATE = [
-  "PROPOSTA COMERCIAL {{numero_proposta}}",
-  "",
-  "Empresa: {{empresa_nome}}",
-  "Contato: {{cliente_nome}}",
-  "Data de emissao: {{data_emissao}}",
-  "Validade: {{validade_dias}} dias",
-  "",
-  "1) Contexto e objetivo",
-  "Com base no diagnostico comercial realizado, esta proposta foi estruturada para atender o cenario atual do cliente.",
-  "Observacoes do contexto:",
-  "{{observacoes}}",
-  "",
-  "2) Solucao recomendada",
-  "- Categoria: {{categoria}}",
-  "- Produto/Servico: {{produto}}",
-  "",
-  "3) Investimento",
-  "- Valor total da proposta: {{valor_total}}",
-  "",
-  "4) Condicoes comerciais",
-  "- Condicoes de pagamento: {{condicoes_pagamento}}",
-  "- Prazo de entrega/implantacao: {{prazo_entrega}}",
-  "- Garantia/Suporte: {{garantia}}",
-  "",
-  "5) Proximos passos",
-  "Aprovando esta proposta dentro do prazo de validade, iniciamos o processo operacional conforme cronograma acordado.",
-  "",
-  "6) Aceite",
-  "Responsavel cliente: __________________________________________",
-  "Data de aceite: ____/____/________",
-  "",
-  "Atenciosamente,",
-  "Equipe Comercial"
-].join("\n");
+const PROPOSAL_TYPE_LABELS = {
+  equipment: "Equipamentos",
+  supplies: "Suprimentos",
+  service: "Servicos"
+};
 
-const DEFAULT_PROPOSAL_TEMPLATE = RD_STATION_PROPOSAL_TEMPLATE;
+const RD_TEMPLATE_BY_TYPE = {
+  equipment: [
+    "PROPOSTA COMERCIAL {{numero_proposta}}",
+    "",
+    "Empresa: {{empresa_nome}}",
+    "Contato: {{cliente_nome}}",
+    "Data de emissao: {{data_emissao}}",
+    "Validade: {{validade_dias}} dias",
+    "",
+    "1) Contexto e objetivo",
+    "Com base no diagnostico comercial realizado, esta proposta foi estruturada para ampliar produtividade e qualidade de impressao.",
+    "Observacoes do contexto:",
+    "{{observacoes}}",
+    "",
+    "2) Solucao recomendada",
+    "- Categoria: {{categoria}}",
+    "- Equipamento principal: {{produto}}",
+    "",
+    "3) Investimento",
+    "- Valor total da proposta: {{valor_total}}",
+    "",
+    "4) Condicoes comerciais",
+    "- Condicoes de pagamento: {{condicoes_pagamento}}",
+    "- Prazo de entrega/instalacao: {{prazo_entrega}}",
+    "- Garantia/Suporte: {{garantia}}",
+    "",
+    "5) Proximos passos",
+    "Aprovando esta proposta, iniciamos agendamento de entrega tecnica e treinamento operacional da equipe.",
+    "",
+    "6) Aceite",
+    "Responsavel cliente: __________________________________________",
+    "Data de aceite: ____/____/________",
+    "",
+    "Atenciosamente,",
+    "Equipe Comercial"
+  ].join("\n"),
+  supplies: [
+    "PROPOSTA COMERCIAL {{numero_proposta}}",
+    "",
+    "Empresa: {{empresa_nome}}",
+    "Contato: {{cliente_nome}}",
+    "Data de emissao: {{data_emissao}}",
+    "Validade: {{validade_dias}} dias",
+    "",
+    "1) Contexto e objetivo",
+    "Esta proposta foi elaborada para garantir continuidade operacional e reduzir risco de ruptura de insumos.",
+    "Observacoes do contexto:",
+    "{{observacoes}}",
+    "",
+    "2) Solucao recomendada",
+    "- Categoria: {{categoria}}",
+    "- Item principal: {{produto}}",
+    "",
+    "3) Investimento",
+    "- Valor total da proposta: {{valor_total}}",
+    "",
+    "4) Condicoes comerciais",
+    "- Condicoes de pagamento: {{condicoes_pagamento}}",
+    "- Prazo de entrega/reposicao: {{prazo_entrega}}",
+    "- Garantia/Suporte: {{garantia}}",
+    "",
+    "5) Proximos passos",
+    "Aprovando esta proposta, seguimos com processo de abastecimento conforme frequencia acordada.",
+    "",
+    "6) Aceite",
+    "Responsavel cliente: __________________________________________",
+    "Data de aceite: ____/____/________",
+    "",
+    "Atenciosamente,",
+    "Equipe Comercial"
+  ].join("\n"),
+  service: [
+    "PROPOSTA COMERCIAL {{numero_proposta}}",
+    "",
+    "Empresa: {{empresa_nome}}",
+    "Contato: {{cliente_nome}}",
+    "Data de emissao: {{data_emissao}}",
+    "Validade: {{validade_dias}} dias",
+    "",
+    "1) Contexto e objetivo",
+    "Esta proposta foi estruturada para assegurar atendimento tecnico com previsibilidade operacional e foco em disponibilidade.",
+    "Observacoes do contexto:",
+    "{{observacoes}}",
+    "",
+    "2) Solucao recomendada",
+    "- Categoria: {{categoria}}",
+    "- Servico principal: {{produto}}",
+    "",
+    "3) Investimento",
+    "- Valor total da proposta: {{valor_total}}",
+    "",
+    "4) Condicoes comerciais",
+    "- Condicoes de pagamento: {{condicoes_pagamento}}",
+    "- Prazo de implantacao/atendimento: {{prazo_entrega}}",
+    "- Garantia/SLA: {{garantia}}",
+    "",
+    "5) Proximos passos",
+    "Aprovando esta proposta, iniciamos onboarding de atendimento e definicao de janelas operacionais.",
+    "",
+    "6) Aceite",
+    "Responsavel cliente: __________________________________________",
+    "Data de aceite: ____/____/________",
+    "",
+    "Atenciosamente,",
+    "Equipe Comercial"
+  ].join("\n")
+};
+
+function normalizeProposalType(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "supplies" || normalized === "service" ? normalized : "equipment";
+}
+
+function proposalTypeLabel(value) {
+  return PROPOSAL_TYPE_LABELS[normalizeProposalType(value)] || "Equipamentos";
+}
+
+function getRdTemplateByType(typeValue) {
+  return RD_TEMPLATE_BY_TYPE[normalizeProposalType(typeValue)] || RD_TEMPLATE_BY_TYPE.equipment;
+}
+
+const DEFAULT_PROPOSAL_TEMPLATE = getRdTemplateByType("equipment");
 
 function brl(value) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
@@ -126,10 +217,10 @@ function formatDateBr(dateValue) {
   }).format(parsed);
 }
 
-function getStoredProposalTemplate() {
-  if (typeof window === "undefined") return DEFAULT_PROPOSAL_TEMPLATE;
+function getStoredProposalTemplate(opportunityType = "equipment") {
+  if (typeof window === "undefined") return getRdTemplateByType(opportunityType);
   const saved = window.localStorage.getItem(PROPOSAL_TEMPLATE_STORAGE_KEY);
-  return saved || DEFAULT_PROPOSAL_TEMPLATE;
+  return saved || getRdTemplateByType(opportunityType);
 }
 
 function buildDraftProposalNumber(opportunityId = "") {
@@ -298,6 +389,7 @@ function emptyOpportunityForm(defaultCompanyId = "") {
 
 function createProposalDraft({ opportunity, linkedOrder, contacts }) {
   const parsedTitle = parseOpportunityTitle(opportunity?.title || "");
+  const proposalType = normalizeProposalType(parsedTitle.opportunity_type);
   const preferredContact = pickPreferredContact(contacts);
   const today = new Date().toISOString().slice(0, 10);
   const totalValue = Number(linkedOrder?.total_amount ?? opportunity?.estimated_value ?? 0);
@@ -308,6 +400,7 @@ function createProposalDraft({ opportunity, linkedOrder, contacts }) {
     proposal_number: linkedOrder?.order_number || buildDraftProposalNumber(opportunity?.id),
     issue_date: today,
     validity_days: "7",
+    proposal_type: proposalType,
     category: parsedTitle.title_subcategory || "",
     product: parsedTitle.title_product || String(opportunity?.title || "").trim(),
     estimated_value: Number.isFinite(totalValue) ? totalValue : 0,
@@ -321,7 +414,7 @@ function createProposalDraft({ opportunity, linkedOrder, contacts }) {
     client_whatsapp: preferredContact?.whatsapp || preferredContact?.phone || opportunity?.companies?.phone || "",
     send_channel: "whatsapp",
     enable_send: false,
-    template_body: getStoredProposalTemplate()
+    template_body: getStoredProposalTemplate(proposalType)
   };
 }
 
@@ -663,11 +756,10 @@ export default function PipelineModule() {
   }
 
   function handleApplyRdTemplate() {
-    setProposalEditor((prev) => (prev ? { ...prev, template_body: RD_STATION_PROPOSAL_TEMPLATE } : prev));
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(PROPOSAL_TEMPLATE_STORAGE_KEY);
-    }
-    setSuccess("Template estilo RD aplicado nesta proposta.");
+    if (!proposalEditor) return;
+    const typeLabel = proposalTypeLabel(proposalEditor.proposal_type);
+    setProposalEditor((prev) => (prev ? { ...prev, template_body: getRdTemplateByType(prev.proposal_type) } : prev));
+    setSuccess(`Template RD (${typeLabel}) aplicado nesta proposta.`);
   }
 
   function handleApplyBasicTemplate() {
@@ -1036,6 +1128,16 @@ export default function PipelineModule() {
                   value={proposalEditor.validity_days}
                   onChange={(event) => handleProposalField("validity_days", event.target.value)}
                 />
+                <select
+                  value={proposalEditor.proposal_type || "equipment"}
+                  onChange={(event) => handleProposalField("proposal_type", normalizeProposalType(event.target.value))}
+                >
+                  {SALES_TYPES.map((type) => (
+                    <option key={type.value} value={type.value}>
+                      Tipo: {type.label}
+                    </option>
+                  ))}
+                </select>
                 <select value={proposalEditor.contact_id} onChange={(event) => handleProposalContactChange(event.target.value)}>
                   <option value="">Selecionar contato do cliente</option>
                   {proposalContacts.map((contact) => (
