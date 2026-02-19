@@ -55,7 +55,9 @@ function isVisitTask(task) {
 }
 
 function parseFiniteNumber(value) {
-  const parsed = Number(value);
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const parsed = Number(String(value).replace(",", "."));
   if (!Number.isFinite(parsed)) return null;
   return parsed;
 }

@@ -165,13 +165,21 @@ function nextTaskDateValue(task) {
   return Number.POSITIVE_INFINITY;
 }
 
+function parseOptionalNumber(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const parsed = Number(String(value).replace(",", "."));
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
 function visitExecutionSummary(task) {
   if (!isVisitTask(task)) return "-";
   if (task.visit_checkout_at) {
     return `Check-out ${formatDateTime(task.visit_checkout_at)} · ${task.visit_checkout_note || "Sem resumo"}`;
   }
   if (task.visit_checkin_at) {
-    const distance = Number(task.visit_checkin_distance_meters);
+    const distance = parseOptionalNumber(task.visit_checkin_distance_meters);
     const distanceLabel = Number.isFinite(distance) ? ` · Distancia ${Math.round(distance)}m` : "";
     return `Check-in ${formatDateTime(task.visit_checkin_at)} (${visitMethodLabel(task.visit_checkin_method)})${distanceLabel}`;
   }
@@ -292,8 +300,8 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
         };
       }
       if (row.event_name === "task_visit_checkin") {
-        const distance = Number(payload.checkin_distance_meters);
-        const radius = Number(payload.target_radius_meters);
+        const distance = parseOptionalNumber(payload.checkin_distance_meters);
+        const radius = parseOptionalNumber(payload.target_radius_meters);
         const distanceLabel = Number.isFinite(distance) ? `${Math.round(distance)}m` : "sem referencia de distancia";
         const radiusLabel = Number.isFinite(radius) ? ` (raio ${Math.round(radius)}m)` : "";
         return {
@@ -306,7 +314,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
         };
       }
       if (row.event_name === "task_visit_checkout") {
-        const duration = Number(payload.duration_minutes);
+        const duration = parseOptionalNumber(payload.duration_minutes);
         const durationLabel = Number.isFinite(duration) ? `Duracao ${duration} min` : "Duracao nao calculada";
         return {
           id: `event-${row.id}`,
