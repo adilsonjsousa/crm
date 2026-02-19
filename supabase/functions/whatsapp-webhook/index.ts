@@ -40,9 +40,16 @@ function readNested(payload: AnyPayload, path: string[]) {
 
 function extractMessage(payload: AnyPayload) {
   const provider = String(payload.provider ?? payload.platform ?? payload.source ?? "whatsapp").trim() || "whatsapp";
-  const direction = parseDirection(
-    payload.direction ?? payload.event_direction ?? payload.flow ?? payload.status ?? payload.type
-  );
+  const fromMeRaw =
+    payload.fromMe ??
+    payload.from_me ??
+    readNested(payload, ["data", "fromMe"]) ??
+    readNested(payload, ["message", "fromMe"]) ??
+    readNested(payload, ["messageData", "fromMe"]);
+  const hasFromMe = typeof fromMeRaw === "boolean";
+  const direction = hasFromMe
+    ? (fromMeRaw ? "outbound" : "inbound")
+    : parseDirection(payload.direction ?? payload.event_direction ?? payload.flow ?? payload.status ?? payload.type);
 
   const bodyCandidates = [
     payload.body,
@@ -127,6 +134,11 @@ function buildContactOrFilter(candidates: string[]) {
   return clauses.join(",");
 }
 
+function uniqueCandidates(values: string[]) {
+  const normalized = values.map((value) => normalizeDigits(value)).filter(Boolean);
+  return [...new Set(normalized)];
+}
+
 Deno.serve(async (request: Request) => {
   if (request.method !== "POST") {
     return jsonResponse(405, { error: "method_not_allowed" });
@@ -177,7 +189,8 @@ Deno.serve(async (request: Request) => {
   const extracted = extractMessage(payload);
   const fallbackCompanyId = url.searchParams.get("company_id") || String(payload.company_id ?? "");
   const primaryPhone = extracted.direction === "outbound" ? extracted.to : extracted.from;
-  const candidates = phoneCandidates(primaryPhone || extracted.from || extracted.to);
+  const rawCandidates = uniqueCandidates([primaryPhone, extracted.from, extracted.to]);
+  const candidates = rawCandidates.flatMap((item) => phoneCandidates(item));
 
   let matchedCompanyId = "";
   let matchedContactId = "";
