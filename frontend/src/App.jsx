@@ -7,6 +7,7 @@ import PipelineModule from "./modules/PipelineModule";
 import ServiceModule from "./modules/ServiceModule";
 import OrdersModule from "./modules/OrdersModule";
 import TasksModule from "./modules/TasksModule";
+import CustomerHistoryModal from "./components/CustomerHistoryModal";
 
 const THEME_STORAGE_KEY = "crm-theme";
 
@@ -94,6 +95,11 @@ export default function App() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [searchCustomerHistoryModal, setSearchCustomerHistoryModal] = useState({
+    open: false,
+    companyId: "",
+    companyName: ""
+  });
   const [birthdayAlerts, setBirthdayAlerts] = useState([]);
   const [birthdayError, setBirthdayError] = useState("");
   const [theme, setTheme] = useState(() => {
@@ -213,8 +219,48 @@ export default function App() {
     runGlobalSearch();
   }
 
-  function openSearchResult(tab) {
-    setActiveTab(tab);
+  function closeSearchCustomerHistoryModal() {
+    setSearchCustomerHistoryModal((prev) => ({
+      ...prev,
+      open: false
+    }));
+  }
+
+  function openCustomerHistoryFromSearch(item) {
+    const companyId = String(item?.company_id || "").trim();
+    if (!companyId) {
+      setSearchError("Este contato ainda nao esta vinculado a uma empresa para abrir o historico 360.");
+      return false;
+    }
+
+    setSearchError("");
+    setSearchCustomerHistoryModal({
+      open: true,
+      companyId,
+      companyName: item.company_name || item.title || "Cliente"
+    });
+    return true;
+  }
+
+  function handleSearchItemAction(item, { fromSuggestion = false } = {}) {
+    if (!item) return;
+
+    if (fromSuggestion) {
+      setSearchFocused(false);
+      setSearchExecuted(true);
+      setSearchError("");
+      setSearchLoading(false);
+      setSearchResults([item]);
+    }
+
+    if (item.entity_type === "company" || item.entity_type === "contact") {
+      openCustomerHistoryFromSearch(item);
+      return;
+    }
+
+    if (item.tab) {
+      setActiveTab(item.tab);
+    }
   }
 
   function openCompanyQuickAction(target) {
@@ -224,12 +270,7 @@ export default function App() {
   }
 
   function selectSuggestion(item) {
-    setSearchFocused(false);
-    setActiveTab(item.tab);
-    setSearchExecuted(true);
-    setSearchError("");
-    setSearchLoading(false);
-    setSearchResults([item]);
+    handleSearchItemAction(item, { fromSuggestion: true });
   }
 
   useEffect(() => {
@@ -441,7 +482,7 @@ export default function App() {
               <ul className="search-results-list">
                 {searchResults.map((item) => (
                   <li key={`${item.type}-${item.id}`}>
-                    <button type="button" className="search-result-btn" onClick={() => openSearchResult(item.tab)}>
+                    <button type="button" className="search-result-btn" onClick={() => handleSearchItemAction(item)}>
                       <span className="search-result-type">{item.type}</span>
                       <strong>{item.title}</strong>
                       <span>{item.subtitle}</span>
@@ -468,6 +509,13 @@ export default function App() {
 
           <main>{activeModule}</main>
         </section>
+
+        <CustomerHistoryModal
+          open={searchCustomerHistoryModal.open}
+          companyId={searchCustomerHistoryModal.companyId}
+          companyName={searchCustomerHistoryModal.companyName}
+          onClose={closeSearchCustomerHistoryModal}
+        />
       </div>
     </div>
   );

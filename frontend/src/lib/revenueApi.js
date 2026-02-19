@@ -748,7 +748,7 @@ export async function searchGlobalRecords(term) {
       .limit(5),
     supabase
       .from("contacts")
-      .select("id,full_name,email,companies:company_id(trade_name)")
+      .select("id,company_id,full_name,email,companies:company_id(trade_name)")
       .or(`full_name.ilike.${pattern},email.ilike.${pattern},whatsapp.ilike.${pattern}`)
       .limit(5),
     supabase
@@ -782,6 +782,9 @@ export async function searchGlobalRecords(term) {
 
   const mappedCompanies = (companiesRes.data || []).map((item) => ({
     id: `company-${item.id}`,
+    entity_type: "company",
+    company_id: item.id,
+    company_name: item.trade_name || "Empresa",
     type: "Empresa",
     title: item.trade_name || "Empresa",
     subtitle: item.cnpj ? `CNPJ ${item.cnpj}` : "Sem CNPJ",
@@ -790,6 +793,9 @@ export async function searchGlobalRecords(term) {
 
   const mappedContacts = (contactsRes.data || []).map((item) => ({
     id: `contact-${item.id}`,
+    entity_type: "contact",
+    company_id: item.company_id || null,
+    company_name: item.companies?.trade_name || "",
     type: "Contato",
     title: item.full_name || "Contato",
     subtitle: item.companies?.trade_name || "Sem vínculo com empresa",
@@ -798,6 +804,7 @@ export async function searchGlobalRecords(term) {
 
   const mappedOpportunities = (opportunitiesRes.data || []).map((item) => ({
     id: `opportunity-${item.id}`,
+    entity_type: "opportunity",
     type: "Pipeline",
     title: item.title || "Oportunidade",
     subtitle: item.companies?.trade_name || "Sem empresa",
@@ -806,6 +813,7 @@ export async function searchGlobalRecords(term) {
 
   const mappedOrders = (ordersRes.data || []).map((item) => ({
     id: `order-${item.id}`,
+    entity_type: "order",
     type: "Pedido",
     title: item.order_number || "Pedido",
     subtitle: item.companies?.trade_name || "Sem empresa",
@@ -814,6 +822,7 @@ export async function searchGlobalRecords(term) {
 
   const mappedTickets = (ticketsRes.data || []).map((item) => ({
     id: `ticket-${item.id}`,
+    entity_type: "ticket",
     type: "Assistência",
     title: item.description || "Chamado técnico",
     subtitle: item.companies?.trade_name || "Sem empresa",
@@ -822,6 +831,7 @@ export async function searchGlobalRecords(term) {
 
   const mappedTasks = (tasksRes.data || []).map((item) => ({
     id: `task-${item.id}`,
+    entity_type: "task",
     type: "Tarefa",
     title: item.title || "Tarefa",
     subtitle: item.companies?.trade_name || "Sem empresa",
