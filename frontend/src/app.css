@@ -1061,10 +1061,18 @@ tbody tr:hover {
   font-weight: 700;
 }
 
+.pipeline-card-proposal {
+  margin: 7px 0 0;
+  font-size: 0.74rem;
+  color: var(--text-sub);
+}
+
 .pipeline-card-actions {
   margin-top: 8px;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .pipeline-empty {
@@ -1075,6 +1083,11 @@ tbody tr:hover {
 
 .error-text {
   color: var(--danger);
+  margin-top: 8px;
+}
+
+.success-text {
+  color: var(--success);
   margin-top: 8px;
 }
 
@@ -1099,6 +1112,32 @@ tbody tr:hover {
 
 .muted {
   color: var(--text-muted);
+}
+
+.pipeline-automation-toggle {
+  margin: 8px 0 12px;
+}
+
+.pipeline-automation-help {
+  margin: 4px 0 0;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-sub);
+}
+
+.checkbox-inline input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 4px;
 }
 
 .top-gap {

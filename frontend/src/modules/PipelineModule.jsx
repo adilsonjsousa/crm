@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  createAutomatedProposalFromOpportunity,
   createOpportunity,
   listCompanyOptions,
+  listLatestOrdersByOpportunity,
   listOpportunities,
   updateOpportunity,
   updateOpportunityStage
@@ -36,9 +38,16 @@ export default function PipelineModule() {
   const [items, setItems] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [draggingId, setDraggingId] = useState("");
   const [dragOverStage, setDragOverStage] = useState("");
   const [editingOpportunityId, setEditingOpportunityId] = useState("");
+  const [creatingProposalId, setCreatingProposalId] = useState("");
+  const [proposalsByOpportunity, setProposalsByOpportunity] = useState({});
+  const [autoProposalMode, setAutoProposalMode] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem("crm.pipeline.auto-proposal-mode") !== "0";
+  });
   const [form, setForm] = useState(() => emptyOpportunityForm());
 
   const itemsByStage = useMemo(() => {
@@ -57,10 +66,18 @@ export default function PipelineModule() {
 
   async function load() {
     setError("");
+    setSuccess("");
     try {
       const [opps, companiesData] = await Promise.all([listOpportunities(), listCompanyOptions()]);
       setItems(opps);
       setCompanies(companiesData);
+      const linkedOrders = await listLatestOrdersByOpportunity(opps.map((opportunity) => opportunity.id));
+      const nextProposalMap = linkedOrders.reduce((acc, order) => {
+        if (!order?.source_opportunity_id) return acc;
+        acc[order.source_opportunity_id] = order;
+        return acc;
+      }, {});
+      setProposalsByOpportunity(nextProposalMap);
       if (companiesData.length) {
         setForm((prev) => (prev.company_id ? prev : { ...prev, company_id: companiesData[0].id }));
       }
@@ -76,6 +93,7 @@ export default function PipelineModule() {
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
+    setSuccess("");
 
     try {
       const opportunityType = String(form.opportunity_type || "").trim();
@@ -144,6 +162,7 @@ export default function PipelineModule() {
   async function handleDrop(event, targetStage) {
     event.preventDefault();
     setDragOverStage("");
+    setSuccess("");
 
     const opportunityId = event.dataTransfer.getData("text/opportunity-id") || draggingId;
     if (!opportunityId) return;
@@ -190,6 +209,7 @@ export default function PipelineModule() {
 
   function startEditOpportunity(item) {
     setError("");
+    setSuccess("");
     const parsedTitle = parseOpportunityTitle(item.title);
     setEditingOpportunityId(item.id);
     setForm({
@@ -205,8 +225,40 @@ export default function PipelineModule() {
 
   function cancelEditOpportunity() {
     setError("");
+    setSuccess("");
     setEditingOpportunityId("");
     setForm(emptyOpportunityForm(companies[0]?.id || ""));
+  }
+
+  function handleToggleAutoProposalMode(event) {
+    const nextValue = Boolean(event.target.checked);
+    setAutoProposalMode(nextValue);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("crm.pipeline.auto-proposal-mode", nextValue ? "1" : "0");
+    }
+  }
+
+  async function handleCreateAutomatedProposal(event, item) {
+    event.stopPropagation();
+    if (!item?.id) return;
+
+    setError("");
+    setSuccess("");
+    setCreatingProposalId(item.id);
+
+    try {
+      const result = await createAutomatedProposalFromOpportunity(item);
+      setProposalsByOpportunity((prev) => ({ ...prev, [item.id]: result }));
+      if (result.already_exists) {
+        setSuccess(`Essa oportunidade já possui proposta vinculada (${result.order_number}).`);
+      } else {
+        setSuccess(`Proposta criada automaticamente (${result.order_number}).`);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCreatingProposalId("");
+    }
   }
 
   return (
@@ -214,6 +266,15 @@ export default function PipelineModule() {
       <article className="panel">
         <h2>Pipeline Comercial</h2>
         <p className="muted">Arraste os cards para evoluir a oportunidade para a próxima etapa.</p>
+        <div className="pipeline-automation-toggle">
+          <label className="checkbox-inline">
+            <input type="checkbox" checked={autoProposalMode} onChange={handleToggleAutoProposalMode} />
+            Modo automático de proposta
+          </label>
+          <p className="pipeline-automation-help">
+            Com este modo ativo, cada card permite gerar uma proposta automaticamente no módulo Pedidos.
+          </p>
+        </div>
         <form className="form-grid" onSubmit={handleSubmit}>
           <select
             value={form.company_id}
@@ -325,6 +386,7 @@ export default function PipelineModule() {
       <article className="panel top-gap">
         <h3>Funil de vendas</h3>
         {error ? <p className="error-text">{error}</p> : null}
+        {success ? <p className="success-text">{success}</p> : null}
         <div className="pipeline-board">
           {PIPELINE_STAGES.map((stage) => (
             <section
@@ -341,32 +403,55 @@ export default function PipelineModule() {
               </header>
 
               <div className="pipeline-column-body">
-                {(itemsByStage[stage.value] || []).map((item) => (
-                  <article
-                    key={item.id}
-                    className={`pipeline-card ${draggingId === item.id ? "is-dragging" : ""}`}
-                    draggable
-                    onDragStart={(event) => handleDragStart(event, item.id)}
-                    onDragEnd={handleDragEnd}
-                  >
-                    <p className="pipeline-card-title">{item.title}</p>
-                    <p className="pipeline-card-company">{item.companies?.trade_name || "-"}</p>
-                    <p className="pipeline-card-value">{brl(item.estimated_value)}</p>
-                    <div className="pipeline-card-actions">
-                      <button
-                        type="button"
-                        className="btn-ghost btn-table-action"
-                        onMouseDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          startEditOpportunity(item);
-                        }}
-                      >
-                        {editingOpportunityId === item.id ? "Editando" : "Editar"}
-                      </button>
-                    </div>
-                  </article>
-                ))}
+                {(itemsByStage[stage.value] || []).map((item) => {
+                  const linkedProposal = proposalsByOpportunity[item.id];
+                  return (
+                    <article
+                      key={item.id}
+                      className={`pipeline-card ${draggingId === item.id ? "is-dragging" : ""}`}
+                      draggable
+                      onDragStart={(event) => handleDragStart(event, item.id)}
+                      onDragEnd={handleDragEnd}
+                    >
+                      <p className="pipeline-card-title">{item.title}</p>
+                      <p className="pipeline-card-company">{item.companies?.trade_name || "-"}</p>
+                      <p className="pipeline-card-value">{brl(item.estimated_value)}</p>
+                      {linkedProposal ? (
+                        <p className="pipeline-card-proposal">
+                          Proposta: {linkedProposal.order_number} ({brl(linkedProposal.total_amount)})
+                        </p>
+                      ) : null}
+                      <div className="pipeline-card-actions">
+                        {autoProposalMode ? (
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action"
+                            disabled={Boolean(linkedProposal) || creatingProposalId === item.id}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onClick={(event) => handleCreateAutomatedProposal(event, item)}
+                          >
+                            {linkedProposal
+                              ? "Proposta criada"
+                              : creatingProposalId === item.id
+                                ? "Gerando..."
+                                : "Gerar proposta"}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            startEditOpportunity(item);
+                          }}
+                        >
+                          {editingOpportunityId === item.id ? "Editando" : "Editar"}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
 
                 {!itemsByStage[stage.value]?.length ? <p className="pipeline-empty">Sem oportunidades</p> : null}
               </div>

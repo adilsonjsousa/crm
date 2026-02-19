@@ -1,5 +1,6 @@
 import { ensureSupabase } from "./supabase";
 import { PIPELINE_STAGES, sortByStageOrder, stageStatus } from "./pipelineStages";
+import { parseOpportunityTitle, resolveEstimatedValueByProduct } from "./productCatalog";
 
 function normalizeError(error, fallback) {
   return error?.message || fallback;
@@ -42,6 +43,29 @@ function normalizeSearchTerm(term) {
     .replace(/[,%()]/g, " ")
     .replace(/\s+/g, " ")
     .slice(0, 80);
+}
+
+function buildProposalOrderNumber(opportunityId = "") {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hour = String(now.getHours()).padStart(2, "0");
+  const minute = String(now.getMinutes()).padStart(2, "0");
+  const second = String(now.getSeconds()).padStart(2, "0");
+  const milli = String(now.getMilliseconds()).padStart(3, "0");
+  const suffix = String(opportunityId || "")
+    .replace(/[^a-z0-9]/gi, "")
+    .slice(-6)
+    .toUpperCase();
+
+  if (suffix) return `PROP-${year}${month}${day}${hour}${minute}${second}${milli}-${suffix}`;
+  return `PROP-${year}${month}${day}${hour}${minute}${second}${milli}`;
+}
+
+function isOrderNumberConflict(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("sales_orders_order_number_key") || message.includes("duplicate key");
 }
 
 function normalizeDateOnly(value) {
@@ -551,7 +575,11 @@ export async function createOrder(payload) {
   const orderItems = Array.isArray(orderPayload.items) ? orderPayload.items : [];
   delete orderPayload.items;
 
-  const { data, error } = await supabase.from("sales_orders").insert(orderPayload).select("id").single();
+  const { data, error } = await supabase
+    .from("sales_orders")
+    .insert(orderPayload)
+    .select("id,source_opportunity_id,order_number,order_type,status,total_amount,order_date")
+    .single();
   if (error) throw new Error(normalizeError(error, "Falha ao criar pedido."));
 
   const normalizedItems = orderItems
@@ -567,6 +595,102 @@ export async function createOrder(payload) {
     const { error: itemError } = await supabase.from("sales_order_items").insert(normalizedItems);
     if (itemError) throw new Error(normalizeError(itemError, "Falha ao criar itens do pedido."));
   }
+
+  return data;
+}
+
+export async function findOrderByOpportunity(opportunityId) {
+  const normalizedOpportunityId = String(opportunityId || "").trim();
+  if (!normalizedOpportunityId) return null;
+
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("sales_orders")
+    .select("id,source_opportunity_id,order_number,order_type,status,total_amount,order_date,created_at")
+    .eq("source_opportunity_id", normalizedOpportunityId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(normalizeError(error, "Falha ao consultar proposta vinculada à oportunidade."));
+  return data || null;
+}
+
+export async function listLatestOrdersByOpportunity(opportunityIds = []) {
+  const normalizedIds = [...new Set(opportunityIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  if (!normalizedIds.length) return [];
+
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("sales_orders")
+    .select("id,source_opportunity_id,order_number,order_type,status,total_amount,order_date,created_at")
+    .in("source_opportunity_id", normalizedIds)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(normalizeError(error, "Falha ao buscar propostas vinculadas às oportunidades."));
+
+  const latestByOpportunity = {};
+  for (const row of data || []) {
+    if (!row?.source_opportunity_id) continue;
+    if (latestByOpportunity[row.source_opportunity_id]) continue;
+    latestByOpportunity[row.source_opportunity_id] = row;
+  }
+
+  return Object.values(latestByOpportunity);
+}
+
+export async function createAutomatedProposalFromOpportunity(opportunity) {
+  const opportunityId = String(opportunity?.id || "").trim();
+  if (!opportunityId) throw new Error("Oportunidade inválida para gerar proposta.");
+
+  const companyId = String(opportunity?.company_id || "").trim();
+  if (!companyId) throw new Error("A oportunidade precisa estar vinculada a um cliente.");
+
+  const existingOrder = await findOrderByOpportunity(opportunityId);
+  if (existingOrder) {
+    return { ...existingOrder, already_exists: true };
+  }
+
+  const parsedTitle = parseOpportunityTitle(opportunity?.title || "");
+  const fallbackAmount = resolveEstimatedValueByProduct(parsedTitle.title_subcategory, parsedTitle.title_product);
+  const totalAmount = Number(opportunity?.estimated_value ?? fallbackAmount ?? 0);
+  const safeTotalAmount = Number.isFinite(totalAmount) && totalAmount >= 0 ? totalAmount : 0;
+
+  const itemDescription = parsedTitle.title_subcategory && parsedTitle.title_product
+    ? `${parsedTitle.title_subcategory} > ${parsedTitle.title_product}`
+    : String(opportunity?.title || "Proposta comercial").trim() || "Proposta comercial";
+
+  const baseOrderPayload = {
+    company_id: companyId,
+    source_opportunity_id: opportunityId,
+    order_type: parsedTitle.opportunity_type || "equipment",
+    status: "pending",
+    total_amount: safeTotalAmount,
+    order_date: new Date().toISOString().slice(0, 10),
+    items: [
+      {
+        item_description: itemDescription,
+        quantity: 1,
+        unit_price: safeTotalAmount
+      }
+    ]
+  };
+
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const createdOrder = await createOrder({
+        ...baseOrderPayload,
+        order_number: buildProposalOrderNumber(opportunityId)
+      });
+      return { ...createdOrder, already_exists: false };
+    } catch (error) {
+      lastError = error;
+      if (!isOrderNumberConflict(error)) throw error;
+    }
+  }
+
+  throw lastError || new Error("Falha ao gerar proposta automática.");
 }
 
 export async function listCompanyOptions() {
