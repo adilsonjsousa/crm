@@ -33,7 +33,7 @@ const ART_PRINTER_LOGO_CANDIDATES = [
   "/artprinter-logo.jpg"
 ];
 
-const DEFAULT_PROPOSAL_TEMPLATE = [
+const BASIC_PROPOSAL_TEMPLATE = [
   "Proposta Comercial {{numero_proposta}}",
   "",
   "Cliente: {{cliente_nome}}",
@@ -60,6 +60,44 @@ const DEFAULT_PROPOSAL_TEMPLATE = [
   "Atenciosamente,",
   "Equipe Comercial"
 ].join("\n");
+
+const RD_STATION_PROPOSAL_TEMPLATE = [
+  "PROPOSTA COMERCIAL {{numero_proposta}}",
+  "",
+  "Empresa: {{empresa_nome}}",
+  "Contato: {{cliente_nome}}",
+  "Data de emissao: {{data_emissao}}",
+  "Validade: {{validade_dias}} dias",
+  "",
+  "1) Contexto e objetivo",
+  "Com base no diagnostico comercial realizado, esta proposta foi estruturada para atender o cenario atual do cliente.",
+  "Observacoes do contexto:",
+  "{{observacoes}}",
+  "",
+  "2) Solucao recomendada",
+  "- Categoria: {{categoria}}",
+  "- Produto/Servico: {{produto}}",
+  "",
+  "3) Investimento",
+  "- Valor total da proposta: {{valor_total}}",
+  "",
+  "4) Condicoes comerciais",
+  "- Condicoes de pagamento: {{condicoes_pagamento}}",
+  "- Prazo de entrega/implantacao: {{prazo_entrega}}",
+  "- Garantia/Suporte: {{garantia}}",
+  "",
+  "5) Proximos passos",
+  "Aprovando esta proposta dentro do prazo de validade, iniciamos o processo operacional conforme cronograma acordado.",
+  "",
+  "6) Aceite",
+  "Responsavel cliente: __________________________________________",
+  "Data de aceite: ____/____/________",
+  "",
+  "Atenciosamente,",
+  "Equipe Comercial"
+].join("\n");
+
+const DEFAULT_PROPOSAL_TEMPLATE = RD_STATION_PROPOSAL_TEMPLATE;
 
 function brl(value) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
@@ -624,12 +662,17 @@ export default function PipelineModule() {
     setSuccess("Modelo de proposta salvo como padrao neste navegador.");
   }
 
-  function handleResetProposalTemplate() {
-    setProposalEditor((prev) => (prev ? { ...prev, template_body: DEFAULT_PROPOSAL_TEMPLATE } : prev));
+  function handleApplyRdTemplate() {
+    setProposalEditor((prev) => (prev ? { ...prev, template_body: RD_STATION_PROPOSAL_TEMPLATE } : prev));
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(PROPOSAL_TEMPLATE_STORAGE_KEY);
     }
-    setSuccess("Modelo padrao restaurado com sucesso.");
+    setSuccess("Template estilo RD aplicado nesta proposta.");
+  }
+
+  function handleApplyBasicTemplate() {
+    setProposalEditor((prev) => (prev ? { ...prev, template_body: BASIC_PROPOSAL_TEMPLATE } : prev));
+    setSuccess("Template basico aplicado nesta proposta.");
   }
 
   function handleSaveProposalDoc() {
@@ -1071,11 +1114,14 @@ export default function PipelineModule() {
                   <code>{"{{garantia}}"}</code>, <code>{"{{observacoes}}"}</code>
                 </p>
                 <div className="inline-actions">
+                  <button type="button" className="btn-ghost" onClick={handleApplyRdTemplate}>
+                    Aplicar template RD
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={handleApplyBasicTemplate}>
+                    Usar template basico
+                  </button>
                   <button type="button" className="btn-ghost" onClick={handleSaveProposalTemplate}>
                     Salvar modelo padrao
-                  </button>
-                  <button type="button" className="btn-ghost" onClick={handleResetProposalTemplate}>
-                    Restaurar modelo base
                   </button>
                   <button type="button" className="btn-primary" onClick={handleSaveProposalDoc}>
                     Salvar .DOC
