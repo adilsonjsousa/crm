@@ -101,18 +101,7 @@ export default function DashboardModule() {
   return (
     <section className="module">
       {error ? <p className="error-text">{error}</p> : null}
-      {kpis ? (
-        <div className="kpi-grid">
-          <KpiCard label="Empresas" value={kpis.companies} />
-          <KpiCard label="Oportunidades" value={kpis.opportunities} />
-          <KpiCard label="Tarefas Abertas" value={kpis.openTasks || 0} />
-          <KpiCard label="Chamados Abertos" value={kpis.openTickets} />
-          <KpiCard label="Pedidos" value={kpis.orders} />
-          <KpiCard label="Faturamento" value={brl(kpis.revenue)} />
-        </div>
-      ) : null}
-
-      <div className="dashboard-strip top-gap">
+      <div className="dashboard-strip">
         <article className="metric-tile">
           <span>Negócios no funil</span>
           <strong>{pipelineSummary.totalDeals}</strong>
@@ -127,38 +116,49 @@ export default function DashboardModule() {
         </article>
       </div>
 
-      <div className="two-col top-gap">
-        <article className="panel">
-          <h3>Pipeline por Etapa</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Etapa</th>
-                <th>Qtd</th>
-                <th>Valor</th>
-                <th>Participação</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pipeline.map((row) => {
-                const ratio = Number(row.totalDeals || 0) / pipelineSummary.maxDeals;
-                return (
-                  <tr key={row.stage}>
-                    <td>{row.stageLabel || stageLabel(row.stage)}</td>
-                    <td>{row.totalDeals}</td>
-                    <td>{brl(row.totalValue)}</td>
-                    <td>
-                      <div className="stage-meter">
-                        <span style={{ width: `${Math.round(ratio * 100)}%` }} />
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </article>
+      <article className="panel top-gap">
+        <h3>Pipeline por Etapa</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Etapa</th>
+              <th>Qtd</th>
+              <th>Valor</th>
+              <th>Participação</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pipeline.map((row) => {
+              const ratio = Number(row.totalDeals || 0) / pipelineSummary.maxDeals;
+              return (
+                <tr key={row.stage}>
+                  <td>{row.stageLabel || stageLabel(row.stage)}</td>
+                  <td>{row.totalDeals}</td>
+                  <td>{brl(row.totalValue)}</td>
+                  <td>
+                    <div className="stage-meter">
+                      <span style={{ width: `${Math.round(ratio * 100)}%` }} />
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </article>
 
+      {kpis ? (
+        <div className="kpi-grid top-gap">
+          <KpiCard label="Empresas" value={kpis.companies} />
+          <KpiCard label="Oportunidades" value={kpis.opportunities} />
+          <KpiCard label="Tarefas Abertas" value={kpis.openTasks || 0} />
+          <KpiCard label="Chamados Abertos" value={kpis.openTickets} />
+          <KpiCard label="Pedidos" value={kpis.orders} />
+          <KpiCard label="Faturamento" value={brl(kpis.revenue)} />
+        </div>
+      ) : null}
+
+      <div className="two-col top-gap">
         <article className="panel">
           <h3>Atividades Recentes</h3>
           <ul className="activity-list">
