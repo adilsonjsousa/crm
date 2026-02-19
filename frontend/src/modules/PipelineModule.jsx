@@ -21,7 +21,17 @@ import {
 } from "../lib/productCatalog";
 
 const PROPOSAL_TEMPLATE_STORAGE_KEY = "crm.pipeline.proposal-template.v1";
-const ART_PRINTER_LOGO_CANDIDATES = ["/logo-art-printer.png", "/logo-artprinter.png", "/artprinter-logo.png"];
+const ART_PRINTER_LOGO_CANDIDATES = [
+  "/logo-art-printer.png",
+  "/logo-artprinter.png",
+  "/artprinter-logo.png",
+  "/logo-art-printer.jpeg",
+  "/logo-artprinter.jpeg",
+  "/artprinter-logo.jpeg",
+  "/logo-art-printer.jpg",
+  "/logo-artprinter.jpg",
+  "/artprinter-logo.jpg"
+];
 
 const DEFAULT_PROPOSAL_TEMPLATE = [
   "Proposta Comercial {{numero_proposta}}",
@@ -1060,8 +1070,8 @@ export default function PipelineModule() {
                 </div>
                 {!hasArtPrinterLogo ? (
                   <p className="warning-text proposal-warning">
-                    Logo da Art Printer nao encontrado no projeto. Adicione um arquivo em{" "}
-                    <code>frontend/public/logo-art-printer.png</code>.
+                    Logo da Art Printer nao encontrado. Adicione em{" "}
+                    <code>frontend/public/logo-art-printer.jpeg</code> ou <code>logo-art-printer.png</code>.
                   </p>
                 ) : null}
                 <label className="checkbox-inline">
