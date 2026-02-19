@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  createCompanyAsset,
+  createCompanyAssetPhoto,
   getCompanyById,
+  listCompanyAssets,
   listCompanyContacts,
   listCompanyHistory,
   listCompanyInteractions,
   listCompanyOpportunities,
   listCompanyOpportunityStageHistory,
   listCompanySalesOrders,
-  listCompanyTasks
+  listCompanyTasks,
+  uploadCompanyAssetPhoto
 } from "../lib/revenueApi";
 import { stageLabel } from "../lib/pipelineStages";
 import { SALES_TYPES } from "../lib/productCatalog";
@@ -17,8 +21,21 @@ const CUSTOMER_MODAL_TABS = [
   { id: "history", label: "Historico" },
   { id: "opportunities", label: "Propostas" },
   { id: "tasks", label: "Agenda" },
+  { id: "assets", label: "Raio-X do Parque" },
   { id: "interactions", label: "Interacoes" }
 ];
+
+function emptyAssetForm() {
+  return {
+    model_name: "",
+    contract_cost: "",
+    acquisition_date: "",
+    install_date: "",
+    serial_number: "",
+    location_description: "",
+    notes: ""
+  };
+}
 
 function formatDateTime(value) {
   if (!value) return "-";
@@ -152,6 +169,11 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
   const [contacts, setContacts] = useState([]);
   const [interactions, setInteractions] = useState([]);
   const [salesOrders, setSalesOrders] = useState([]);
+  const [assets, setAssets] = useState([]);
+  const [assetForm, setAssetForm] = useState(() => emptyAssetForm());
+  const [savingAsset, setSavingAsset] = useState(false);
+  const [uploadingAssetId, setUploadingAssetId] = useState("");
+  const [assetFeedback, setAssetFeedback] = useState({ type: "", message: "" });
 
   useEffect(() => {
     if (!open) return;
@@ -169,6 +191,8 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     setSelectedTab("overview");
     setLoading(true);
     setError("");
+    setAssetFeedback({ type: "", message: "" });
+    setAssetForm(emptyAssetForm());
 
     Promise.all([
       getCompanyById(companyId),
@@ -178,11 +202,13 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
       listCompanyTasks(companyId),
       listCompanyContacts(companyId),
       listCompanyInteractions(companyId),
-      listCompanySalesOrders(companyId)
+      listCompanySalesOrders(companyId),
+      listCompanyAssets(companyId)
     ])
       .then((result) => {
         if (!active) return;
-        const [profileData, historyData, opportunityData, stageData, taskData, contactData, interactionData, ordersData] = result;
+        const [profileData, historyData, opportunityData, stageData, taskData, contactData, interactionData, ordersData, assetsData] =
+          result;
         setCompanyProfile(profileData);
         setHistoryRows(historyData);
         setOpportunities(opportunityData);
@@ -191,6 +217,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
         setContacts(contactData);
         setInteractions(interactionData);
         setSalesOrders(ordersData);
+        setAssets(assetsData);
       })
       .catch((err) => {
         if (!active) return;
@@ -224,6 +251,11 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     const ordered = [...activeVisits].sort((a, b) => nextTaskDateValue(a) - nextTaskDateValue(b));
     return ordered[0] || null;
   }, [visitTasks]);
+
+  const totalContractCost = useMemo(
+    () => assets.reduce((acc, item) => acc + Number(item.contract_cost || 0), 0),
+    [assets]
+  );
 
   const timelineRows = useMemo(() => {
     const eventItems = historyRows.map((row) => {
@@ -279,6 +311,103 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
       (a, b) => new Date(b.happened_at).getTime() - new Date(a.happened_at).getTime()
     );
   }, [historyRows, interactions, opportunityStageRows, visitTasks]);
+
+  async function reloadAssets() {
+    if (!companyId) return;
+    const data = await listCompanyAssets(companyId);
+    setAssets(data);
+  }
+
+  async function handleCreateAsset(event) {
+    event.preventDefault();
+    if (!companyId) return;
+
+    const modelName = String(assetForm.model_name || "").trim();
+    if (!modelName) {
+      setAssetFeedback({ type: "error", message: "Informe o modelo do equipamento." });
+      return;
+    }
+
+    const contractCostRaw = String(assetForm.contract_cost || "").trim();
+    const normalizedCost = contractCostRaw ? Number(contractCostRaw.replace(",", ".")) : null;
+    if (normalizedCost !== null && !Number.isFinite(normalizedCost)) {
+      setAssetFeedback({ type: "error", message: "Custo de contrato invalido." });
+      return;
+    }
+
+    setSavingAsset(true);
+    setAssetFeedback({ type: "", message: "" });
+
+    try {
+      await createCompanyAsset({
+        company_id: companyId,
+        model_name: modelName,
+        contract_cost: normalizedCost,
+        acquisition_date: assetForm.acquisition_date || null,
+        install_date: assetForm.install_date || null,
+        serial_number: assetForm.serial_number || null,
+        location_description: assetForm.location_description || null,
+        notes: assetForm.notes || null
+      });
+
+      setAssetForm(emptyAssetForm());
+      await reloadAssets();
+      setAssetFeedback({ type: "success", message: "Equipamento adicionado ao raio-x do cliente." });
+    } catch (err) {
+      setAssetFeedback({ type: "error", message: err.message });
+    } finally {
+      setSavingAsset(false);
+    }
+  }
+
+  async function handleAddAssetPhoto(event, assetId) {
+    event.preventDefault();
+    if (!companyId || !assetId) return;
+
+    const formData = new FormData(event.currentTarget);
+    const fileRaw = formData.get("photo_file");
+    const file = typeof File !== "undefined" && fileRaw instanceof File && fileRaw.size ? fileRaw : null;
+    const directPhotoUrl = String(formData.get("photo_url") || "").trim();
+    const caption = String(formData.get("caption") || "").trim();
+
+    if (!file && !directPhotoUrl) {
+      setAssetFeedback({ type: "error", message: "Selecione uma foto ou informe URL da imagem para anexar." });
+      return;
+    }
+
+    setUploadingAssetId(assetId);
+    setAssetFeedback({ type: "", message: "" });
+
+    try {
+      let photoUrl = directPhotoUrl;
+      let storagePath = null;
+
+      if (file) {
+        const uploadResult = await uploadCompanyAssetPhoto({
+          companyId,
+          assetId,
+          file
+        });
+        photoUrl = uploadResult.publicUrl;
+        storagePath = uploadResult.storagePath;
+      }
+
+      await createCompanyAssetPhoto({
+        asset_id: assetId,
+        photo_url: photoUrl,
+        storage_path: storagePath,
+        caption: caption || null
+      });
+
+      event.currentTarget.reset();
+      await reloadAssets();
+      setAssetFeedback({ type: "success", message: "Foto anexada ao equipamento." });
+    } catch (err) {
+      setAssetFeedback({ type: "error", message: err.message });
+    } finally {
+      setUploadingAssetId("");
+    }
+  }
 
   if (!open) return null;
 
@@ -380,6 +509,16 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                     <span>Interacoes registradas</span>
                     <strong>{interactions.length}</strong>
                     <small>{latestInteraction ? formatDateTime(latestInteraction.occurred_at || latestInteraction.created_at) : "-"}</small>
+                  </div>
+                  <div>
+                    <span>Equipamentos no parque</span>
+                    <strong>{assets.length}</strong>
+                    <small>{assets.length ? "Raio-x atualizado" : "Nenhum equipamento cadastrado"}</small>
+                  </div>
+                  <div>
+                    <span>Custo contratual do parque</span>
+                    <strong>{brl(totalContractCost)}</strong>
+                    <small>{assets.length ? "Soma dos custos por equipamento" : "-"}</small>
                   </div>
                 </div>
                 <p className="customer-popup-highlight">
@@ -635,6 +774,137 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                 ) : null}
               </tbody>
             </table>
+          </div>
+        ) : null}
+
+        {!loading && selectedTab === "assets" ? (
+          <div className="customer-assets-wrap">
+            <article className="customer-popup-card top-gap">
+              <h4>Raio-X do parque instalado</h4>
+              <form className="form-grid top-gap" onSubmit={handleCreateAsset}>
+                <input
+                  required
+                  placeholder="Modelo do equipamento"
+                  value={assetForm.model_name}
+                  onChange={(event) => setAssetForm((prev) => ({ ...prev, model_name: event.target.value }))}
+                />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Custo de contrato (R$)"
+                  value={assetForm.contract_cost}
+                  onChange={(event) => setAssetForm((prev) => ({ ...prev, contract_cost: event.target.value }))}
+                />
+                <input
+                  type="date"
+                  placeholder="Data de aquisicao"
+                  value={assetForm.acquisition_date}
+                  onChange={(event) => setAssetForm((prev) => ({ ...prev, acquisition_date: event.target.value }))}
+                />
+                <input
+                  type="date"
+                  placeholder="Data de instalacao"
+                  value={assetForm.install_date}
+                  onChange={(event) => setAssetForm((prev) => ({ ...prev, install_date: event.target.value }))}
+                />
+                <input
+                  placeholder="Numero de serie (opcional)"
+                  value={assetForm.serial_number}
+                  onChange={(event) => setAssetForm((prev) => ({ ...prev, serial_number: event.target.value }))}
+                />
+                <input
+                  placeholder="Local instalado (opcional)"
+                  value={assetForm.location_description}
+                  onChange={(event) => setAssetForm((prev) => ({ ...prev, location_description: event.target.value }))}
+                />
+                <textarea
+                  placeholder="Observacoes tecnicas (opcional)"
+                  value={assetForm.notes}
+                  onChange={(event) => setAssetForm((prev) => ({ ...prev, notes: event.target.value }))}
+                />
+                <div className="inline-actions">
+                  <button type="submit" className="btn-primary" disabled={savingAsset}>
+                    {savingAsset ? "Salvando..." : "Adicionar equipamento"}
+                  </button>
+                </div>
+              </form>
+              {assetFeedback.message ? (
+                <p className={assetFeedback.type === "error" ? "error-text" : "success-text"}>{assetFeedback.message}</p>
+              ) : null}
+            </article>
+
+            <div className="table-wrap top-gap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Modelo</th>
+                    <th>Custo contrato</th>
+                    <th>Aquisicao</th>
+                    <th>Instalacao</th>
+                    <th>Serie</th>
+                    <th>Local</th>
+                    <th>Fotos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {assets.map((asset) => (
+                    <tr key={asset.id}>
+                      <td>{asset.model_name || "-"}</td>
+                      <td>{asset.contract_cost === null || asset.contract_cost === undefined ? "-" : brl(asset.contract_cost)}</td>
+                      <td>{formatDate(asset.acquisition_date)}</td>
+                      <td>{formatDate(asset.install_date)}</td>
+                      <td>{asset.serial_number || "-"}</td>
+                      <td>{asset.location_description || "-"}</td>
+                      <td>{Array.isArray(asset.photos) ? asset.photos.length : 0}</td>
+                    </tr>
+                  ))}
+                  {!assets.length ? (
+                    <tr>
+                      <td colSpan={7} className="muted">
+                        Nenhum equipamento cadastrado no parque deste cliente.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+
+            {assets.map((asset) => (
+              <article key={`asset-photo-${asset.id}`} className="customer-popup-card top-gap">
+                <div className="customer-asset-heading">
+                  <h4>{asset.model_name || "Equipamento"}</h4>
+                  <p className="muted">
+                    Custo contrato:{" "}
+                    <strong>
+                      {asset.contract_cost === null || asset.contract_cost === undefined ? "-" : brl(asset.contract_cost)}
+                    </strong>
+                    {" · "}Aquisicao: <strong>{formatDate(asset.acquisition_date)}</strong>
+                  </p>
+                </div>
+
+                <form className="form-grid top-gap" onSubmit={(event) => handleAddAssetPhoto(event, asset.id)}>
+                  <input type="file" name="photo_file" accept="image/png,image/jpeg,image/webp" />
+                  <input name="photo_url" placeholder="Ou informe URL da foto (opcional)" />
+                  <input name="caption" placeholder="Legenda da foto (opcional)" />
+                  <div className="inline-actions">
+                    <button type="submit" className="btn-primary" disabled={uploadingAssetId === asset.id}>
+                      {uploadingAssetId === asset.id ? "Enviando foto..." : "Adicionar foto"}
+                    </button>
+                  </div>
+                </form>
+
+                <div className="customer-asset-photo-grid top-gap">
+                  {(asset.photos || []).map((photo) => (
+                    <figure key={photo.id} className="customer-asset-photo-card">
+                      <img src={photo.photo_url} alt={photo.caption || asset.model_name || "Equipamento"} loading="lazy" />
+                      <figcaption>{photo.caption || "Sem legenda"}</figcaption>
+                    </figure>
+                  ))}
+                  {!asset.photos?.length ? <p className="muted">Sem fotos para este equipamento.</p> : null}
+                </div>
+              </article>
+            ))}
           </div>
         ) : null}
 

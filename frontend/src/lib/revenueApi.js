@@ -45,6 +45,27 @@ function normalizeSearchTerm(term) {
     .slice(0, 80);
 }
 
+function normalizeStoragePart(value) {
+  return String(value || "arquivo")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+}
+
+function pickImageExtension(fileName, mimeType) {
+  const normalizedName = String(fileName || "").toLowerCase();
+  if (normalizedName.endsWith(".png")) return "png";
+  if (normalizedName.endsWith(".webp")) return "webp";
+  if (normalizedName.endsWith(".jpeg") || normalizedName.endsWith(".jpg")) return "jpg";
+  const normalizedMime = String(mimeType || "").toLowerCase();
+  if (normalizedMime.includes("png")) return "png";
+  if (normalizedMime.includes("webp")) return "webp";
+  return "jpg";
+}
+
 function buildProposalOrderNumber(opportunityId = "") {
   const now = new Date();
   const year = now.getFullYear();
@@ -543,6 +564,111 @@ export async function listCompanyInteractions(companyId) {
     .limit(300);
   if (error) throw new Error(normalizeError(error, "Falha ao listar interações do cliente."));
   return data || [];
+}
+
+export async function listCompanyAssets(companyId) {
+  const normalizedCompanyId = String(companyId || "").trim();
+  if (!normalizedCompanyId) return [];
+
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("assets")
+    .select(
+      "id,company_id,model_name,contract_cost,acquisition_date,serial_number,install_date,location_description,notes,created_at,photos:asset_photos(id,photo_url,storage_path,caption,created_at)"
+    )
+    .eq("company_id", normalizedCompanyId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(normalizeError(error, "Falha ao listar parque de equipamentos do cliente."));
+  return data || [];
+}
+
+export async function createCompanyAsset(payload) {
+  const supabase = ensureSupabase();
+  const contractCostRaw = payload.contract_cost;
+  let normalizedContractCost = null;
+  if (contractCostRaw !== null && contractCostRaw !== undefined && String(contractCostRaw).trim() !== "") {
+    normalizedContractCost = Number(String(contractCostRaw).replace(",", "."));
+  }
+
+  const normalizedPayload = {
+    company_id: payload.company_id,
+    model_name: String(payload.model_name || "").trim(),
+    contract_cost: normalizedContractCost,
+    acquisition_date: payload.acquisition_date || null,
+    serial_number: payload.serial_number || null,
+    install_date: payload.install_date || null,
+    location_description: payload.location_description || null,
+    notes: payload.notes || null
+  };
+
+  if (!normalizedPayload.company_id) {
+    throw new Error("Selecione um cliente para registrar o equipamento.");
+  }
+  if (!normalizedPayload.model_name) {
+    throw new Error("Informe o modelo do equipamento.");
+  }
+  if (normalizedPayload.contract_cost !== null && !Number.isFinite(normalizedPayload.contract_cost)) {
+    throw new Error("Custo de contrato inválido.");
+  }
+
+  const { data, error } = await supabase.from("assets").insert(normalizedPayload).select("id").single();
+  if (error) throw new Error(normalizeError(error, "Falha ao cadastrar equipamento no parque do cliente."));
+  return data;
+}
+
+export async function createCompanyAssetPhoto(payload) {
+  const supabase = ensureSupabase();
+  const normalizedPayload = {
+    asset_id: payload.asset_id,
+    photo_url: String(payload.photo_url || "").trim(),
+    storage_path: payload.storage_path || null,
+    caption: payload.caption || null
+  };
+
+  if (!normalizedPayload.asset_id) {
+    throw new Error("Equipamento inválido para anexar foto.");
+  }
+  if (!normalizedPayload.photo_url) {
+    throw new Error("Informe a URL da foto do equipamento.");
+  }
+
+  const { error } = await supabase.from("asset_photos").insert(normalizedPayload);
+  if (error) throw new Error(normalizeError(error, "Falha ao salvar foto do equipamento."));
+}
+
+export async function uploadCompanyAssetPhoto({ companyId, assetId, file }) {
+  const supabase = ensureSupabase();
+  const normalizedCompanyId = String(companyId || "").trim();
+  const normalizedAssetId = String(assetId || "").trim();
+
+  if (!normalizedCompanyId || !normalizedAssetId) {
+    throw new Error("Cliente/equipamento inválido para upload de foto.");
+  }
+
+  const isBrowserFile = typeof File !== "undefined" && file instanceof File;
+  if (!isBrowserFile || !file.size) {
+    throw new Error("Selecione um arquivo de imagem para upload.");
+  }
+
+  const extension = pickImageExtension(file.name, file.type);
+  const safeName = normalizeStoragePart(file.name.replace(/\.[^.]+$/, "")) || "equipamento";
+  const token = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+  const storagePath = `${normalizedCompanyId}/${normalizedAssetId}/${token}-${safeName}.${extension}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("customer-equipment-photos")
+    .upload(storagePath, file, { upsert: false, cacheControl: "3600" });
+
+  if (uploadError) throw new Error(normalizeError(uploadError, "Falha ao enviar foto para o storage."));
+
+  const { data } = supabase.storage.from("customer-equipment-photos").getPublicUrl(storagePath);
+  const publicUrl = String(data?.publicUrl || "").trim();
+  if (!publicUrl) {
+    throw new Error("Falha ao obter URL pública da foto enviada.");
+  }
+
+  return { publicUrl, storagePath };
 }
 
 export async function listCompanySalesOrders(companyId) {
