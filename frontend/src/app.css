@@ -1054,6 +1054,24 @@ tbody tr:hover {
   color: var(--text-sub);
 }
 
+.pipeline-card-company-link {
+  margin: 6px 0 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-2);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.pipeline-card-company-link:hover {
+  color: var(--accent-1);
+}
+
 .pipeline-card-value {
   margin: 8px 0 0;
   font-size: 0.76rem;
@@ -1222,6 +1240,143 @@ tbody tr:hover {
   color: var(--text-main);
 }
 
+.customer-popup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(18, 23, 34, 0.52);
+  backdrop-filter: blur(2px);
+  padding: 18px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.customer-popup {
+  width: min(1220px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: var(--bg-surface);
+  box-shadow: 0 24px 50px rgba(4, 9, 18, 0.34);
+  padding: 14px;
+}
+
+.customer-popup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.customer-popup-header h3 {
+  margin: 0 0 4px;
+}
+
+.customer-popup-header p {
+  margin: 0;
+}
+
+.customer-popup-tabs {
+  margin-top: 10px;
+}
+
+.customer-popup-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.customer-popup-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-surface-muted);
+  padding: 10px;
+}
+
+.customer-popup-card h4 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.customer-popup-facts {
+  margin: 10px 0 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 8px 10px;
+}
+
+.customer-popup-facts div {
+  margin: 0;
+}
+
+.customer-popup-facts dt {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.customer-popup-facts dd {
+  margin: 3px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-main);
+}
+
+.customer-popup-fact-wide {
+  grid-column: 1 / -1;
+}
+
+.customer-popup-kpis {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.customer-popup-kpis div {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  padding: 8px;
+}
+
+.customer-popup-kpis span {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.customer-popup-kpis strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 1.05rem;
+  color: var(--text-main);
+}
+
+.customer-popup-kpis small {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.72rem;
+  color: var(--text-sub);
+}
+
+.customer-popup-highlight {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-sub);
+}
+
+.customer-visit-badge {
+  margin-left: 6px;
+  background: rgba(52, 118, 247, 0.14);
+  border-color: rgba(52, 118, 247, 0.35);
+  color: #1e5dc6;
+}
+
 .top-gap {
   margin-top: 10px;
 }
@@ -1295,6 +1450,22 @@ tbody tr:hover {
   }
 
   .proposal-send-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .customer-popup-overlay {
+    padding: 8px;
+    align-items: stretch;
+  }
+
+  .customer-popup {
+    max-height: 100%;
+    border-radius: 12px;
+  }
+
+  .customer-popup-overview-grid,
+  .customer-popup-facts,
+  .customer-popup-kpis {
     grid-template-columns: 1fr;
   }
 }

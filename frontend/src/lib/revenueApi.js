@@ -179,6 +179,21 @@ export async function listCompanies() {
   return data || [];
 }
 
+export async function getCompanyById(companyId) {
+  const normalizedCompanyId = String(companyId || "").trim();
+  if (!normalizedCompanyId) return null;
+
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("companies")
+    .select("id,cnpj,trade_name,legal_name,email,phone,segmento,address_full")
+    .eq("id", normalizedCompanyId)
+    .maybeSingle();
+
+  if (error) throw new Error(normalizeError(error, "Falha ao buscar dados do cliente."));
+  return data || null;
+}
+
 export async function findCompanyByCnpj(cnpj) {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
@@ -527,6 +542,23 @@ export async function listCompanyInteractions(companyId) {
     .order("occurred_at", { ascending: false })
     .limit(300);
   if (error) throw new Error(normalizeError(error, "Falha ao listar interações do cliente."));
+  return data || [];
+}
+
+export async function listCompanySalesOrders(companyId) {
+  const normalizedCompanyId = String(companyId || "").trim();
+  if (!normalizedCompanyId) return [];
+
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("sales_orders")
+    .select("id,order_number,order_type,status,total_amount,order_date,source_opportunity_id,created_at")
+    .eq("company_id", normalizedCompanyId)
+    .order("order_date", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(120);
+
+  if (error) throw new Error(normalizeError(error, "Falha ao listar propostas emitidas para o cliente."));
   return data || [];
 }
 

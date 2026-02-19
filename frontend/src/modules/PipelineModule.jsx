@@ -19,6 +19,7 @@ import {
   parseOpportunityTitle,
   resolveEstimatedValueByProduct
 } from "../lib/productCatalog";
+import CustomerHistoryModal from "../components/CustomerHistoryModal";
 
 const PROPOSAL_TEMPLATE_STORAGE_KEY = "crm.pipeline.proposal-template.v1";
 const ART_PRINTER_LOGO_CANDIDATES = [
@@ -437,6 +438,11 @@ export default function PipelineModule() {
   const [proposalLoadingContacts, setProposalLoadingContacts] = useState(false);
   const [proposalLogoDataUrl, setProposalLogoDataUrl] = useState("");
   const [sendingProposal, setSendingProposal] = useState(false);
+  const [customerHistoryModal, setCustomerHistoryModal] = useState({
+    open: false,
+    companyId: "",
+    companyName: ""
+  });
   const [form, setForm] = useState(() => emptyOpportunityForm());
 
   const itemsByStage = useMemo(() => {
@@ -578,7 +584,7 @@ export default function PipelineModule() {
   }
 
   function handleDragStart(event, opportunityId) {
-    if (event.target?.closest && event.target.closest(".pipeline-card-actions")) {
+    if (event.target?.closest && event.target.closest(".pipeline-card-actions, .pipeline-card-company-link")) {
       event.preventDefault();
       return;
     }
@@ -723,6 +729,28 @@ export default function PipelineModule() {
     } finally {
       setProposalLoadingContacts(false);
     }
+  }
+
+  function handleOpenCustomerHistory(event, item) {
+    event.stopPropagation();
+    event.preventDefault();
+    if (!item?.company_id) {
+      setError("Esta oportunidade nao possui cliente vinculado.");
+      return;
+    }
+
+    setCustomerHistoryModal({
+      open: true,
+      companyId: item.company_id,
+      companyName: item.companies?.trade_name || "Cliente"
+    });
+  }
+
+  function closeCustomerHistoryModal() {
+    setCustomerHistoryModal((prev) => ({
+      ...prev,
+      open: false
+    }));
   }
 
   function closeProposalEditor() {
@@ -1038,7 +1066,21 @@ export default function PipelineModule() {
                       onDragEnd={handleDragEnd}
                     >
                       <p className="pipeline-card-title">{item.title}</p>
-                      <p className="pipeline-card-company">{item.companies?.trade_name || "-"}</p>
+                      {item.company_id ? (
+                        <button
+                          type="button"
+                          className="pipeline-card-company-link"
+                          onMouseDown={(event) => {
+                            event.stopPropagation();
+                            event.preventDefault();
+                          }}
+                          onClick={(event) => handleOpenCustomerHistory(event, item)}
+                        >
+                          {item.companies?.trade_name || "Cliente"}
+                        </button>
+                      ) : (
+                        <p className="pipeline-card-company">-</p>
+                      )}
                       <p className="pipeline-card-value">{brl(item.estimated_value)}</p>
                       {linkedProposal ? (
                         <p className="pipeline-card-proposal">
@@ -1282,6 +1324,13 @@ export default function PipelineModule() {
           </div>
         </article>
       ) : null}
+
+      <CustomerHistoryModal
+        open={customerHistoryModal.open}
+        companyId={customerHistoryModal.companyId}
+        companyName={customerHistoryModal.companyName}
+        onClose={closeCustomerHistoryModal}
+      />
     </section>
   );
 }
