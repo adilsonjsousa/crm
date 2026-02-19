@@ -1175,6 +1175,11 @@ tbody tr:hover {
   font-size: 0.72rem;
 }
 
+.proposal-warning {
+  margin: 2px 0 4px;
+  font-size: 0.76rem;
+}
+
 .proposal-send-grid {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto;
@@ -1192,6 +1197,21 @@ tbody tr:hover {
 .proposal-preview h4 {
   margin: 0 0 8px;
   font-size: 0.9rem;
+}
+
+.proposal-preview-brand {
+  margin: 0 0 10px;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+}
+
+.proposal-preview-logo {
+  max-width: 220px;
+  max-height: 56px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
 }
 
 .proposal-preview pre {

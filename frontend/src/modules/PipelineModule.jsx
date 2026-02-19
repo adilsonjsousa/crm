@@ -21,6 +21,7 @@ import {
 } from "../lib/productCatalog";
 
 const PROPOSAL_TEMPLATE_STORAGE_KEY = "crm.pipeline.proposal-template.v1";
+const ART_PRINTER_LOGO_CANDIDATES = ["/logo-art-printer.png", "/logo-artprinter.png", "/artprinter-logo.png"];
 
 const DEFAULT_PROPOSAL_TEMPLATE = [
   "Proposta Comercial {{numero_proposta}}",
@@ -125,8 +126,37 @@ function renderProposalTemplate(template, variables) {
   return output;
 }
 
-function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText }) {
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Falha ao ler logo da proposta."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function loadArtPrinterLogoAsDataUrl() {
+  if (typeof window === "undefined") return "";
+
+  for (const logoPath of ART_PRINTER_LOGO_CANDIDATES) {
+    try {
+      const response = await fetch(logoPath, { cache: "no-store" });
+      const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+      if (!response.ok || !contentType.startsWith("image/")) continue;
+      return await blobToDataUrl(await response.blob());
+    } catch (_err) {
+      continue;
+    }
+  }
+
+  return "";
+}
+
+function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText, logoDataUrl }) {
   const textHtml = escapeHtml(renderedText).replace(/\n/g, "<br />");
+  const logoHtml = logoDataUrl
+    ? `<img class="brand-logo" src="${escapeHtml(logoDataUrl)}" alt="Art Printer" />`
+    : `<p class="brand-fallback">art printer</p>`;
   return `<!doctype html>
 <html lang="pt-BR">
   <head>
@@ -140,6 +170,25 @@ function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText }
       }
       .header {
         margin-bottom: 20px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .brand-logo {
+        max-width: 280px;
+        max-height: 88px;
+        width: auto;
+        height: auto;
+        object-fit: contain;
+      }
+      .brand-fallback {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 800;
+        letter-spacing: 0.02em;
       }
       .header h1 {
         margin: 0 0 6px;
@@ -161,6 +210,7 @@ function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText }
   </head>
   <body>
     <div class="header">
+      <div class="brand">${logoHtml}</div>
       <h1>${escapeHtml(proposalNumber || "Proposta Comercial")}</h1>
       <p>${escapeHtml(companyName || "Cliente")}</p>
     </div>
@@ -244,6 +294,7 @@ export default function PipelineModule() {
   const [proposalEditor, setProposalEditor] = useState(null);
   const [proposalContacts, setProposalContacts] = useState([]);
   const [proposalLoadingContacts, setProposalLoadingContacts] = useState(false);
+  const [proposalLogoDataUrl, setProposalLogoDataUrl] = useState("");
   const [sendingProposal, setSendingProposal] = useState(false);
   const [form, setForm] = useState(() => emptyOpportunityForm());
 
@@ -291,9 +342,11 @@ export default function PipelineModule() {
       proposalNumber: proposalEditor.proposal_number,
       companyName:
         items.find((item) => item.id === proposalEditor.opportunity_id)?.companies?.trade_name || proposalEditor.client_name,
-      renderedText: renderedProposalText
+      renderedText: renderedProposalText,
+      logoDataUrl: proposalLogoDataUrl
     });
-  }, [items, proposalEditor, renderedProposalText]);
+  }, [items, proposalEditor, renderedProposalText, proposalLogoDataUrl]);
+  const hasArtPrinterLogo = Boolean(proposalLogoDataUrl);
 
   async function load() {
     setError("");
@@ -319,6 +372,19 @@ export default function PipelineModule() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    loadArtPrinterLogoAsDataUrl().then((logoDataUrl) => {
+      if (!active) return;
+      setProposalLogoDataUrl(logoDataUrl);
+    });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   async function handleSubmit(event) {
@@ -992,6 +1058,12 @@ export default function PipelineModule() {
                     Salvar .PDF
                   </button>
                 </div>
+                {!hasArtPrinterLogo ? (
+                  <p className="warning-text proposal-warning">
+                    Logo da Art Printer nao encontrado no projeto. Adicione um arquivo em{" "}
+                    <code>frontend/public/logo-art-printer.png</code>.
+                  </p>
+                ) : null}
                 <label className="checkbox-inline">
                   <input
                     type="checkbox"
@@ -1024,6 +1096,13 @@ export default function PipelineModule() {
 
             <aside className="proposal-preview">
               <h4>Previa da proposta</h4>
+              <div className="proposal-preview-brand">
+                {hasArtPrinterLogo ? (
+                  <img src={proposalLogoDataUrl} alt="Art Printer" className="proposal-preview-logo" />
+                ) : (
+                  <strong>art printer</strong>
+                )}
+              </div>
               <pre>{renderedProposalText}</pre>
             </aside>
           </div>
