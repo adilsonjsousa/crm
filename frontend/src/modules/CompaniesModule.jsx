@@ -187,6 +187,13 @@ function formatDate(value) {
   }).format(new Date(`${value}T00:00:00`));
 }
 
+function truncateText(value, maxLength = 30) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "-";
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
 function taskStatusLabel(value) {
   const map = {
     todo: "A Fazer",
@@ -1135,8 +1142,13 @@ export default function CompaniesModule({
                   {companies.map((company) => (
                     <tr key={company.id}>
                       <td>
-                        <button type="button" className="btn-inline-link" onClick={() => openCustomerHistoryModal(company)}>
-                          {company.trade_name}
+                        <button
+                          type="button"
+                          className="btn-inline-link"
+                          title={company.trade_name || ""}
+                          onClick={() => openCustomerHistoryModal(company)}
+                        >
+                          {truncateText(company.trade_name, 30)}
                         </button>
                       </td>
                       <td>{maskCnpj(company.cnpj)}</td>
