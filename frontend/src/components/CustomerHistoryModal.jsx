@@ -613,6 +613,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                   <thead>
                     <tr>
                       <th>Contato</th>
+                      <th>Cargo</th>
                       <th>E-mail</th>
                       <th>WhatsApp</th>
                       <th>Nascimento</th>
@@ -626,6 +627,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                       return (
                         <tr key={contact.id}>
                           <td>{contact.full_name || "-"}</td>
+                          <td>{contact.role_title || "-"}</td>
                           <td>{contact.email || "-"}</td>
                           <td>{contact.whatsapp || contact.phone || "-"}</td>
                           <td>{formatBirthDate(contact.birth_date)}</td>
@@ -658,7 +660,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                     })}
                     {!contacts.length ? (
                       <tr>
-                        <td colSpan={5} className="muted">
+                        <td colSpan={6} className="muted">
                           Nenhum contato cadastrado para este cliente.
                         </td>
                       </tr>

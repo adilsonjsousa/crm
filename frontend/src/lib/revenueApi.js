@@ -275,9 +275,9 @@ export async function listContacts() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("contacts")
-    .select("id,company_id,full_name,email,phone,whatsapp,birth_date,is_primary,companies:company_id(trade_name)")
+    .select("id,company_id,full_name,email,phone,whatsapp,birth_date,role_title,is_primary,companies:company_id(trade_name)")
     .order("created_at", { ascending: false })
-    .limit(30);
+    .limit(200);
   if (error) throw new Error(normalizeError(error, "Falha ao listar contatos."));
   return data || [];
 }
@@ -690,7 +690,7 @@ export async function listCompanyContacts(companyId) {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("contacts")
-    .select("id,full_name,email,phone,whatsapp,birth_date,is_primary")
+    .select("id,full_name,email,phone,whatsapp,birth_date,role_title,is_primary")
     .eq("company_id", companyId)
     .order("is_primary", { ascending: false })
     .order("full_name", { ascending: true })

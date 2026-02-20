@@ -45,6 +45,7 @@ const EMPTY_COMPANY_FORM = {
   checkin_pin: "",
   contact_name: "",
   contact_email: "",
+  contact_role_title: "",
   contact_whatsapp: "",
   contact_birth_date: ""
 };
@@ -53,6 +54,7 @@ const EMPTY_CONTACT_FORM = {
   company_id: "",
   full_name: "",
   email: "",
+  role_title: "",
   whatsapp: "",
   birth_date: ""
 };
@@ -76,6 +78,7 @@ const EMPTY_EDIT_CONTACT_FORM = {
   company_id: "",
   full_name: "",
   email: "",
+  role_title: "",
   whatsapp: "",
   birth_date: ""
 };
@@ -369,10 +372,10 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
   const cnpjDigits = useMemo(() => cleanCnpj(form.cnpj), [form.cnpj]);
   const hasPrimaryContactData = useMemo(
     () =>
-      [form.contact_name, form.contact_email, form.contact_whatsapp, form.contact_birth_date]
+      [form.contact_name, form.contact_email, form.contact_role_title, form.contact_whatsapp, form.contact_birth_date]
         .map((value) => String(value || "").trim())
         .some(Boolean),
-    [form.contact_birth_date, form.contact_email, form.contact_name, form.contact_whatsapp]
+    [form.contact_birth_date, form.contact_email, form.contact_name, form.contact_role_title, form.contact_whatsapp]
   );
   const isCheckingCnpj = cnpjValidation.type === "checking";
   const isCnpjBlocked = cnpjValidation.type === "invalid" || cnpjValidation.type === "duplicate";
@@ -682,6 +685,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
           company_id: createdCompany.id,
           full_name: upperLettersOnly(form.contact_name),
           email: form.contact_email || null,
+          role_title: form.contact_role_title || null,
           whatsapp: form.contact_whatsapp || null,
           birth_date: form.contact_birth_date || null,
           is_primary: true
@@ -690,7 +694,15 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
 
       setForm(EMPTY_COMPANY_FORM);
       setCnpjValidation({ type: "idle", message: "" });
-      setContactForm((prev) => ({ ...prev, company_id: createdCompany.id, full_name: "", email: "", whatsapp: "", birth_date: "" }));
+      setContactForm((prev) => ({
+        ...prev,
+        company_id: createdCompany.id,
+        full_name: "",
+        email: "",
+        role_title: "",
+        whatsapp: "",
+        birth_date: ""
+      }));
       await load();
       setSelectedCompanyId(createdCompany.id);
     } catch (err) {
@@ -712,11 +724,12 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         company_id: contactForm.company_id || null,
         full_name: upperLettersOnly(contactForm.full_name),
         email: contactForm.email || null,
+        role_title: contactForm.role_title || null,
         whatsapp: contactForm.whatsapp || null,
         birth_date: contactForm.birth_date || null
       });
 
-      setContactForm((prev) => ({ ...prev, full_name: "", email: "", whatsapp: "", birth_date: "" }));
+      setContactForm((prev) => ({ ...prev, full_name: "", email: "", role_title: "", whatsapp: "", birth_date: "" }));
       await load();
       if (selectedCompanyId) await loadCustomerWorkspace(selectedCompanyId);
     } catch (err) {
@@ -805,6 +818,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       company_id: contact.company_id || "",
       full_name: upperLettersOnly(contact.full_name || ""),
       email: contact.email || "",
+      role_title: contact.role_title || "",
       whatsapp: contact.whatsapp || contact.phone || "",
       birth_date: contact.birth_date || ""
     });
@@ -837,6 +851,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         company_id: editContactForm.company_id || null,
         full_name: upperLettersOnly(editContactForm.full_name),
         email: editContactForm.email || null,
+        role_title: editContactForm.role_title || null,
         whatsapp: editContactForm.whatsapp || null,
         birth_date: editContactForm.birth_date || null
       });
@@ -1041,6 +1056,11 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
               onChange={(event) => setForm((prev) => ({ ...prev, contact_email: event.target.value }))}
             />
             <input
+              placeholder="Cargo do contato"
+              value={form.contact_role_title}
+              onChange={(event) => setForm((prev) => ({ ...prev, contact_role_title: event.target.value }))}
+            />
+            <input
               placeholder="WhatsApp do contato"
               value={form.contact_whatsapp}
               onChange={(event) => setForm((prev) => ({ ...prev, contact_whatsapp: event.target.value }))}
@@ -1227,6 +1247,11 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
               onChange={(event) => setContactForm((prev) => ({ ...prev, email: event.target.value }))}
             />
             <input
+              placeholder="Cargo"
+              value={contactForm.role_title}
+              onChange={(event) => setContactForm((prev) => ({ ...prev, role_title: event.target.value }))}
+            />
+            <input
               placeholder="WhatsApp"
               value={contactForm.whatsapp}
               onChange={(event) => setContactForm((prev) => ({ ...prev, whatsapp: event.target.value }))}
@@ -1267,6 +1292,11 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                 onChange={(event) => setEditContactForm((prev) => ({ ...prev, email: event.target.value }))}
               />
               <input
+                placeholder="Cargo"
+                value={editContactForm.role_title}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, role_title: event.target.value }))}
+              />
+              <input
                 placeholder="WhatsApp"
                 value={editContactForm.whatsapp}
                 onChange={(event) => setEditContactForm((prev) => ({ ...prev, whatsapp: event.target.value }))}
@@ -1298,6 +1328,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                 <tr>
                   <th>Empresa</th>
                   <th>Contato</th>
+                  <th>Cargo</th>
                   <th>E-mail</th>
                   <th>WhatsApp</th>
                   <th>Nascimento</th>
@@ -1326,6 +1357,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                       )}
                     </td>
                     <td>{contact.full_name}</td>
+                    <td>{contact.role_title || "-"}</td>
                     <td>{contact.email || "-"}</td>
                     <td>{contact.whatsapp || contact.phone || "-"}</td>
                     <td>{formatBirthDate(contact.birth_date)}</td>
@@ -1541,6 +1573,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                     <thead>
                       <tr>
                         <th>Contato</th>
+                        <th>Cargo</th>
                         <th>WhatsApp</th>
                         <th>Telefone</th>
                         <th>Ações rápidas</th>
@@ -1553,6 +1586,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                         return (
                           <tr key={`quick-${contact.id}`}>
                             <td>{contact.full_name}</td>
+                            <td>{contact.role_title || "-"}</td>
                             <td>{contact.whatsapp || "-"}</td>
                             <td>{contact.phone || "-"}</td>
                             <td>
@@ -1588,7 +1622,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                       })}
                       {!customerContacts.length ? (
                         <tr>
-                          <td colSpan={4} className="muted">
+                          <td colSpan={5} className="muted">
                             Este cliente ainda não possui contatos vinculados.
                           </td>
                         </tr>

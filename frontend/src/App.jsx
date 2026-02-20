@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", hint: "Indicadores", icon: "◩" },
   { id: "tasks", label: "Agenda", hint: "Fluxo de tarefas", icon: "◪" },
   { id: "companies", label: "Empresas", hint: "Contas e CNPJ", icon: "◎" },
+  { id: "contacts", label: "Contatos", hint: "Pessoas e cargos", icon: "◬" },
   { id: "pipeline", label: "Pipeline", hint: "Negócios", icon: "◧" },
   { id: "orders", label: "Pedidos", hint: "Receita", icon: "◫" },
   { id: "service", label: "Assistência", hint: "SLA e suporte", icon: "◨" }
@@ -30,6 +31,11 @@ const PAGE_META = {
     kicker: "Gestão de Contas",
     title: "Base de Empresas",
     description: "Cadastre empresas com CNPJ validado e dados autocompletados para manter a base confiável."
+  },
+  contacts: {
+    kicker: "Relacionamento",
+    title: "Base de Contatos",
+    description: "Consulte, corrija e mantenha contatos com vínculo de empresa, WhatsApp, aniversário e cargo."
   },
   pipeline: {
     kicker: "Vendas",
@@ -87,6 +93,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [companiesFocusTarget, setCompaniesFocusTarget] = useState("company");
   const [companiesFocusRequest, setCompaniesFocusRequest] = useState(0);
+  const [contactsFocusRequest, setContactsFocusRequest] = useState(0);
   const [globalSearch, setGlobalSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -151,12 +158,15 @@ export default function App() {
     if (activeTab === "companies") {
       return <CompaniesModule focusTarget={companiesFocusTarget} focusRequest={companiesFocusRequest} />;
     }
+    if (activeTab === "contacts") {
+      return <CompaniesModule focusTarget="contact" focusRequest={contactsFocusRequest} />;
+    }
     if (activeTab === "pipeline") return <PipelineModule />;
     if (activeTab === "orders") return <OrdersModule />;
     if (activeTab === "tasks") return <TasksModule />;
     if (activeTab === "service") return <ServiceModule />;
     return <DashboardModule />;
-  }, [activeTab, companiesFocusRequest, companiesFocusTarget]);
+  }, [activeTab, companiesFocusRequest, companiesFocusTarget, contactsFocusRequest]);
 
   const activeMeta = PAGE_META[activeTab] || PAGE_META.dashboard;
   const activeNav = NAV_ITEMS.find((item) => item.id === activeTab) || NAV_ITEMS[0];
@@ -264,6 +274,11 @@ export default function App() {
   }
 
   function openCompanyQuickAction(target) {
+    if (target === "contact") {
+      setContactsFocusRequest((previous) => previous + 1);
+      setActiveTab("contacts");
+      return;
+    }
     setCompaniesFocusTarget(target);
     setCompaniesFocusRequest((previous) => previous + 1);
     setActiveTab("companies");
@@ -321,7 +336,12 @@ export default function App() {
             <button
               key={item.id}
               className={item.id === activeTab ? "crm-nav-btn active" : "crm-nav-btn"}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => {
+                if (item.id === "contacts") {
+                  setContactsFocusRequest((previous) => previous + 1);
+                }
+                setActiveTab(item.id);
+              }}
             >
               <span className="crm-nav-icon">{item.icon}</span>
               <span className="crm-nav-copy">
