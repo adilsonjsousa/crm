@@ -347,7 +347,8 @@ export default function CompaniesModule({
   editCompanyId = "",
   editCompanyRequest = 0,
   editContactId = "",
-  editContactRequest = 0
+  editContactRequest = 0,
+  editContactPayload = null
 }) {
   const [companies, setCompanies] = useState([]);
   const [lifecycleStages, setLifecycleStages] = useState([]);
@@ -385,6 +386,7 @@ export default function CompaniesModule({
   });
   const companyPanelRef = useRef(null);
   const contactPanelRef = useRef(null);
+  const editContactPanelRef = useRef(null);
 
   const cnpjDigits = useMemo(() => cleanCnpj(form.cnpj), [form.cnpj]);
   const hasPrimaryContactData = useMemo(
@@ -680,8 +682,8 @@ export default function CompaniesModule({
     if (!editContactRequest) return;
     const normalizedContactId = String(editContactId || "").trim();
     if (!normalizedContactId) return;
-    openEditContactById(normalizedContactId);
-  }, [editContactId, editContactRequest]);
+    openEditContactById(normalizedContactId, editContactPayload);
+  }, [editContactId, editContactPayload, editContactRequest]);
 
   useEffect(() => {
     if (!editingCompanyId) return;
@@ -691,6 +693,16 @@ export default function CompaniesModule({
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [editingCompanyId]);
+
+  useEffect(() => {
+    if (!editingContactId) return;
+    if (!editContactPanelRef.current) return;
+    editContactPanelRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    const firstField = editContactPanelRef.current.querySelector("select, input, textarea");
+    if (firstField && typeof firstField.focus === "function") {
+      window.setTimeout(() => firstField.focus(), 180);
+    }
+  }, [editingContactId]);
 
   async function handleCompanySubmit(event) {
     event.preventDefault();
@@ -912,11 +924,27 @@ export default function CompaniesModule({
     });
   }
 
-  async function openEditContactById(contactId) {
+  function normalizeExternalContactDraft(contactId, payload) {
+    if (!payload || typeof payload !== "object") return null;
+    const normalizedContactId = String(contactId || "").trim();
+    if (!normalizedContactId) return null;
+    return {
+      id: normalizedContactId,
+      company_id: String(payload.company_id || "").trim() || "",
+      full_name: String(payload.full_name || "").trim(),
+      email: String(payload.email || "").trim(),
+      role_title: String(payload.role_title || "").trim(),
+      whatsapp: formatBrazilPhone(payload.whatsapp || ""),
+      birth_date: String(payload.birth_date || "").trim()
+    };
+  }
+
+  async function openEditContactById(contactId, payload = null) {
     const normalizedContactId = String(contactId || "").trim();
     if (!normalizedContactId) return;
 
     setEditContactError("");
+    const externalDraft = normalizeExternalContactDraft(normalizedContactId, payload);
 
     try {
       const contactFromList = contacts.find((item) => item.id === normalizedContactId) || null;
@@ -926,16 +954,25 @@ export default function CompaniesModule({
         return;
       }
 
+      if (externalDraft) {
+        startEditContact(externalDraft);
+        if (externalDraft.company_id) setSelectedCompanyId(externalDraft.company_id);
+      }
+
       const profile = await getContactById(normalizedContactId);
       if (!profile) {
-        setEditContactError("Não foi possível localizar o contato para edição.");
+        if (!externalDraft) {
+          setEditContactError("Não foi possível localizar o contato para edição.");
+        }
         return;
       }
 
       startEditContact(profile);
       if (profile.company_id) setSelectedCompanyId(profile.company_id);
     } catch (err) {
-      setEditContactError(err.message);
+      if (!externalDraft) {
+        setEditContactError(err.message);
+      }
     }
   }
 
@@ -1435,7 +1472,7 @@ export default function CompaniesModule({
           </form>
         </article>
 
-        <article className="panel">
+        <article className="panel" ref={editContactPanelRef}>
           <h2>Editar contato</h2>
           {editingContactId ? (
             <form className="form-grid" onSubmit={handleEditContactSubmit}>

@@ -1417,6 +1417,7 @@ export async function searchGlobalRecords(term) {
     id: `contact-${item.id}`,
     entity_type: "contact",
     contact_id: item.id,
+    contact_email: item.email || "",
     company_id: item.company_id || null,
     company_name: item.companies?.trade_name || "",
     type: "Contato",

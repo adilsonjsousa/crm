@@ -101,6 +101,7 @@ export default function App() {
   const [contactsFocusRequest, setContactsFocusRequest] = useState(0);
   const [contactsEditContactId, setContactsEditContactId] = useState("");
   const [contactsEditRequest, setContactsEditRequest] = useState(0);
+  const [contactsEditPayload, setContactsEditPayload] = useState(null);
   const [globalSearch, setGlobalSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -179,6 +180,7 @@ export default function App() {
           focusRequest={contactsFocusRequest}
           editContactId={contactsEditContactId}
           editContactRequest={contactsEditRequest}
+          editContactPayload={contactsEditPayload}
         />
       );
     }
@@ -196,6 +198,7 @@ export default function App() {
     companiesFocusRequest,
     companiesFocusTarget,
     contactsEditContactId,
+    contactsEditPayload,
     contactsEditRequest,
     contactsFocusRequest
   ]);
@@ -280,13 +283,26 @@ export default function App() {
     setActiveTab("companies");
   }
 
-  function handleSearchRequestEditContact(contactId) {
+  function handleSearchRequestEditContact(contactId, item = null) {
     const normalizedContactId = String(contactId || "").trim();
     if (!normalizedContactId) return;
+
+    const payload = item
+      ? {
+          id: normalizedContactId,
+          company_id: String(item.company_id || "").trim(),
+          full_name: item.contact_name || item.title || "",
+          email: item.contact_email || "",
+          role_title: "",
+          whatsapp: "",
+          birth_date: ""
+        }
+      : null;
 
     closeSearchCustomerHistoryModal();
     setContactsFocusRequest((previous) => previous + 1);
     setContactsEditContactId(normalizedContactId);
+    setContactsEditPayload(payload);
     setContactsEditRequest((previous) => previous + 1);
     setActiveTab("contacts");
   }
@@ -334,7 +350,7 @@ export default function App() {
         return;
       }
       setSearchError("");
-      handleSearchRequestEditContact(contactId);
+      handleSearchRequestEditContact(contactId, item);
       return;
     }
   }
