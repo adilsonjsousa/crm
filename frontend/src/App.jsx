@@ -13,10 +13,10 @@ const THEME_STORAGE_KEY = "crm-theme";
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", hint: "Indicadores", icon: "◩" },
+  { id: "pipeline", label: "Pipeline", hint: "Negócios", icon: "◧" },
   { id: "tasks", label: "Agenda", hint: "Fluxo de tarefas", icon: "◪" },
   { id: "companies", label: "Empresas", hint: "Contas e CNPJ", icon: "◎" },
   { id: "contacts", label: "Contatos", hint: "Pessoas e cargos", icon: "◬" },
-  { id: "pipeline", label: "Pipeline", hint: "Negócios", icon: "◧" },
   { id: "orders", label: "Pedidos", hint: "Receita", icon: "◫" },
   { id: "service", label: "Assistência", hint: "SLA e suporte", icon: "◨" }
 ];
