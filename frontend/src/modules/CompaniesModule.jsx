@@ -4,6 +4,7 @@ import {
   createCompany,
   createContact,
   findCompanyByCnpj,
+  getCompanyById,
   listCompanies,
   listCompanyContacts,
   listCompanyHistory,
@@ -339,7 +340,12 @@ function normalizeCompanyCheckinConfig(raw) {
   };
 }
 
-export default function CompaniesModule({ focusTarget = "company", focusRequest = 0 }) {
+export default function CompaniesModule({
+  focusTarget = "company",
+  focusRequest = 0,
+  editCompanyId = "",
+  editCompanyRequest = 0
+}) {
   const [companies, setCompanies] = useState([]);
   const [lifecycleStages, setLifecycleStages] = useState([]);
   const [companyOptions, setCompanyOptions] = useState([]);
@@ -661,6 +667,13 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
   }, [focusRequest, focusTarget]);
 
   useEffect(() => {
+    if (!editCompanyRequest) return;
+    const normalizedCompanyId = String(editCompanyId || "").trim();
+    if (!normalizedCompanyId) return;
+    openEditCompanyById(normalizedCompanyId);
+  }, [editCompanyId, editCompanyRequest]);
+
+  useEffect(() => {
     if (!editingCompanyId) return;
     function handleEscape(event) {
       if (event.key === "Escape") cancelEditCompany();
@@ -793,6 +806,32 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         company.checkin_longitude === null || company.checkin_longitude === undefined ? "" : String(company.checkin_longitude),
       checkin_pin: company.checkin_pin || ""
     });
+  }
+
+  async function openEditCompanyById(companyId) {
+    const normalizedCompanyId = String(companyId || "").trim();
+    if (!normalizedCompanyId) return;
+
+    setError("");
+    setSelectedCompanyId(normalizedCompanyId);
+
+    try {
+      const companyFromList = companies.find((item) => item.id === normalizedCompanyId) || null;
+      if (companyFromList?.cnpj) {
+        startEditCompany(companyFromList);
+        return;
+      }
+
+      const profile = await getCompanyById(normalizedCompanyId);
+      if (!profile) {
+        setError("Não foi possível localizar a empresa para edição.");
+        return;
+      }
+
+      startEditCompany(profile);
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
   function cancelEditCompany() {
@@ -1863,6 +1902,10 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         companyId={customerHistoryModal.companyId}
         companyName={customerHistoryModal.companyName}
         onClose={closeCustomerHistoryModal}
+        onRequestEditCompany={(companyId) => {
+          closeCustomerHistoryModal();
+          openEditCompanyById(companyId);
+        }}
       />
     </section>
   );

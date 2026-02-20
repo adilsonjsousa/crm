@@ -96,6 +96,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [companiesFocusTarget, setCompaniesFocusTarget] = useState("company");
   const [companiesFocusRequest, setCompaniesFocusRequest] = useState(0);
+  const [companiesEditCompanyId, setCompaniesEditCompanyId] = useState("");
+  const [companiesEditRequest, setCompaniesEditRequest] = useState(0);
   const [contactsFocusRequest, setContactsFocusRequest] = useState(0);
   const [globalSearch, setGlobalSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
@@ -159,7 +161,14 @@ export default function App() {
 
   const activeModule = useMemo(() => {
     if (activeTab === "companies") {
-      return <CompaniesModule focusTarget={companiesFocusTarget} focusRequest={companiesFocusRequest} />;
+      return (
+        <CompaniesModule
+          focusTarget={companiesFocusTarget}
+          focusRequest={companiesFocusRequest}
+          editCompanyId={companiesEditCompanyId}
+          editCompanyRequest={companiesEditRequest}
+        />
+      );
     }
     if (activeTab === "contacts") {
       return <CompaniesModule focusTarget="contact" focusRequest={contactsFocusRequest} />;
@@ -171,7 +180,7 @@ export default function App() {
     if (activeTab === "service") return <ServiceModule />;
     if (activeTab === "settings") return <SettingsModule />;
     return <DashboardModule />;
-  }, [activeTab, companiesFocusRequest, companiesFocusTarget, contactsFocusRequest]);
+  }, [activeTab, companiesEditCompanyId, companiesEditRequest, companiesFocusRequest, companiesFocusTarget, contactsFocusRequest]);
 
   const activeMeta = PAGE_META[activeTab] || PAGE_META.dashboard;
   const activeNav = NAV_ITEMS.find((item) => item.id === activeTab) || NAV_ITEMS[0];
@@ -239,6 +248,34 @@ export default function App() {
       ...prev,
       open: false
     }));
+  }
+
+  function handleSearchRequestEditCompany(companyId) {
+    const normalizedCompanyId = String(companyId || "").trim();
+    if (!normalizedCompanyId) return;
+
+    closeSearchCustomerHistoryModal();
+    setCompaniesFocusTarget("company");
+    setCompaniesFocusRequest((previous) => previous + 1);
+    setCompaniesEditCompanyId(normalizedCompanyId);
+    setCompaniesEditRequest((previous) => previous + 1);
+    setActiveTab("companies");
+  }
+
+  function canQuickEditSearchItem(item) {
+    const normalizedCompanyId = String(item?.company_id || "").trim();
+    if (!normalizedCompanyId) return false;
+    return item?.entity_type === "company" || item?.entity_type === "contact";
+  }
+
+  function handleQuickEditFromSearch(item) {
+    const companyId = String(item?.company_id || "").trim();
+    if (!companyId) {
+      setSearchError("Este registro nao possui empresa vinculada para edicao.");
+      return;
+    }
+    setSearchError("");
+    handleSearchRequestEditCompany(companyId);
   }
 
   function openCustomerHistoryFromSearch(item) {
@@ -506,12 +543,17 @@ export default function App() {
             {!searchLoading && !searchError && searchResults.length ? (
               <ul className="search-results-list">
                 {searchResults.map((item) => (
-                  <li key={`${item.type}-${item.id}`}>
+                  <li key={`${item.type}-${item.id}`} className="search-result-item">
                     <button type="button" className="search-result-btn" onClick={() => handleSearchItemAction(item)}>
                       <span className="search-result-type">{item.type}</span>
                       <strong>{item.title}</strong>
                       <span>{item.subtitle}</span>
                     </button>
+                    {canQuickEditSearchItem(item) ? (
+                      <button type="button" className="btn-primary btn-table-action search-result-edit-btn" onClick={() => handleQuickEditFromSearch(item)}>
+                        Editar
+                      </button>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -540,6 +582,7 @@ export default function App() {
           companyId={searchCustomerHistoryModal.companyId}
           companyName={searchCustomerHistoryModal.companyName}
           onClose={closeSearchCustomerHistoryModal}
+          onRequestEditCompany={handleSearchRequestEditCompany}
         />
       </div>
     </div>

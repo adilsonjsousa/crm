@@ -190,7 +190,7 @@ function meetingSummary(task) {
   return `${provider} · ${start}`;
 }
 
-export default function CustomerHistoryModal({ open, companyId, companyName, onClose }) {
+export default function CustomerHistoryModal({ open, companyId, companyName, onClose, onRequestEditCompany = null }) {
   const [selectedTab, setSelectedTab] = useState("overview");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -481,6 +481,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
   if (!open) return null;
 
   const customerLabel = companyProfile?.trade_name || companyName || "Cliente";
+  const canEditCompany = Boolean(companyId) && typeof onRequestEditCompany === "function";
 
   return (
     <div className="customer-popup-overlay" role="presentation" onClick={onClose}>
@@ -498,9 +499,16 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
               <strong>{customerLabel}</strong>
             </p>
           </div>
-          <button type="button" className="btn-ghost btn-table-action" onClick={onClose}>
-            Fechar
-          </button>
+          <div className="inline-actions customer-popup-header-actions">
+            {canEditCompany ? (
+              <button type="button" className="btn-primary btn-table-action" onClick={() => onRequestEditCompany(companyId)}>
+                Editar conta
+              </button>
+            ) : null}
+            <button type="button" className="btn-ghost btn-table-action" onClick={onClose}>
+              Fechar
+            </button>
+          </div>
         </header>
 
         <div className="inline-actions company-tabs customer-popup-tabs">

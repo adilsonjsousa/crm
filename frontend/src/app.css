@@ -499,12 +499,19 @@ body {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 8px;
+}
+
+.search-result-item {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
 }
 
 .search-result-btn {
   width: 100%;
+  flex: 1 1 auto;
   text-align: left;
   border: 1px solid var(--border-soft);
   border-radius: 10px;
@@ -528,6 +535,11 @@ body {
 .search-result-btn span {
   font-size: 0.75rem;
   color: var(--text-sub);
+}
+
+.search-result-edit-btn {
+  min-width: 72px;
+  white-space: nowrap;
 }
 
 .search-result-type {
