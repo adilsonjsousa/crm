@@ -1265,7 +1265,7 @@ export async function syncOmieCustomers(payload) {
   const supabase = ensureSupabase();
   const body = asObject(payload);
 
-  const { data, error } = await supabase.functions.invoke("omie-sync-customers-public-v2", {
+  const { data, error } = await supabase.functions.invoke("omie-sync-customers-public-v3", {
     body
   });
 

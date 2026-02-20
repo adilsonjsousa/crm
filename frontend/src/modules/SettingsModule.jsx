@@ -11,7 +11,9 @@ import {
 
 const OMIE_STORAGE_KEY = "crm.settings.omie.customers.v1";
 const DEFAULT_OMIE_URL = "https://app.omie.com.br/api/v1/geral/clientes/";
-const OMIE_SYNC_PAGE_CHUNK = 3;
+const OMIE_SYNC_PAGE_CHUNK_DRY_RUN = 3;
+const OMIE_SYNC_PAGE_CHUNK_LIVE = 1;
+const OMIE_SYNC_LIVE_MAX_RECORDS_PER_PAGE = 20;
 const OMIE_SYNC_MAX_ROUNDS = 80;
 
 const EMPTY_STAGE_FORM = {
@@ -284,13 +286,19 @@ export default function SettingsModule() {
       return;
     }
 
+    const dryRun = Boolean(omieForm.dry_run);
+    const requestedRecordsPerPage = clampInteger(omieForm.records_per_page, 1, 500, 100);
+    const safeRecordsPerPage = dryRun
+      ? requestedRecordsPerPage
+      : Math.min(requestedRecordsPerPage, OMIE_SYNC_LIVE_MAX_RECORDS_PER_PAGE);
+
     const payload = {
       app_key: appKey,
       app_secret: appSecret,
-      records_per_page: clampInteger(omieForm.records_per_page, 1, 500, 100),
+      records_per_page: safeRecordsPerPage,
       max_pages: clampInteger(omieForm.max_pages, 1, 200, 20),
-      page_chunk_size: OMIE_SYNC_PAGE_CHUNK,
-      dry_run: Boolean(omieForm.dry_run),
+      page_chunk_size: dryRun ? OMIE_SYNC_PAGE_CHUNK_DRY_RUN : OMIE_SYNC_PAGE_CHUNK_LIVE,
+      dry_run: dryRun,
       omie_api_url: String(omieForm.omie_api_url || "").trim() || DEFAULT_OMIE_URL
     };
 
@@ -322,10 +330,27 @@ export default function SettingsModule() {
         aggregate.rounds += 1;
         setOmieSuccess(`Sincronizando lote ${aggregate.rounds} (página ${nextPage})...`);
 
-        const result = await syncOmieCustomers({
-          ...payload,
-          start_page: nextPage
-        });
+        let result = null;
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          try {
+            result = await syncOmieCustomers({
+              ...payload,
+              start_page: nextPage
+            });
+            break;
+          } catch (error) {
+            const message = String(error?.message || "").toLowerCase();
+            const transientFailure =
+              message.includes("failed to send a request") || message.includes("non-2xx");
+
+            if (attempt < 2 && transientFailure) {
+              setOmieSuccess(`Reenviando lote ${aggregate.rounds} (tentativa ${attempt + 1}/2)...`);
+              await new Promise((resolve) => setTimeout(resolve, 1200));
+              continue;
+            }
+            throw error;
+          }
+        }
 
         const safeResult = asObject(result);
         aggregate.pages_processed += Number(safeResult.pages_processed || 0);

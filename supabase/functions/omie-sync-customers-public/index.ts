@@ -12,6 +12,8 @@ const corsHeaders = {
 const DEFAULT_OMIE_CLIENTS_URL = "https://app.omie.com.br/api/v1/geral/clientes/";
 const DEFAULT_PAGE_CHUNK_SIZE = 3;
 const DEFAULT_EXECUTION_GUARD_MS = 110000;
+const LIVE_MAX_RECORDS_PER_PAGE = 20;
+const LIVE_MAX_PAGE_CHUNK_SIZE = 1;
 
 function jsonResponse(status: number, payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -372,17 +374,19 @@ Deno.serve(async (request: Request) => {
     });
   }
 
-  const recordsPerPage = clampNumber(body.records_per_page || body.recordsPerPage, 1, 500, 100);
+  const dryRun = parseBoolean(body.dry_run || body.dryRun, false);
+  const requestedRecordsPerPage = clampNumber(body.records_per_page || body.recordsPerPage, 1, 500, 100);
+  const recordsPerPage = dryRun ? requestedRecordsPerPage : Math.min(requestedRecordsPerPage, LIVE_MAX_RECORDS_PER_PAGE);
   const maxPages = clampNumber(body.max_pages || body.maxPages, 1, 200, 20);
   const startPage = clampNumber(body.start_page || body.startPage, 1, 100000, 1);
-  const pageChunkSize = clampNumber(body.page_chunk_size || body.pageChunkSize, 1, 20, DEFAULT_PAGE_CHUNK_SIZE);
+  const requestedPageChunkSize = clampNumber(body.page_chunk_size || body.pageChunkSize, 1, 20, DEFAULT_PAGE_CHUNK_SIZE);
+  const pageChunkSize = dryRun ? requestedPageChunkSize : Math.min(requestedPageChunkSize, LIVE_MAX_PAGE_CHUNK_SIZE);
   const executionGuardMs = clampNumber(
     body.execution_guard_ms || body.executionGuardMs,
     20000,
     130000,
     DEFAULT_EXECUTION_GUARD_MS
   );
-  const dryRun = parseBoolean(body.dry_run || body.dryRun, false);
   const startedAt = new Date().toISOString();
 
   const { data: syncJob, error: syncJobError } = await supabase
