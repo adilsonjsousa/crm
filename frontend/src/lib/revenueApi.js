@@ -1,6 +1,7 @@
 import { ensureSupabase } from "./supabase";
 import { PIPELINE_STAGES, sortByStageOrder, stageStatus } from "./pipelineStages";
 import { parseOpportunityTitle, resolveEstimatedValueByProduct } from "./productCatalog";
+import { formatBrazilPhone, validateBrazilPhoneOrEmpty } from "./phone";
 
 function normalizeError(error, fallback) {
   return error?.message || fallback;
@@ -43,6 +44,10 @@ function normalizeSearchTerm(term) {
     .replace(/[,%()]/g, " ")
     .replace(/\s+/g, " ")
     .slice(0, 80);
+}
+
+function normalizeLifecycleStageName(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
 function normalizeStoragePart(value) {
@@ -195,9 +200,16 @@ export async function getPipelineByStage() {
 
 export async function listCompanies() {
   const supabase = ensureSupabase();
-  const { data, error } = await supabase.from("companies").select("*").order("created_at", { ascending: false }).limit(30);
+  const { data, error } = await supabase
+    .from("companies")
+    .select("*,lifecycle_stage:company_lifecycle_stages!companies_lifecycle_stage_id_fkey(id,name,stage_order,is_active)")
+    .order("created_at", { ascending: false })
+    .limit(30);
   if (error) throw new Error(normalizeError(error, "Falha ao listar empresas."));
-  return data || [];
+  return (data || []).map((item) => ({
+    ...item,
+    phone: formatBrazilPhone(item.phone)
+  }));
 }
 
 export async function getCompanyById(companyId) {
@@ -208,13 +220,17 @@ export async function getCompanyById(companyId) {
   const { data, error } = await supabase
     .from("companies")
     .select(
-      "id,cnpj,trade_name,legal_name,email,phone,segmento,address_full,checkin_validation_mode,checkin_radius_meters,checkin_latitude,checkin_longitude,checkin_pin"
+      "id,cnpj,trade_name,legal_name,email,phone,segmento,address_full,checkin_validation_mode,checkin_radius_meters,checkin_latitude,checkin_longitude,checkin_pin,lifecycle_stage_id,lifecycle_stage:company_lifecycle_stages!companies_lifecycle_stage_id_fkey(id,name,stage_order,is_active)"
     )
     .eq("id", normalizedCompanyId)
     .maybeSingle();
 
   if (error) throw new Error(normalizeError(error, "Falha ao buscar dados do cliente."));
-  return data || null;
+  if (!data) return null;
+  return {
+    ...data,
+    phone: formatBrazilPhone(data.phone)
+  };
 }
 
 export async function findCompanyByCnpj(cnpj) {
@@ -252,7 +268,7 @@ export async function lookupCompanyDataByCnpj(cnpj) {
     legal_name: payload.razao_social || "",
     trade_name: payload.nome_fantasia || payload.razao_social || "",
     email: payload.email || "",
-    phone: payload.ddd_telefone_1 || payload.ddd_telefone_2 || "",
+    phone: formatBrazilPhone(payload.ddd_telefone_1 || payload.ddd_telefone_2 || ""),
     address_full: address,
     segmento: inferSegmentoFromCnae(payload.cnae_fiscal_descricao)
   };
@@ -260,14 +276,28 @@ export async function lookupCompanyDataByCnpj(cnpj) {
 
 export async function createCompany(payload) {
   const supabase = ensureSupabase();
-  const { data, error } = await supabase.from("companies").insert(payload).select("id").single();
+  const normalizedPayload = { ...payload };
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "phone")) {
+    normalizedPayload.phone = validateBrazilPhoneOrEmpty(payload?.phone, "Telefone da empresa");
+  }
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "lifecycle_stage_id")) {
+    normalizedPayload.lifecycle_stage_id = payload?.lifecycle_stage_id || null;
+  }
+  const { data, error } = await supabase.from("companies").insert(normalizedPayload).select("id").single();
   if (error) throw new Error(normalizeError(error, "Falha ao criar empresa."));
   return data;
 }
 
 export async function updateCompany(companyId, payload) {
   const supabase = ensureSupabase();
-  const { error } = await supabase.from("companies").update(payload).eq("id", companyId);
+  const normalizedPayload = { ...payload };
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "phone")) {
+    normalizedPayload.phone = validateBrazilPhoneOrEmpty(payload?.phone, "Telefone da empresa");
+  }
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "lifecycle_stage_id")) {
+    normalizedPayload.lifecycle_stage_id = payload?.lifecycle_stage_id || null;
+  }
+  const { error } = await supabase.from("companies").update(normalizedPayload).eq("id", companyId);
   if (error) throw new Error(normalizeError(error, "Falha ao atualizar empresa."));
 }
 
@@ -279,7 +309,11 @@ export async function listContacts() {
     .order("created_at", { ascending: false })
     .limit(200);
   if (error) throw new Error(normalizeError(error, "Falha ao listar contatos."));
-  return data || [];
+  return (data || []).map((item) => ({
+    ...item,
+    phone: formatBrazilPhone(item.phone),
+    whatsapp: formatBrazilPhone(item.whatsapp)
+  }));
 }
 
 export async function listUpcomingBirthdays(daysAhead = 7) {
@@ -305,7 +339,7 @@ export async function listUpcomingBirthdays(daysAhead = 7) {
         id: contact.id,
         full_name: contact.full_name || "Contato",
         company_name: contact.companies?.trade_name || "SEM VÍNCULO",
-        whatsapp: String(contact.whatsapp || contact.phone || "").trim(),
+        whatsapp: formatBrazilPhone(contact.whatsapp || contact.phone),
         birth_date: contact.birth_date,
         days_until: computed.daysUntil,
         next_birthday: computed.nextBirthday.toISOString().slice(0, 10),
@@ -323,13 +357,27 @@ export async function listUpcomingBirthdays(daysAhead = 7) {
 
 export async function createContact(payload) {
   const supabase = ensureSupabase();
-  const { error } = await supabase.from("contacts").insert(payload);
+  const normalizedPayload = { ...payload };
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "phone")) {
+    normalizedPayload.phone = validateBrazilPhoneOrEmpty(payload?.phone, "Telefone do contato");
+  }
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "whatsapp")) {
+    normalizedPayload.whatsapp = validateBrazilPhoneOrEmpty(payload?.whatsapp, "WhatsApp do contato");
+  }
+  const { error } = await supabase.from("contacts").insert(normalizedPayload);
   if (error) throw new Error(normalizeError(error, "Falha ao criar contato."));
 }
 
 export async function updateContact(contactId, payload) {
   const supabase = ensureSupabase();
-  const { error } = await supabase.from("contacts").update(payload).eq("id", contactId);
+  const normalizedPayload = { ...payload };
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "phone")) {
+    normalizedPayload.phone = validateBrazilPhoneOrEmpty(payload?.phone, "Telefone do contato");
+  }
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "whatsapp")) {
+    normalizedPayload.whatsapp = validateBrazilPhoneOrEmpty(payload?.whatsapp, "WhatsApp do contato");
+  }
+  const { error } = await supabase.from("contacts").update(normalizedPayload).eq("id", contactId);
   if (error) throw new Error(normalizeError(error, "Falha ao atualizar contato."));
 }
 
@@ -341,7 +389,15 @@ export async function listOpportunities() {
     .order("created_at", { ascending: false })
     .limit(30);
   if (error) throw new Error(normalizeError(error, "Falha ao listar oportunidades."));
-  return data || [];
+  return (data || []).map((item) => ({
+    ...item,
+    companies: item.companies
+      ? {
+          ...item.companies,
+          phone: formatBrazilPhone(item.companies.phone)
+        }
+      : null
+  }));
 }
 
 export async function createOpportunity(payload) {
@@ -696,7 +752,11 @@ export async function listCompanyContacts(companyId) {
     .order("full_name", { ascending: true })
     .limit(300);
   if (error) throw new Error(normalizeError(error, "Falha ao listar contatos do cliente."));
-  return data || [];
+  return (data || []).map((item) => ({
+    ...item,
+    phone: formatBrazilPhone(item.phone),
+    whatsapp: formatBrazilPhone(item.whatsapp)
+  }));
 }
 
 export async function listCompanyInteractions(companyId) {
@@ -711,7 +771,18 @@ export async function listCompanyInteractions(companyId) {
     .order("occurred_at", { ascending: false })
     .limit(300);
   if (error) throw new Error(normalizeError(error, "Falha ao listar interações do cliente."));
-  return data || [];
+  return (data || []).map((item) => ({
+    ...item,
+    whatsapp_number: formatBrazilPhone(item.whatsapp_number),
+    phone_number: formatBrazilPhone(item.phone_number),
+    contacts: item.contacts
+      ? {
+          ...item.contacts,
+          phone: formatBrazilPhone(item.contacts.phone),
+          whatsapp: formatBrazilPhone(item.contacts.whatsapp)
+        }
+      : item.contacts
+  }));
 }
 
 export async function listCompanyAssets(companyId) {
@@ -845,8 +916,8 @@ export async function createCompanyInteraction(payload) {
     direction: payload.direction || null,
     subject: payload.subject || null,
     content: String(payload.content || "").trim(),
-    whatsapp_number: payload.whatsapp_number || null,
-    phone_number: payload.phone_number || null,
+    whatsapp_number: validateBrazilPhoneOrEmpty(payload.whatsapp_number, "WhatsApp da interação"),
+    phone_number: validateBrazilPhoneOrEmpty(payload.phone_number, "Telefone da interação"),
     occurred_at: payload.occurred_at || new Date().toISOString(),
     provider: payload.provider || null,
     provider_conversation_id: payload.provider_conversation_id || null,
@@ -998,6 +1069,191 @@ export async function createAutomatedProposalFromOpportunity(opportunity) {
   }
 
   throw lastError || new Error("Falha ao gerar proposta automática.");
+}
+
+async function resequenceCompanyLifecycleStages(supabase) {
+  const { data, error } = await supabase
+    .from("company_lifecycle_stages")
+    .select("id,stage_order")
+    .order("stage_order", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(normalizeError(error, "Falha ao reorganizar fases do ciclo de vida."));
+
+  const rows = data || [];
+  const updates = rows
+    .map((row, index) => ({ id: row.id, stage_order: index + 1 }))
+    .filter((row, index) => Number(rows[index]?.stage_order) !== row.stage_order);
+
+  if (!updates.length) return;
+
+  const results = await Promise.all(
+    updates.map((row) =>
+      supabase.from("company_lifecycle_stages").update({ stage_order: row.stage_order }).eq("id", row.id)
+    )
+  );
+  const failed = results.find((item) => item.error);
+  if (failed?.error) {
+    throw new Error(normalizeError(failed.error, "Falha ao salvar ordenação das fases do ciclo de vida."));
+  }
+}
+
+export async function listCompanyLifecycleStages({ includeInactive = true } = {}) {
+  const supabase = ensureSupabase();
+
+  let stageQuery = supabase
+    .from("company_lifecycle_stages")
+    .select("id,name,stage_order,is_active,created_at,updated_at")
+    .order("stage_order", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (!includeInactive) {
+    stageQuery = stageQuery.eq("is_active", true);
+  }
+
+  const [stagesRes, companiesRes] = await Promise.all([
+    stageQuery,
+    supabase.from("companies").select("lifecycle_stage_id").not("lifecycle_stage_id", "is", null)
+  ]);
+
+  if (stagesRes.error) {
+    throw new Error(normalizeError(stagesRes.error, "Falha ao listar fases do ciclo de vida."));
+  }
+  if (companiesRes.error) {
+    throw new Error(normalizeError(companiesRes.error, "Falha ao contabilizar empresas no ciclo de vida."));
+  }
+
+  const linkedCountByStage = (companiesRes.data || []).reduce((acc, row) => {
+    const stageId = String(row.lifecycle_stage_id || "").trim();
+    if (!stageId) return acc;
+    acc[stageId] = (acc[stageId] || 0) + 1;
+    return acc;
+  }, {});
+
+  return (stagesRes.data || []).map((stage) => ({
+    ...stage,
+    linked_companies_count: linkedCountByStage[stage.id] || 0
+  }));
+}
+
+export async function createCompanyLifecycleStage(payload) {
+  const supabase = ensureSupabase();
+  const name = normalizeLifecycleStageName(payload?.name);
+  if (!name) throw new Error("Informe o nome da fase do ciclo de vida.");
+
+  const { data: lastRow, error: lastError } = await supabase
+    .from("company_lifecycle_stages")
+    .select("stage_order")
+    .order("stage_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lastError) throw new Error(normalizeError(lastError, "Falha ao calcular posição da nova fase."));
+
+  const nextOrder = Math.max(1, Number(lastRow?.stage_order || 0) + 1);
+  const { data, error } = await supabase
+    .from("company_lifecycle_stages")
+    .insert({
+      name,
+      stage_order: nextOrder,
+      is_active: payload?.is_active !== false
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("idx_company_lifecycle_stages_name_unique")) {
+      throw new Error("Já existe uma fase com esse nome no ciclo de vida.");
+    }
+    throw new Error(normalizeError(error, "Falha ao criar fase do ciclo de vida."));
+  }
+
+  return data;
+}
+
+export async function updateCompanyLifecycleStage(stageId, payload) {
+  const normalizedStageId = String(stageId || "").trim();
+  if (!normalizedStageId) throw new Error("Fase inválida para atualização.");
+
+  const supabase = ensureSupabase();
+  const updatePayload = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "name")) {
+    const normalizedName = normalizeLifecycleStageName(payload?.name);
+    if (!normalizedName) throw new Error("Informe o nome da fase do ciclo de vida.");
+    updatePayload.name = normalizedName;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "is_active")) {
+    updatePayload.is_active = Boolean(payload?.is_active);
+  }
+
+  if (!Object.keys(updatePayload).length) return;
+
+  const { error } = await supabase
+    .from("company_lifecycle_stages")
+    .update(updatePayload)
+    .eq("id", normalizedStageId);
+
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("idx_company_lifecycle_stages_name_unique")) {
+      throw new Error("Já existe uma fase com esse nome no ciclo de vida.");
+    }
+    throw new Error(normalizeError(error, "Falha ao atualizar fase do ciclo de vida."));
+  }
+}
+
+export async function saveCompanyLifecycleStageOrder(stageIds) {
+  const supabase = ensureSupabase();
+  const orderedIds = Array.from(new Set((stageIds || []).map((value) => String(value || "").trim()).filter(Boolean)));
+  if (!orderedIds.length) return;
+
+  const { data, error } = await supabase
+    .from("company_lifecycle_stages")
+    .select("id")
+    .order("stage_order", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(normalizeError(error, "Falha ao validar ordenação do ciclo de vida."));
+
+  const existingIds = (data || []).map((row) => row.id);
+  if (existingIds.length !== orderedIds.length) {
+    throw new Error("Ordenação inválida das fases do ciclo de vida.");
+  }
+  const orderedSet = new Set(orderedIds);
+  if (existingIds.some((id) => !orderedSet.has(id))) {
+    throw new Error("Ordenação inválida das fases do ciclo de vida.");
+  }
+
+  const results = await Promise.all(
+    orderedIds.map((id, index) =>
+      supabase.from("company_lifecycle_stages").update({ stage_order: index + 1 }).eq("id", id)
+    )
+  );
+  const failed = results.find((item) => item.error);
+  if (failed?.error) {
+    throw new Error(normalizeError(failed.error, "Falha ao salvar ordenação do ciclo de vida."));
+  }
+
+  await resequenceCompanyLifecycleStages(supabase);
+}
+
+export async function deleteCompanyLifecycleStage(stageId) {
+  const normalizedStageId = String(stageId || "").trim();
+  if (!normalizedStageId) throw new Error("Fase inválida para exclusão.");
+
+  const supabase = ensureSupabase();
+  const { count, error: countError } = await supabase
+    .from("companies")
+    .select("id", { count: "exact", head: true })
+    .eq("lifecycle_stage_id", normalizedStageId);
+  if (countError) throw new Error(normalizeError(countError, "Falha ao validar vínculos da fase."));
+  if ((count || 0) > 0) {
+    throw new Error("Não é possível excluir a fase porque há empresas vinculadas.");
+  }
+
+  const { error } = await supabase.from("company_lifecycle_stages").delete().eq("id", normalizedStageId);
+  if (error) throw new Error(normalizeError(error, "Falha ao excluir fase do ciclo de vida."));
+
+  await resequenceCompanyLifecycleStages(supabase);
 }
 
 export async function listCompanyOptions() {

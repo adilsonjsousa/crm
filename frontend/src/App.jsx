@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { listUpcomingBirthdays, searchGlobalRecords } from "./lib/revenueApi";
+import { toWhatsAppBrazilNumber } from "./lib/phone";
 import DashboardModule from "./modules/DashboardModule";
 import CompaniesModule from "./modules/CompaniesModule";
 import PipelineModule from "./modules/PipelineModule";
 import ServiceModule from "./modules/ServiceModule";
 import OrdersModule from "./modules/OrdersModule";
 import TasksModule from "./modules/TasksModule";
+import SettingsModule from "./modules/SettingsModule";
 import CustomerHistoryModal from "./components/CustomerHistoryModal";
 
 const THEME_STORAGE_KEY = "crm-theme";
@@ -18,7 +20,8 @@ const NAV_ITEMS = [
   { id: "companies", label: "Empresas", hint: "Contas e CNPJ", icon: "◎" },
   { id: "contacts", label: "Contatos", hint: "Pessoas e cargos", icon: "◬" },
   { id: "orders", label: "Pedidos", hint: "Receita", icon: "◫" },
-  { id: "service", label: "Assistência", hint: "SLA e suporte", icon: "◨" }
+  { id: "service", label: "Assistência", hint: "SLA e suporte", icon: "◨" },
+  { id: "settings", label: "Configurações", hint: "Parâmetros gerais", icon: "◭" }
 ];
 
 const PAGE_META = {
@@ -56,20 +59,13 @@ const PAGE_META = {
     kicker: "Pós-venda",
     title: "Assistência Técnica",
     description: "Centralize corretivas, preventivas e SLA com visão integrada ao histórico do cliente."
+  },
+  settings: {
+    kicker: "Configurações Gerais",
+    title: "Parâmetros do CRM",
+    description: "Gerencie regras globais, como ciclo de vida de empresas e ordenação das fases."
   }
 };
-
-function cleanPhoneDigits(value) {
-  return String(value || "").replace(/\D/g, "");
-}
-
-function normalizeWhatsAppNumber(value) {
-  const digits = cleanPhoneDigits(value);
-  if (!digits) return "";
-  if (digits.startsWith("55")) return digits;
-  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
-  return digits;
-}
 
 function birthdayWhatsAppMessage(alertItem) {
   return [
@@ -83,7 +79,7 @@ function birthdayWhatsAppMessage(alertItem) {
 }
 
 function buildBirthdayWhatsAppUrl(alertItem) {
-  const normalizedNumber = normalizeWhatsAppNumber(alertItem.whatsapp);
+  const normalizedNumber = toWhatsAppBrazilNumber(alertItem.whatsapp);
   if (!normalizedNumber) return "";
   const text = encodeURIComponent(birthdayWhatsAppMessage(alertItem));
   return `https://wa.me/${normalizedNumber}?text=${text}`;
@@ -165,6 +161,7 @@ export default function App() {
     if (activeTab === "orders") return <OrdersModule />;
     if (activeTab === "tasks") return <TasksModule />;
     if (activeTab === "service") return <ServiceModule />;
+    if (activeTab === "settings") return <SettingsModule />;
     return <DashboardModule />;
   }, [activeTab, companiesFocusRequest, companiesFocusTarget, contactsFocusRequest]);
 

@@ -19,6 +19,7 @@ import {
   parseOpportunityTitle,
   resolveEstimatedValueByProduct
 } from "../lib/productCatalog";
+import { formatBrazilPhone, toWhatsAppBrazilNumber } from "../lib/phone";
 import CustomerHistoryModal from "../components/CustomerHistoryModal";
 
 const PROPOSAL_TEMPLATE_STORAGE_KEY = "crm.pipeline.proposal-template.v1";
@@ -193,18 +194,6 @@ const DEFAULT_PROPOSAL_TEMPLATE = getRdTemplateByType("equipment");
 
 function brl(value) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
-}
-
-function cleanPhoneDigits(value) {
-  return String(value || "").replace(/\D/g, "");
-}
-
-function normalizeWhatsAppNumber(value) {
-  const digits = cleanPhoneDigits(value);
-  if (!digits) return "";
-  if (digits.startsWith("55")) return digits;
-  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
-  return digits;
 }
 
 function formatDateBr(dateValue) {
@@ -412,7 +401,7 @@ function createProposalDraft({ opportunity, linkedOrder, contacts }) {
     contact_id: preferredContact?.id || "",
     client_name: preferredContact?.full_name || opportunity?.companies?.trade_name || "Cliente",
     client_email: preferredContact?.email || opportunity?.companies?.email || "",
-    client_whatsapp: preferredContact?.whatsapp || preferredContact?.phone || opportunity?.companies?.phone || "",
+    client_whatsapp: formatBrazilPhone(preferredContact?.whatsapp || preferredContact?.phone || opportunity?.companies?.phone || ""),
     send_channel: "whatsapp",
     enable_send: false,
     template_body: getStoredProposalTemplate(proposalType)
@@ -771,7 +760,7 @@ export default function PipelineModule() {
       if (contact) {
         next.client_name = contact.full_name || prev.client_name;
         next.client_email = contact.email || prev.client_email;
-        next.client_whatsapp = contact.whatsapp || contact.phone || prev.client_whatsapp;
+        next.client_whatsapp = formatBrazilPhone(contact.whatsapp || contact.phone || prev.client_whatsapp);
       }
       return next;
     });
@@ -840,7 +829,8 @@ export default function PipelineModule() {
       let interactionWarning = "";
 
       if (proposalEditor.send_channel === "whatsapp") {
-        const normalizedWhats = normalizeWhatsAppNumber(proposalEditor.client_whatsapp);
+        const normalizedWhats = toWhatsAppBrazilNumber(proposalEditor.client_whatsapp);
+        const formattedWhats = formatBrazilPhone(proposalEditor.client_whatsapp);
         if (!normalizedWhats) {
           setError("Informe o WhatsApp do cliente para envio.");
           return;
@@ -857,7 +847,7 @@ export default function PipelineModule() {
             direction: "outbound",
             subject,
             content: payloadText,
-            whatsapp_number: normalizedWhats,
+            whatsapp_number: formattedWhats || null,
             occurred_at: new Date().toISOString()
           });
         } catch (err) {
@@ -1202,7 +1192,7 @@ export default function PipelineModule() {
                 <input
                   placeholder="WhatsApp do cliente"
                   value={proposalEditor.client_whatsapp}
-                  onChange={(event) => handleProposalField("client_whatsapp", event.target.value)}
+                  onChange={(event) => handleProposalField("client_whatsapp", formatBrazilPhone(event.target.value))}
                 />
                 <input
                   placeholder="Categoria"

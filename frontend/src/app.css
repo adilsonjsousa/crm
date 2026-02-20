@@ -759,6 +759,13 @@ a.btn-table-action {
   flex-wrap: wrap;
 }
 
+.settings-stage-input {
+  width: 100%;
+  min-width: 180px;
+  padding: 6px 8px;
+  font-size: 0.82rem;
+}
+
 .theme-toggle {
   width: 100%;
   border: 1px solid rgba(var(--accent-rgb), 0.46);

@@ -8,6 +8,7 @@ import {
   listCompanyContacts,
   listCompanyHistory,
   listCompanyInteractions,
+  listCompanyLifecycleStages,
   listCompanyOpportunities,
   listCompanyOpportunityStageHistory,
   listCompanyOptions,
@@ -18,6 +19,7 @@ import {
   updateContact
 } from "../lib/revenueApi";
 import { stageLabel } from "../lib/pipelineStages";
+import { formatBrazilPhone, toTelDigits, toWhatsAppBrazilNumber, validateBrazilPhoneOrEmpty } from "../lib/phone";
 import CustomerHistoryModal from "../components/CustomerHistoryModal";
 
 const SEGMENTOS = [
@@ -37,6 +39,7 @@ const EMPTY_COMPANY_FORM = {
   email: "",
   phone: "",
   segmento: "",
+  lifecycle_stage_id: "",
   address_full: "",
   checkin_validation_mode: "geo",
   checkin_radius_meters: "150",
@@ -66,6 +69,7 @@ const EMPTY_EDIT_COMPANY_FORM = {
   email: "",
   phone: "",
   segmento: "",
+  lifecycle_stage_id: "",
   address_full: "",
   checkin_validation_mode: "geo",
   checkin_radius_meters: "150",
@@ -207,6 +211,13 @@ function parseOptionalNumber(value) {
   return parsed;
 }
 
+function getDefaultLifecycleStageId(stages = []) {
+  const active = stages.find((item) => item.is_active);
+  if (active?.id) return active.id;
+  const first = stages[0];
+  return first?.id || "";
+}
+
 function visitExecutionSummary(task) {
   if (!task) return "-";
   const visitType = normalizeText(`${task.task_type || ""} ${task.title || ""}`);
@@ -261,10 +272,6 @@ function normalizeText(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
-}
-
-function normalizePhoneDigits(value) {
-  return String(value || "").replace(/\D/g, "");
 }
 
 function toIsoFromLocalInput(localValue) {
@@ -334,6 +341,7 @@ function normalizeCompanyCheckinConfig(raw) {
 
 export default function CompaniesModule({ focusTarget = "company", focusRequest = 0 }) {
   const [companies, setCompanies] = useState([]);
+  const [lifecycleStages, setLifecycleStages] = useState([]);
   const [companyOptions, setCompanyOptions] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -393,11 +401,11 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
     return companies.find((item) => item.id === selectedCompanyId) || companyOptions.find((item) => item.id === selectedCompanyId) || null;
   }, [companies, companyOptions, selectedCompanyId]);
   const interactionWhatsDigits = useMemo(
-    () => normalizePhoneDigits(interactionForm.whatsapp_number || interactionForm.phone_number),
+    () => toWhatsAppBrazilNumber(interactionForm.whatsapp_number || interactionForm.phone_number),
     [interactionForm.phone_number, interactionForm.whatsapp_number]
   );
   const interactionPhoneDigits = useMemo(
-    () => normalizePhoneDigits(interactionForm.phone_number || interactionForm.whatsapp_number),
+    () => toTelDigits(interactionForm.phone_number || interactionForm.whatsapp_number),
     [interactionForm.phone_number, interactionForm.whatsapp_number]
   );
   const interactionWhatsappHref = interactionWhatsDigits ? `https://wa.me/${interactionWhatsDigits}` : "";
@@ -539,7 +547,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
             trade_name: upperLettersOnly(lookupData.trade_name) || prev.trade_name,
             legal_name: upperLettersOnly(lookupData.legal_name) || prev.legal_name,
             email: lookupData.email || prev.email,
-            phone: lookupData.phone || prev.phone,
+            phone: lookupData.phone ? formatBrazilPhone(lookupData.phone) : prev.phone,
             address_full: lookupData.address_full || prev.address_full,
             segmento: lookupData.segmento || prev.segmento
           }));
@@ -564,10 +572,11 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
     setLoading(true);
     setError("");
     try {
-      const [companiesData, optionsData, contactsData] = await Promise.all([
+      const [companiesData, optionsData, contactsData, lifecycleData] = await Promise.all([
         listCompanies(),
         listCompanyOptions(),
-        listContacts()
+        listContacts(),
+        listCompanyLifecycleStages({ includeInactive: true })
       ]);
 
       const normalizedOptions = optionsData.length
@@ -577,6 +586,16 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       setCompanies(companiesData);
       setCompanyOptions(normalizedOptions);
       setContacts(contactsData);
+      setLifecycleStages(lifecycleData);
+      setForm((prev) => {
+        if (prev.lifecycle_stage_id) return prev;
+        const defaultStageId = getDefaultLifecycleStageId(lifecycleData);
+        if (!defaultStageId) return prev;
+        return {
+          ...prev,
+          lifecycle_stage_id: defaultStageId
+        };
+      });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -677,14 +696,17 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       }
 
       const checkinConfig = normalizeCompanyCheckinConfig(form);
+      const companyPhone = validateBrazilPhoneOrEmpty(form.phone, "Telefone da empresa");
+      const primaryContactWhatsapp = validateBrazilPhoneOrEmpty(form.contact_whatsapp, "WhatsApp do contato");
 
       const createdCompany = await createCompany({
         cnpj: normalizedCnpj,
         trade_name: upperLettersOnly(form.trade_name),
         legal_name: upperLettersOnly(form.legal_name),
         email: form.email || null,
-        phone: form.phone || null,
+        phone: companyPhone,
         segmento: form.segmento || null,
+        lifecycle_stage_id: form.lifecycle_stage_id || null,
         address_full: form.address_full || null,
         ...checkinConfig
       });
@@ -695,13 +717,16 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
           full_name: upperLettersOnly(form.contact_name),
           email: form.contact_email || null,
           role_title: form.contact_role_title || null,
-          whatsapp: form.contact_whatsapp || null,
+          whatsapp: primaryContactWhatsapp,
           birth_date: form.contact_birth_date || null,
           is_primary: true
         });
       }
 
-      setForm(EMPTY_COMPANY_FORM);
+      setForm({
+        ...EMPTY_COMPANY_FORM,
+        lifecycle_stage_id: getDefaultLifecycleStageId(lifecycleStages)
+      });
       setCnpjValidation({ type: "idle", message: "" });
       setContactForm((prev) => ({
         ...prev,
@@ -729,12 +754,14 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         return;
       }
 
+      const contactWhatsapp = validateBrazilPhoneOrEmpty(contactForm.whatsapp, "WhatsApp do contato");
+
       await createContact({
         company_id: contactForm.company_id || null,
         full_name: upperLettersOnly(contactForm.full_name),
         email: contactForm.email || null,
         role_title: contactForm.role_title || null,
-        whatsapp: contactForm.whatsapp || null,
+        whatsapp: contactWhatsapp,
         birth_date: contactForm.birth_date || null
       });
 
@@ -754,8 +781,9 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       trade_name: upperLettersOnly(company.trade_name || ""),
       legal_name: upperLettersOnly(company.legal_name || ""),
       email: company.email || "",
-      phone: company.phone || "",
+      phone: formatBrazilPhone(company.phone || ""),
       segmento: company.segmento || "",
+      lifecycle_stage_id: company.lifecycle_stage_id || "",
       address_full: company.address_full || "",
       checkin_validation_mode: normalizeCheckinMode(company.checkin_validation_mode),
       checkin_radius_meters: String(company.checkin_radius_meters || 150),
@@ -797,6 +825,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       }
 
       const checkinConfig = normalizeCompanyCheckinConfig(editForm);
+      const companyPhone = validateBrazilPhoneOrEmpty(editForm.phone, "Telefone da empresa");
 
       setSavingEdit(true);
       await updateCompany(editingCompanyId, {
@@ -804,8 +833,9 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         trade_name: upperLettersOnly(editForm.trade_name),
         legal_name: upperLettersOnly(editForm.legal_name),
         email: editForm.email || null,
-        phone: editForm.phone || null,
+        phone: companyPhone,
         segmento: editForm.segmento || null,
+        lifecycle_stage_id: editForm.lifecycle_stage_id || null,
         address_full: editForm.address_full || null,
         ...checkinConfig
       });
@@ -828,7 +858,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       full_name: upperLettersOnly(contact.full_name || ""),
       email: contact.email || "",
       role_title: contact.role_title || "",
-      whatsapp: contact.whatsapp || contact.phone || "",
+      whatsapp: formatBrazilPhone(contact.whatsapp || contact.phone || ""),
       birth_date: contact.birth_date || ""
     });
   }
@@ -855,13 +885,15 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
         return;
       }
 
+      const contactWhatsapp = validateBrazilPhoneOrEmpty(editContactForm.whatsapp, "WhatsApp do contato");
+
       setSavingContactEdit(true);
       await updateContact(editingContactId, {
         company_id: editContactForm.company_id || null,
         full_name: upperLettersOnly(editContactForm.full_name),
         email: editContactForm.email || null,
         role_title: editContactForm.role_title || null,
-        whatsapp: editContactForm.whatsapp || null,
+        whatsapp: contactWhatsapp,
         birth_date: editContactForm.birth_date || null
       });
 
@@ -903,8 +935,8 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
     setInteractionForm((prev) => ({
       ...prev,
       contact_id: contactId,
-      whatsapp_number: contact?.whatsapp || prev.whatsapp_number,
-      phone_number: contact?.phone || prev.phone_number
+      whatsapp_number: formatBrazilPhone(contact?.whatsapp || prev.whatsapp_number),
+      phone_number: formatBrazilPhone(contact?.phone || prev.phone_number)
     }));
   }
 
@@ -921,13 +953,13 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       return;
     }
 
-    const whatsappNumber = String(interactionForm.whatsapp_number || "").trim();
-    const phoneNumber = String(interactionForm.phone_number || "").trim();
-    if (interactionForm.interaction_type === "whatsapp" && !whatsappNumber && !phoneNumber) {
+    const whatsappRaw = String(interactionForm.whatsapp_number || "").trim();
+    const phoneRaw = String(interactionForm.phone_number || "").trim();
+    if (interactionForm.interaction_type === "whatsapp" && !whatsappRaw && !phoneRaw) {
       setCustomerError("Informe o WhatsApp envolvido na conversa.");
       return;
     }
-    if (interactionForm.interaction_type === "call" && !phoneNumber && !whatsappNumber) {
+    if (interactionForm.interaction_type === "call" && !phoneRaw && !whatsappRaw) {
       setCustomerError("Informe o telefone/WhatsApp da chamada.");
       return;
     }
@@ -935,6 +967,9 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
     setSavingInteraction(true);
     setCustomerError("");
     try {
+      const whatsappNumber = validateBrazilPhoneOrEmpty(whatsappRaw, "WhatsApp da interação");
+      const phoneNumber = validateBrazilPhoneOrEmpty(phoneRaw, "Telefone da interação");
+
       await createCompanyInteraction({
         company_id: selectedCompanyId,
         contact_id: interactionForm.contact_id || null,
@@ -977,6 +1012,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                   <th>Nome Fantasia</th>
                   <th>CNPJ</th>
                   <th>Segmento</th>
+                  <th>Ciclo de vida</th>
                   <th>Ações</th>
                 </tr>
               </thead>
@@ -990,6 +1026,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                     </td>
                     <td>{maskCnpj(company.cnpj)}</td>
                     <td>{company.segmento || "-"}</td>
+                    <td>{company.lifecycle_stage?.name || "-"}</td>
                     <td>
                       <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerHistoryModal(company)}>
                         Pop-up 360
@@ -1005,7 +1042,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                 ))}
                 {!companies.length ? (
                   <tr>
-                    <td colSpan={4} className="muted">
+                    <td colSpan={5} className="muted">
                       Nenhuma empresa cadastrada.
                     </td>
                   </tr>
@@ -1047,7 +1084,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
             <input
               placeholder="Telefone"
               value={form.phone}
-              onChange={(event) => setForm((prev) => ({ ...prev, phone: event.target.value }))}
+              onChange={(event) => setForm((prev) => ({ ...prev, phone: formatBrazilPhone(event.target.value) }))}
             />
             <select value={form.segmento} onChange={(event) => setForm((prev) => ({ ...prev, segmento: event.target.value }))}>
               <option value="">Segmento</option>
@@ -1057,11 +1094,28 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                 </option>
               ))}
             </select>
+            <select
+              value={form.lifecycle_stage_id}
+              onChange={(event) => setForm((prev) => ({ ...prev, lifecycle_stage_id: event.target.value }))}
+            >
+              <option value="">Ciclo de vida</option>
+              {lifecycleStages.map((stage) => (
+                <option key={stage.id} value={stage.id}>
+                  {stage.name}
+                  {stage.is_active ? "" : " (inativa)"}
+                </option>
+              ))}
+            </select>
             <textarea
               placeholder="Endereço completo"
               value={form.address_full}
               onChange={(event) => setForm((prev) => ({ ...prev, address_full: event.target.value }))}
             />
+            {!lifecycleStages.length ? (
+              <p className="warning-text">
+                Nenhuma fase do ciclo de vida cadastrada. Configure em <strong>Configurações</strong>.
+              </p>
+            ) : null}
 
             <h3>Check-in de visitas (opcional)</h3>
             <select
@@ -1121,7 +1175,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
             <input
               placeholder="WhatsApp do contato"
               value={form.contact_whatsapp}
-              onChange={(event) => setForm((prev) => ({ ...prev, contact_whatsapp: event.target.value }))}
+              onChange={(event) => setForm((prev) => ({ ...prev, contact_whatsapp: formatBrazilPhone(event.target.value) }))}
             />
             <input
               type="date"
@@ -1178,7 +1232,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
               <input
                 placeholder="Telefone"
                 value={editForm.phone}
-                onChange={(event) => setEditForm((prev) => ({ ...prev, phone: event.target.value }))}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, phone: formatBrazilPhone(event.target.value) }))}
               />
               <select
                 value={editForm.segmento}
@@ -1188,6 +1242,18 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                 {SEGMENTOS.map((item) => (
                   <option key={item} value={item}>
                     {item}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={editForm.lifecycle_stage_id}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, lifecycle_stage_id: event.target.value }))}
+              >
+                <option value="">Ciclo de vida</option>
+                {lifecycleStages.map((stage) => (
+                  <option key={stage.id} value={stage.id}>
+                    {stage.name}
+                    {stage.is_active ? "" : " (inativa)"}
                   </option>
                 ))}
               </select>
@@ -1282,7 +1348,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
             <input
               placeholder="WhatsApp"
               value={contactForm.whatsapp}
-              onChange={(event) => setContactForm((prev) => ({ ...prev, whatsapp: event.target.value }))}
+              onChange={(event) => setContactForm((prev) => ({ ...prev, whatsapp: formatBrazilPhone(event.target.value) }))}
             />
             <input
               type="date"
@@ -1327,7 +1393,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
               <input
                 placeholder="WhatsApp"
                 value={editContactForm.whatsapp}
-                onChange={(event) => setEditContactForm((prev) => ({ ...prev, whatsapp: event.target.value }))}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, whatsapp: formatBrazilPhone(event.target.value) }))}
               />
               <input
                 type="date"
@@ -1387,7 +1453,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                     <td>{contact.full_name}</td>
                     <td>{contact.role_title || "-"}</td>
                     <td>{contact.email || "-"}</td>
-                    <td>{contact.whatsapp || contact.phone || "-"}</td>
+                    <td>{formatBrazilPhone(contact.whatsapp || contact.phone) || "-"}</td>
                     <td>{formatBirthDate(contact.birth_date)}</td>
                     <td>
                       <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditContact(contact)}>
@@ -1609,14 +1675,14 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                     </thead>
                     <tbody>
                       {customerContacts.map((contact) => {
-                        const quickWhatsapp = normalizePhoneDigits(contact.whatsapp || contact.phone);
-                        const quickPhone = normalizePhoneDigits(contact.phone || contact.whatsapp);
+                        const quickWhatsapp = toWhatsAppBrazilNumber(contact.whatsapp || contact.phone);
+                        const quickPhone = toTelDigits(contact.phone || contact.whatsapp);
                         return (
                           <tr key={`quick-${contact.id}`}>
                             <td>{contact.full_name}</td>
                             <td>{contact.role_title || "-"}</td>
-                            <td>{contact.whatsapp || "-"}</td>
-                            <td>{contact.phone || "-"}</td>
+                            <td>{formatBrazilPhone(contact.whatsapp) || "-"}</td>
+                            <td>{formatBrazilPhone(contact.phone) || "-"}</td>
                             <td>
                               <div className="inline-actions">
                                 <button
@@ -1626,8 +1692,8 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                                     setInteractionForm((prev) => ({
                                       ...prev,
                                       contact_id: contact.id,
-                                      whatsapp_number: contact.whatsapp || prev.whatsapp_number,
-                                      phone_number: contact.phone || prev.phone_number
+                                      whatsapp_number: formatBrazilPhone(contact.whatsapp || prev.whatsapp_number),
+                                      phone_number: formatBrazilPhone(contact.phone || prev.phone_number)
                                     }))
                                   }
                                 >
@@ -1681,12 +1747,16 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                   <input
                     placeholder="WhatsApp envolvido"
                     value={interactionForm.whatsapp_number}
-                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, whatsapp_number: event.target.value }))}
+                    onChange={(event) =>
+                      setInteractionForm((prev) => ({ ...prev, whatsapp_number: formatBrazilPhone(event.target.value) }))
+                    }
                   />
                   <input
                     placeholder="Telefone da chamada"
                     value={interactionForm.phone_number}
-                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, phone_number: event.target.value }))}
+                    onChange={(event) =>
+                      setInteractionForm((prev) => ({ ...prev, phone_number: formatBrazilPhone(event.target.value) }))
+                    }
                   />
                   <input
                     type="datetime-local"
@@ -1759,7 +1829,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                           <td>{formatDateTime(row.occurred_at || row.created_at)}</td>
                           <td>{interactionTypeLabel(row.interaction_type)}</td>
                           <td>{row.contacts?.full_name || "-"}</td>
-                          <td>{row.whatsapp_number || row.phone_number || "-"}</td>
+                          <td>{formatBrazilPhone(row.whatsapp_number || row.phone_number) || "-"}</td>
                           <td>{row.content || "-"}</td>
                           <td>
                             {row.recording_url ? (

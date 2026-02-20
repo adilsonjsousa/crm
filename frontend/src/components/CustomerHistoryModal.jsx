@@ -15,6 +15,7 @@ import {
 } from "../lib/revenueApi";
 import { stageLabel } from "../lib/pipelineStages";
 import { SALES_TYPES } from "../lib/productCatalog";
+import { formatBrazilPhone, toTelDigits, toWhatsAppBrazilNumber } from "../lib/phone";
 
 const CUSTOMER_MODAL_TABS = [
   { id: "overview", label: "Resumo" },
@@ -134,10 +135,6 @@ function normalizeText(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
-}
-
-function normalizePhoneDigits(value) {
-  return String(value || "").replace(/\D/g, "");
 }
 
 function isVisitTask(task) {
@@ -545,12 +542,16 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                     <dd>{companyProfile?.segmento || "-"}</dd>
                   </div>
                   <div>
+                    <dt>Ciclo de vida</dt>
+                    <dd>{companyProfile?.lifecycle_stage?.name || "-"}</dd>
+                  </div>
+                  <div>
                     <dt>E-mail</dt>
                     <dd>{companyProfile?.email || "-"}</dd>
                   </div>
                   <div>
                     <dt>Telefone</dt>
-                    <dd>{companyProfile?.phone || "-"}</dd>
+                    <dd>{formatBrazilPhone(companyProfile?.phone) || "-"}</dd>
                   </div>
                   <div className="customer-popup-fact-wide">
                     <dt>Endereco</dt>
@@ -622,14 +623,14 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                   </thead>
                   <tbody>
                     {contacts.map((contact) => {
-                      const whatsappDigits = normalizePhoneDigits(contact.whatsapp || contact.phone);
-                      const phoneDigits = normalizePhoneDigits(contact.phone || contact.whatsapp);
+                      const whatsappDigits = toWhatsAppBrazilNumber(contact.whatsapp || contact.phone);
+                      const phoneDigits = toTelDigits(contact.phone || contact.whatsapp);
                       return (
                         <tr key={contact.id}>
                           <td>{contact.full_name || "-"}</td>
                           <td>{contact.role_title || "-"}</td>
                           <td>{contact.email || "-"}</td>
-                          <td>{contact.whatsapp || contact.phone || "-"}</td>
+                          <td>{formatBrazilPhone(contact.whatsapp || contact.phone) || "-"}</td>
                           <td>{formatBirthDate(contact.birth_date)}</td>
                           <td>
                             <div className="inline-actions">
@@ -1015,7 +1016,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                     <td>{interactionTypeLabel(row.interaction_type)}</td>
                     <td>{directionLabel(row.direction)}</td>
                     <td>{row.contacts?.full_name || "-"}</td>
-                    <td>{row.whatsapp_number || row.phone_number || "-"}</td>
+                    <td>{formatBrazilPhone(row.whatsapp_number || row.phone_number) || "-"}</td>
                     <td>{row.subject || "-"}</td>
                     <td>{row.content || "-"}</td>
                   </tr>
