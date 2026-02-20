@@ -641,6 +641,15 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
     }
   }, [focusRequest, focusTarget]);
 
+  useEffect(() => {
+    if (!editingCompanyId) return;
+    function handleEscape(event) {
+      if (event.key === "Escape") cancelEditCompany();
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [editingCompanyId]);
+
   async function handleCompanySubmit(event) {
     event.preventDefault();
     setError("");
@@ -957,6 +966,55 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
       {error ? <p className="error-text">{error}</p> : null}
 
       <div className="two-col">
+        <article className="panel">
+          <h2>Últimas empresas</h2>
+          <p className="muted">Clique em "Editar" para abrir o pop-up de edição.</p>
+          {loading ? <p className="muted">Carregando...</p> : null}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome Fantasia</th>
+                  <th>CNPJ</th>
+                  <th>Segmento</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {companies.map((company) => (
+                  <tr key={company.id}>
+                    <td>
+                      <button type="button" className="btn-inline-link" onClick={() => openCustomerHistoryModal(company)}>
+                        {company.trade_name}
+                      </button>
+                    </td>
+                    <td>{maskCnpj(company.cnpj)}</td>
+                    <td>{company.segmento || "-"}</td>
+                    <td>
+                      <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerHistoryModal(company)}>
+                        Pop-up 360
+                      </button>
+                      <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerWorkspace(company)}>
+                        Abrir aba
+                      </button>
+                      <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditCompany(company)}>
+                        Editar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!companies.length ? (
+                  <tr>
+                    <td colSpan={4} className="muted">
+                      Nenhuma empresa cadastrada.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </article>
+
         <article className="panel" ref={companyPanelRef}>
           <h2>Empresas</h2>
           <form className="form-grid" onSubmit={handleCompanySubmit}>
@@ -1076,10 +1134,23 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
             </button>
           </form>
         </article>
+      </div>
 
-        <article className="panel">
-          <h2>Editar empresa cadastrada</h2>
-          {editingCompanyId ? (
+      {editingCompanyId ? (
+        <div className="edit-company-modal-overlay" role="presentation" onClick={cancelEditCompany}>
+          <article
+            className="edit-company-modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Editar empresa cadastrada"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="edit-company-modal-header">
+              <h2>Editar empresa cadastrada</h2>
+              <button type="button" className="btn-ghost btn-table-action" onClick={cancelEditCompany}>
+                Fechar
+              </button>
+            </div>
             <form className="form-grid" onSubmit={handleEditCompanySubmit}>
               <input
                 required
@@ -1173,52 +1244,9 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
               </div>
               {editError ? <p className="error-text">{editError}</p> : null}
             </form>
-          ) : (
-            <p className="muted">Clique em “Editar” na lista para alterar os dados de uma empresa.</p>
-          )}
-        </article>
-
-        <article className="panel">
-          <h3>Últimas empresas</h3>
-          {loading ? <p className="muted">Carregando...</p> : null}
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Nome Fantasia</th>
-                  <th>CNPJ</th>
-                  <th>Segmento</th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {companies.map((company) => (
-                  <tr key={company.id}>
-                    <td>
-                      <button type="button" className="btn-inline-link" onClick={() => openCustomerHistoryModal(company)}>
-                        {company.trade_name}
-                      </button>
-                    </td>
-                    <td>{maskCnpj(company.cnpj)}</td>
-                    <td>{company.segmento || "-"}</td>
-                    <td>
-                      <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerHistoryModal(company)}>
-                        Pop-up 360
-                      </button>
-                      <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerWorkspace(company)}>
-                        Abrir aba
-                      </button>
-                      <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditCompany(company)}>
-                        Editar
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </article>
-      </div>
+          </article>
+        </div>
+      ) : null}
 
       <div className="two-col top-gap">
         <article className="panel" ref={contactPanelRef}>
