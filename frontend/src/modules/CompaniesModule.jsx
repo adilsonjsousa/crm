@@ -386,7 +386,6 @@ export default function CompaniesModule({
   });
   const companyPanelRef = useRef(null);
   const contactPanelRef = useRef(null);
-  const editContactPanelRef = useRef(null);
 
   const cnpjDigits = useMemo(() => cleanCnpj(form.cnpj), [form.cnpj]);
   const hasPrimaryContactData = useMemo(
@@ -696,12 +695,11 @@ export default function CompaniesModule({
 
   useEffect(() => {
     if (!editingContactId) return;
-    if (!editContactPanelRef.current) return;
-    editContactPanelRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-    const firstField = editContactPanelRef.current.querySelector("select, input, textarea");
-    if (firstField && typeof firstField.focus === "function") {
-      window.setTimeout(() => firstField.focus(), 180);
+    function handleEscape(event) {
+      if (event.key === "Escape") cancelEditContact();
     }
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
   }, [editingContactId]);
 
   async function handleCompanySubmit(event) {
@@ -834,6 +832,7 @@ export default function CompaniesModule({
     const normalizedCompanyId = String(companyId || "").trim();
     if (!normalizedCompanyId) return;
 
+    cancelEditContact();
     setError("");
     setSelectedCompanyId(normalizedCompanyId);
 
@@ -943,6 +942,7 @@ export default function CompaniesModule({
     const normalizedContactId = String(contactId || "").trim();
     if (!normalizedContactId) return;
 
+    cancelEditCompany();
     setEditContactError("");
     const externalDraft = normalizeExternalContactDraft(normalizedContactId, payload);
 
@@ -1472,62 +1472,9 @@ export default function CompaniesModule({
           </form>
         </article>
 
-        <article className="panel" ref={editContactPanelRef}>
-          <h2>Editar contato</h2>
-          {editingContactId ? (
-            <form className="form-grid" onSubmit={handleEditContactSubmit}>
-              <select
-                value={editContactForm.company_id}
-                onChange={(event) => setEditContactForm((prev) => ({ ...prev, company_id: event.target.value }))}
-              >
-                <option value="">Sem vínculo com empresa</option>
-                {companyOptions.map((company) => (
-                  <option key={company.id} value={company.id}>
-                    {company.trade_name}
-                  </option>
-                ))}
-              </select>
-              <input
-                required
-                placeholder="Nome do contato"
-                value={editContactForm.full_name}
-                onChange={(event) => setEditContactForm((prev) => ({ ...prev, full_name: upperLettersOnly(event.target.value) }))}
-              />
-              <input
-                placeholder="E-mail"
-                value={editContactForm.email}
-                onChange={(event) => setEditContactForm((prev) => ({ ...prev, email: event.target.value }))}
-              />
-              <input
-                placeholder="Cargo"
-                value={editContactForm.role_title}
-                onChange={(event) => setEditContactForm((prev) => ({ ...prev, role_title: event.target.value }))}
-              />
-              <input
-                placeholder="WhatsApp"
-                value={editContactForm.whatsapp}
-                onChange={(event) => setEditContactForm((prev) => ({ ...prev, whatsapp: formatBrazilPhone(event.target.value) }))}
-              />
-              <input
-                type="date"
-                value={editContactForm.birth_date}
-                onChange={(event) => setEditContactForm((prev) => ({ ...prev, birth_date: event.target.value }))}
-              />
-              <div className="inline-actions">
-                <button type="submit" className="btn-primary" disabled={savingContactEdit}>
-                  {savingContactEdit ? "Salvando..." : "Salvar contato"}
-                </button>
-                <button type="button" className="btn-ghost" onClick={cancelEditContact}>
-                  Cancelar edição
-                </button>
-              </div>
-              {editContactError ? <p className="error-text">{editContactError}</p> : null}
-            </form>
-          ) : (
-            <p className="muted">Clique em “Editar” em um contato para alterar ou vincular/desvincular empresa.</p>
-          )}
-
-          <h3 className="top-gap">Contatos recentes</h3>
+        <article className="panel">
+          <h2>Contatos recentes</h2>
+          <p className="muted">Clique em "Editar" para abrir o pop-up de edição de contato.</p>
           {loading ? <p className="muted">Carregando...</p> : null}
           <div className="table-wrap">
             <table>
@@ -1580,6 +1527,73 @@ export default function CompaniesModule({
           </div>
         </article>
       </div>
+
+      {editingContactId ? (
+        <div className="edit-company-modal-overlay" role="presentation" onClick={cancelEditContact}>
+          <article
+            className="edit-company-modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Editar contato cadastrado"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="edit-company-modal-header">
+              <h2>Editar contato cadastrado</h2>
+              <button type="button" className="btn-ghost btn-table-action" onClick={cancelEditContact}>
+                Fechar
+              </button>
+            </div>
+            <form className="form-grid" onSubmit={handleEditContactSubmit}>
+              <select
+                value={editContactForm.company_id}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, company_id: event.target.value }))}
+              >
+                <option value="">Sem vínculo com empresa</option>
+                {companyOptions.map((company) => (
+                  <option key={company.id} value={company.id}>
+                    {company.trade_name}
+                  </option>
+                ))}
+              </select>
+              <input
+                required
+                placeholder="Nome do contato"
+                value={editContactForm.full_name}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, full_name: upperLettersOnly(event.target.value) }))}
+              />
+              <input
+                placeholder="E-mail"
+                value={editContactForm.email}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, email: event.target.value }))}
+              />
+              <input
+                placeholder="Cargo"
+                value={editContactForm.role_title}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, role_title: event.target.value }))}
+              />
+              <input
+                placeholder="WhatsApp"
+                value={editContactForm.whatsapp}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, whatsapp: formatBrazilPhone(event.target.value) }))}
+              />
+              <input
+                type="date"
+                value={editContactForm.birth_date}
+                onChange={(event) => setEditContactForm((prev) => ({ ...prev, birth_date: event.target.value }))}
+              />
+              <div className="inline-actions">
+                <button type="submit" className="btn-primary" disabled={savingContactEdit}>
+                  {savingContactEdit ? "Salvando..." : "Salvar contato"}
+                </button>
+                <button type="button" className="btn-ghost" onClick={cancelEditContact}>
+                  Cancelar edição
+                </button>
+              </div>
+              {editContactError ? <p className="error-text">{editContactError}</p> : null}
+            </form>
+          </article>
+        </div>
+      ) : null}
 
       <article className="panel top-gap">
         <h3>Aba do cliente (360)</h3>
