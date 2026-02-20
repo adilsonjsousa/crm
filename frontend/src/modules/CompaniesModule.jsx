@@ -5,6 +5,7 @@ import {
   createContact,
   findCompanyByCnpj,
   getCompanyById,
+  getContactById,
   listCompanies,
   listCompanyContacts,
   listCompanyHistory,
@@ -344,7 +345,9 @@ export default function CompaniesModule({
   focusTarget = "company",
   focusRequest = 0,
   editCompanyId = "",
-  editCompanyRequest = 0
+  editCompanyRequest = 0,
+  editContactId = "",
+  editContactRequest = 0
 }) {
   const [companies, setCompanies] = useState([]);
   const [lifecycleStages, setLifecycleStages] = useState([]);
@@ -674,6 +677,13 @@ export default function CompaniesModule({
   }, [editCompanyId, editCompanyRequest]);
 
   useEffect(() => {
+    if (!editContactRequest) return;
+    const normalizedContactId = String(editContactId || "").trim();
+    if (!normalizedContactId) return;
+    openEditContactById(normalizedContactId);
+  }, [editContactId, editContactRequest]);
+
+  useEffect(() => {
     if (!editingCompanyId) return;
     function handleEscape(event) {
       if (event.key === "Escape") cancelEditCompany();
@@ -900,6 +910,33 @@ export default function CompaniesModule({
       whatsapp: formatBrazilPhone(contact.whatsapp || contact.phone || ""),
       birth_date: contact.birth_date || ""
     });
+  }
+
+  async function openEditContactById(contactId) {
+    const normalizedContactId = String(contactId || "").trim();
+    if (!normalizedContactId) return;
+
+    setEditContactError("");
+
+    try {
+      const contactFromList = contacts.find((item) => item.id === normalizedContactId) || null;
+      if (contactFromList) {
+        startEditContact(contactFromList);
+        if (contactFromList.company_id) setSelectedCompanyId(contactFromList.company_id);
+        return;
+      }
+
+      const profile = await getContactById(normalizedContactId);
+      if (!profile) {
+        setEditContactError("Não foi possível localizar o contato para edição.");
+        return;
+      }
+
+      startEditContact(profile);
+      if (profile.company_id) setSelectedCompanyId(profile.company_id);
+    } catch (err) {
+      setEditContactError(err.message);
+    }
   }
 
   function cancelEditContact() {

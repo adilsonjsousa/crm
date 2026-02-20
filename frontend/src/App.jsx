@@ -99,6 +99,8 @@ export default function App() {
   const [companiesEditCompanyId, setCompaniesEditCompanyId] = useState("");
   const [companiesEditRequest, setCompaniesEditRequest] = useState(0);
   const [contactsFocusRequest, setContactsFocusRequest] = useState(0);
+  const [contactsEditContactId, setContactsEditContactId] = useState("");
+  const [contactsEditRequest, setContactsEditRequest] = useState(0);
   const [globalSearch, setGlobalSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -171,7 +173,14 @@ export default function App() {
       );
     }
     if (activeTab === "contacts") {
-      return <CompaniesModule focusTarget="contact" focusRequest={contactsFocusRequest} />;
+      return (
+        <CompaniesModule
+          focusTarget="contact"
+          focusRequest={contactsFocusRequest}
+          editContactId={contactsEditContactId}
+          editContactRequest={contactsEditRequest}
+        />
+      );
     }
     if (activeTab === "pipeline") return <PipelineModule />;
     if (activeTab === "orders") return <OrdersModule />;
@@ -180,7 +189,16 @@ export default function App() {
     if (activeTab === "service") return <ServiceModule />;
     if (activeTab === "settings") return <SettingsModule />;
     return <DashboardModule />;
-  }, [activeTab, companiesEditCompanyId, companiesEditRequest, companiesFocusRequest, companiesFocusTarget, contactsFocusRequest]);
+  }, [
+    activeTab,
+    companiesEditCompanyId,
+    companiesEditRequest,
+    companiesFocusRequest,
+    companiesFocusTarget,
+    contactsEditContactId,
+    contactsEditRequest,
+    contactsFocusRequest
+  ]);
 
   const activeMeta = PAGE_META[activeTab] || PAGE_META.dashboard;
   const activeNav = NAV_ITEMS.find((item) => item.id === activeTab) || NAV_ITEMS[0];
@@ -262,20 +280,63 @@ export default function App() {
     setActiveTab("companies");
   }
 
+  function handleSearchRequestEditContact(contactId) {
+    const normalizedContactId = String(contactId || "").trim();
+    if (!normalizedContactId) return;
+
+    closeSearchCustomerHistoryModal();
+    setContactsFocusRequest((previous) => previous + 1);
+    setContactsEditContactId(normalizedContactId);
+    setContactsEditRequest((previous) => previous + 1);
+    setActiveTab("contacts");
+  }
+
+  function resolveSearchContactId(item) {
+    const explicitContactId = String(item?.contact_id || "").trim();
+    if (explicitContactId) return explicitContactId;
+    const prefixedId = String(item?.id || "").trim();
+    if (prefixedId.startsWith("contact-")) return prefixedId.slice("contact-".length);
+    return "";
+  }
+
   function canQuickEditSearchItem(item) {
-    const normalizedCompanyId = String(item?.company_id || "").trim();
-    if (!normalizedCompanyId) return false;
-    return item?.entity_type === "company" || item?.entity_type === "contact";
+    if (item?.entity_type === "company") {
+      return Boolean(String(item?.company_id || "").trim());
+    }
+    if (item?.entity_type === "contact") {
+      return Boolean(resolveSearchContactId(item));
+    }
+    return false;
+  }
+
+  function quickEditLabel(item) {
+    if (item?.entity_type === "company") return "Editar empresa";
+    if (item?.entity_type === "contact") return "Editar contato";
+    return "Editar";
   }
 
   function handleQuickEditFromSearch(item) {
-    const companyId = String(item?.company_id || "").trim();
-    if (!companyId) {
-      setSearchError("Este registro nao possui empresa vinculada para edicao.");
+    if (item?.entity_type === "company") {
+      const companyId = String(item?.company_id || "").trim();
+      if (!companyId) {
+        setSearchError("Este registro nao possui empresa vinculada para edicao.");
+        return;
+      }
+      setSearchError("");
+      handleSearchRequestEditCompany(companyId);
       return;
     }
-    setSearchError("");
-    handleSearchRequestEditCompany(companyId);
+
+    if (item?.entity_type === "contact") {
+      const contactId = resolveSearchContactId(item);
+      if (!contactId) {
+        setSearchError("Nao foi possivel identificar este contato para edicao.");
+        return;
+      }
+      setSearchError("");
+      handleSearchRequestEditContact(contactId);
+      return;
+    }
   }
 
   function openCustomerHistoryFromSearch(item) {
@@ -551,7 +612,7 @@ export default function App() {
                     </button>
                     {canQuickEditSearchItem(item) ? (
                       <button type="button" className="btn-primary btn-table-action search-result-edit-btn" onClick={() => handleQuickEditFromSearch(item)}>
-                        Editar
+                        {quickEditLabel(item)}
                       </button>
                     ) : null}
                   </li>

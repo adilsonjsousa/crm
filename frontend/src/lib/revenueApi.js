@@ -349,6 +349,26 @@ export async function listContacts() {
   }));
 }
 
+export async function getContactById(contactId) {
+  const normalizedContactId = String(contactId || "").trim();
+  if (!normalizedContactId) return null;
+
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase
+    .from("contacts")
+    .select("id,company_id,full_name,email,phone,whatsapp,birth_date,role_title,is_primary,companies:company_id(trade_name)")
+    .eq("id", normalizedContactId)
+    .maybeSingle();
+
+  if (error) throw new Error(normalizeError(error, "Falha ao buscar contato."));
+  if (!data) return null;
+  return {
+    ...data,
+    phone: formatBrazilPhone(data.phone),
+    whatsapp: formatBrazilPhone(data.whatsapp)
+  };
+}
+
 export async function listUpcomingBirthdays(daysAhead = 7) {
   const supabase = ensureSupabase();
   const horizon = Number(daysAhead);
@@ -1396,6 +1416,7 @@ export async function searchGlobalRecords(term) {
   const mappedContacts = (contactsRes.data || []).map((item) => ({
     id: `contact-${item.id}`,
     entity_type: "contact",
+    contact_id: item.id,
     company_id: item.company_id || null,
     company_name: item.companies?.trade_name || "",
     type: "Contato",
