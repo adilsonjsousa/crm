@@ -766,6 +766,27 @@ a.btn-table-action {
   font-size: 0.82rem;
 }
 
+.settings-omie-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.settings-field {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-field span {
+  font-size: 0.8rem;
+  color: var(--text-sub);
+  font-weight: 700;
+}
+
+.settings-field-wide {
+  grid-column: 1 / -1;
+}
+
 .theme-toggle {
   width: 100%;
   border: 1px solid rgba(var(--accent-rgb), 0.46);
@@ -1610,6 +1631,10 @@ tbody tr:hover {
 
   .dashboard-strip,
   .two-col {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-omie-grid {
     grid-template-columns: 1fr;
   }
 

@@ -46,6 +46,11 @@ function normalizeSearchTerm(term) {
     .slice(0, 80);
 }
 
+function asObject(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  return {};
+}
+
 function normalizeLifecycleStageName(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -1254,6 +1259,37 @@ export async function deleteCompanyLifecycleStage(stageId) {
   if (error) throw new Error(normalizeError(error, "Falha ao excluir fase do ciclo de vida."));
 
   await resequenceCompanyLifecycleStages(supabase);
+}
+
+export async function syncOmieCustomers(payload) {
+  const supabase = ensureSupabase();
+  const body = asObject(payload);
+
+  const { data, error } = await supabase.functions.invoke("omie-sync-customers-public", {
+    body
+  });
+
+  if (error) throw new Error(normalizeError(error, "Falha ao iniciar sincronização OMIE de clientes."));
+  if (data?.error) {
+    throw new Error(String(data.message || data.error || "Falha na sincronização OMIE de clientes."));
+  }
+  return data || {};
+}
+
+export async function listOmieCustomerSyncJobs(limit = 12) {
+  const supabase = ensureSupabase();
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(50, Math.floor(limit))) : 12;
+
+  const { data, error } = await supabase
+    .from("sync_jobs")
+    .select("id,status,started_at,finished_at,error_message,result,created_at")
+    .eq("provider", "omie")
+    .eq("resource", "clientes")
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) throw new Error(normalizeError(error, "Falha ao listar histórico de sincronização OMIE."));
+  return data || [];
 }
 
 export async function listCompanyOptions() {

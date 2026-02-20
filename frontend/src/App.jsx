@@ -63,7 +63,7 @@ const PAGE_META = {
   settings: {
     kicker: "Configurações Gerais",
     title: "Parâmetros do CRM",
-    description: "Gerencie regras globais, como ciclo de vida de empresas e ordenação das fases."
+    description: "Gerencie regras globais, como ciclo de vida de empresas e sincronização de clientes OMIE."
   }
 };
 
