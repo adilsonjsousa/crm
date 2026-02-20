@@ -217,6 +217,34 @@ export async function listCompanies() {
   }));
 }
 
+export async function listAllCompaniesForReport() {
+  const supabase = ensureSupabase();
+  const pageSize = 500;
+  let from = 0;
+  const rows = [];
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("companies")
+      .select("id,cnpj,trade_name,legal_name,segmento,email,phone,address_full,city,state,country,created_at,lifecycle_stage:company_lifecycle_stages!companies_lifecycle_stage_id_fkey(id,name,stage_order,is_active)")
+      .order("created_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+
+    if (error) throw new Error(normalizeError(error, "Falha ao listar empresas para relatório."));
+    if (!data?.length) break;
+
+    rows.push(...data);
+
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return rows.map((item) => ({
+    ...item,
+    phone: formatBrazilPhone(item.phone)
+  }));
+}
+
 export async function getCompanyById(companyId) {
   const normalizedCompanyId = String(companyId || "").trim();
   if (!normalizedCompanyId) return null;

@@ -9,6 +9,7 @@ import ServiceModule from "./modules/ServiceModule";
 import OrdersModule from "./modules/OrdersModule";
 import TasksModule from "./modules/TasksModule";
 import SettingsModule from "./modules/SettingsModule";
+import ReportsModule from "./modules/ReportsModule";
 import CustomerHistoryModal from "./components/CustomerHistoryModal";
 
 const THEME_STORAGE_KEY = "crm-theme";
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
   { id: "companies", label: "Empresas", hint: "Contas e CNPJ", icon: "◎" },
   { id: "contacts", label: "Contatos", hint: "Pessoas e cargos", icon: "◬" },
   { id: "orders", label: "Pedidos", hint: "Receita", icon: "◫" },
+  { id: "reports", label: "Relatórios", hint: "Exportações", icon: "◰" },
   { id: "service", label: "Assistência", hint: "SLA e suporte", icon: "◨" },
   { id: "settings", label: "Configurações", hint: "Parâmetros gerais", icon: "◭" }
 ];
@@ -49,6 +51,11 @@ const PAGE_META = {
     kicker: "Revenue Operations",
     title: "Pedidos de Venda",
     description: "Controle pedidos de equipamentos, suprimentos e serviços com rastreabilidade comercial."
+  },
+  reports: {
+    kicker: "Dados e Exportação",
+    title: "Relatórios",
+    description: "Extraia relatórios de empresas cadastradas e exporte em Excel para análises externas."
   },
   tasks: {
     kicker: "Agenda",
@@ -159,6 +166,7 @@ export default function App() {
     }
     if (activeTab === "pipeline") return <PipelineModule />;
     if (activeTab === "orders") return <OrdersModule />;
+    if (activeTab === "reports") return <ReportsModule />;
     if (activeTab === "tasks") return <TasksModule />;
     if (activeTab === "service") return <ServiceModule />;
     if (activeTab === "settings") return <SettingsModule />;

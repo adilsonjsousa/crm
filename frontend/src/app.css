@@ -759,6 +759,23 @@ a.btn-table-action {
   flex-wrap: wrap;
 }
 
+.reports-toolbar {
+  margin-top: 12px;
+}
+
+.reports-toolbar input {
+  min-width: 260px;
+  flex: 1 1 280px;
+}
+
+.reports-toolbar select {
+  min-width: 180px;
+}
+
+.reports-table-wrap {
+  margin-top: 12px;
+}
+
 .settings-stage-input {
   width: 100%;
   min-width: 180px;
