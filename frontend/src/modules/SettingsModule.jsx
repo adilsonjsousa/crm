@@ -11,6 +11,8 @@ import {
 
 const OMIE_STORAGE_KEY = "crm.settings.omie.customers.v1";
 const DEFAULT_OMIE_URL = "https://app.omie.com.br/api/v1/geral/clientes/";
+const OMIE_SYNC_PAGE_CHUNK = 3;
+const OMIE_SYNC_MAX_ROUNDS = 80;
 
 const EMPTY_STAGE_FORM = {
   name: "",
@@ -273,6 +275,7 @@ export default function SettingsModule() {
     event.preventDefault();
     setOmieError("");
     setOmieSuccess("");
+    setOmieResult(null);
 
     const appKey = String(omieForm.app_key || "").trim();
     const appSecret = String(omieForm.app_secret || "").trim();
@@ -286,16 +289,85 @@ export default function SettingsModule() {
       app_secret: appSecret,
       records_per_page: clampInteger(omieForm.records_per_page, 1, 500, 100),
       max_pages: clampInteger(omieForm.max_pages, 1, 200, 20),
+      page_chunk_size: OMIE_SYNC_PAGE_CHUNK,
       dry_run: Boolean(omieForm.dry_run),
       omie_api_url: String(omieForm.omie_api_url || "").trim() || DEFAULT_OMIE_URL
     };
 
     setOmieSyncing(true);
     try {
-      const result = await syncOmieCustomers(payload);
-      setOmieResult(result);
-      const processedCount = Number(result?.processed || 0);
-      setOmieSuccess(`Sincronização concluída. ${processedCount} registro(s) processado(s).`);
+      const aggregate = {
+        pages_processed: 0,
+        records_received: 0,
+        processed: 0,
+        companies_created: 0,
+        companies_updated: 0,
+        links_updated: 0,
+        skipped_without_identifier: 0,
+        skipped_without_cnpj: 0,
+        skipped_invalid_payload: 0,
+        errors: [],
+        rounds: 0,
+        has_more: false,
+        next_page: null,
+        max_pages: payload.max_pages,
+        records_per_page: payload.records_per_page,
+        dry_run: payload.dry_run
+      };
+
+      let nextPage = 1;
+      let hasMore = true;
+
+      while (hasMore && aggregate.rounds < OMIE_SYNC_MAX_ROUNDS) {
+        aggregate.rounds += 1;
+        setOmieSuccess(`Sincronizando lote ${aggregate.rounds} (página ${nextPage})...`);
+
+        const result = await syncOmieCustomers({
+          ...payload,
+          start_page: nextPage
+        });
+
+        const safeResult = asObject(result);
+        aggregate.pages_processed += Number(safeResult.pages_processed || 0);
+        aggregate.records_received += Number(safeResult.records_received || 0);
+        aggregate.processed += Number(safeResult.processed || 0);
+        aggregate.companies_created += Number(safeResult.companies_created || 0);
+        aggregate.companies_updated += Number(safeResult.companies_updated || 0);
+        aggregate.links_updated += Number(safeResult.links_updated || 0);
+        aggregate.skipped_without_identifier += Number(safeResult.skipped_without_identifier || 0);
+        aggregate.skipped_without_cnpj += Number(safeResult.skipped_without_cnpj || 0);
+        aggregate.skipped_invalid_payload += Number(safeResult.skipped_invalid_payload || 0);
+
+        const resultErrors = Array.isArray(safeResult.errors)
+          ? safeResult.errors.map((item) => String(item || "").trim()).filter(Boolean)
+          : [];
+        if (resultErrors.length) {
+          aggregate.errors = [...aggregate.errors, ...resultErrors].slice(0, 20);
+        }
+
+        hasMore = Boolean(safeResult.has_more);
+        const candidateNextPage = Number(safeResult.next_page || 0);
+        if (hasMore && Number.isFinite(candidateNextPage) && candidateNextPage > nextPage) {
+          nextPage = candidateNextPage;
+        } else if (hasMore) {
+          hasMore = false;
+          aggregate.errors = [...aggregate.errors, "Continuação de páginas OMIE inválida. Tente executar novamente."].slice(0, 20);
+        }
+      }
+
+      aggregate.has_more = hasMore;
+      aggregate.next_page = hasMore ? nextPage : null;
+
+      setOmieResult(aggregate);
+      if (hasMore) {
+        setOmieError(
+          `A sincronização foi interrompida para segurança após ${aggregate.rounds} lotes. Clique novamente para continuar da página ${nextPage}.`
+        );
+      } else {
+        setOmieSuccess(
+          `Sincronização concluída em ${aggregate.rounds} lote(s). ${aggregate.processed} registro(s) processado(s).`
+        );
+      }
       await loadOmieHistory();
     } catch (err) {
       setOmieError(err.message);

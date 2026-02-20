@@ -1265,11 +1265,19 @@ export async function syncOmieCustomers(payload) {
   const supabase = ensureSupabase();
   const body = asObject(payload);
 
-  const { data, error } = await supabase.functions.invoke("omie-sync-customers-public", {
+  const { data, error } = await supabase.functions.invoke("omie-sync-customers-public-v2", {
     body
   });
 
-  if (error) throw new Error(normalizeError(error, "Falha ao iniciar sincronização OMIE de clientes."));
+  if (error) {
+    const message = String(error?.message || "");
+    if (message.toLowerCase().includes("non-2xx")) {
+      throw new Error(
+        "A sincronização OMIE excedeu o tempo limite deste lote. O sistema fará nova tentativa em lotes menores."
+      );
+    }
+    throw new Error(normalizeError(error, "Falha ao iniciar sincronização OMIE de clientes."));
+  }
   if (data?.error) {
     throw new Error(String(data.message || data.error || "Falha na sincronização OMIE de clientes."));
   }

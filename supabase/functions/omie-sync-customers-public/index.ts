@@ -10,6 +10,8 @@ const corsHeaders = {
 };
 
 const DEFAULT_OMIE_CLIENTS_URL = "https://app.omie.com.br/api/v1/geral/clientes/";
+const DEFAULT_PAGE_CHUNK_SIZE = 3;
+const DEFAULT_EXECUTION_GUARD_MS = 110000;
 
 function jsonResponse(status: number, payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -372,6 +374,14 @@ Deno.serve(async (request: Request) => {
 
   const recordsPerPage = clampNumber(body.records_per_page || body.recordsPerPage, 1, 500, 100);
   const maxPages = clampNumber(body.max_pages || body.maxPages, 1, 200, 20);
+  const startPage = clampNumber(body.start_page || body.startPage, 1, 100000, 1);
+  const pageChunkSize = clampNumber(body.page_chunk_size || body.pageChunkSize, 1, 20, DEFAULT_PAGE_CHUNK_SIZE);
+  const executionGuardMs = clampNumber(
+    body.execution_guard_ms || body.executionGuardMs,
+    20000,
+    130000,
+    DEFAULT_EXECUTION_GUARD_MS
+  );
   const dryRun = parseBoolean(body.dry_run || body.dryRun, false);
   const startedAt = new Date().toISOString();
 
@@ -384,6 +394,9 @@ Deno.serve(async (request: Request) => {
       payload: {
         records_per_page: recordsPerPage,
         max_pages: maxPages,
+        start_page: startPage,
+        page_chunk_size: pageChunkSize,
+        execution_guard_ms: executionGuardMs,
         dry_run: dryRun
       },
       started_at: startedAt
@@ -414,10 +427,23 @@ Deno.serve(async (request: Request) => {
       errors: [] as Array<string>
     };
 
-    let page = 1;
-    let totalPages = 1;
+    const executionDeadlineMs = Date.now() + executionGuardMs;
+    let page = startPage;
+    let totalPages = Math.max(1, startPage);
+    let pagesProcessedInRun = 0;
+    let stopReason = "completed";
 
     while (page <= maxPages && page <= totalPages) {
+      if (Date.now() >= executionDeadlineMs) {
+        stopReason = "execution_guard";
+        break;
+      }
+
+      if (pagesProcessedInRun >= pageChunkSize) {
+        stopReason = "page_chunk_limit";
+        break;
+      }
+
       const { items, totalPages: detectedPages } = await fetchOmieCustomersPage({
         url: omieUrl,
         appKey,
@@ -429,141 +455,163 @@ Deno.serve(async (request: Request) => {
       totalPages = Math.max(totalPages, detectedPages);
       summary.pages_processed += 1;
       summary.records_received += items.length;
+      pagesProcessedInRun += 1;
+
+      if (!items.length) {
+        stopReason = "no_items";
+        break;
+      }
 
       for (const rawItem of items) {
         const parsed = parseOmieCustomer(rawItem);
 
-        if (!parsed.externalId && !parsed.cnpj) {
-          summary.skipped_without_identifier += 1;
-          continue;
-        }
+        try {
+          if (!parsed.externalId && !parsed.cnpj) {
+            summary.skipped_without_identifier += 1;
+            continue;
+          }
 
-        if (!parsed.cnpj && !parsed.externalId) {
-          summary.skipped_without_cnpj += 1;
-          continue;
-        }
+          if (dryRun) {
+            summary.processed += 1;
+            continue;
+          }
 
-        const names = normalizeCompanyNames({
-          legalName: parsed.legalName,
-          tradeName: parsed.tradeName,
-          cnpj: parsed.cnpj,
-          externalId: parsed.externalId
-        });
+          const names = normalizeCompanyNames({
+            legalName: parsed.legalName,
+            tradeName: parsed.tradeName,
+            cnpj: parsed.cnpj,
+            externalId: parsed.externalId
+          });
 
-        let companyRow: AnyRecord | null = null;
+          let companyRow: AnyRecord | null = null;
 
-        if (parsed.externalId) {
-          const { data: linkRow, error: linkError } = await supabase
-            .from("integration_links")
-            .select("local_entity_id")
-            .eq("provider", "omie")
-            .eq("local_entity_type", "company")
-            .eq("external_id", parsed.externalId)
-            .maybeSingle();
-          if (linkError) throw new Error(linkError.message || "Falha ao buscar vínculo OMIE por external_id.");
-
-          const companyIdByLink = safeString(linkRow?.local_entity_id);
-          if (companyIdByLink) {
-            const { data: existingCompany, error: companyByLinkError } = await supabase
-              .from("companies")
-              .select("id,cnpj,trade_name,legal_name,email,phone,segmento,address_full")
-              .eq("id", companyIdByLink)
+          if (parsed.externalId) {
+            const { data: linkRow, error: linkError } = await supabase
+              .from("integration_links")
+              .select("local_entity_id")
+              .eq("provider", "omie")
+              .eq("local_entity_type", "company")
+              .eq("external_id", parsed.externalId)
               .maybeSingle();
-            if (companyByLinkError) throw new Error(companyByLinkError.message || "Falha ao buscar empresa vinculada pelo external_id.");
-            if (existingCompany) {
-              companyRow = existingCompany;
+            if (linkError) throw new Error(linkError.message || "Falha ao buscar vínculo OMIE por external_id.");
+
+            const companyIdByLink = safeString(linkRow?.local_entity_id);
+            if (companyIdByLink) {
+              const { data: existingCompany, error: companyByLinkError } = await supabase
+                .from("companies")
+                .select("id,cnpj,trade_name,legal_name,email,phone,segmento,address_full")
+                .eq("id", companyIdByLink)
+                .maybeSingle();
+              if (companyByLinkError) throw new Error(companyByLinkError.message || "Falha ao buscar empresa vinculada pelo external_id.");
+              if (existingCompany) {
+                companyRow = existingCompany;
+              }
             }
           }
-        }
 
-        if (!companyRow && parsed.cnpj) {
-          const { data: existingByCnpj, error: byCnpjError } = await supabase
-            .from("companies")
-            .select("id,cnpj,trade_name,legal_name,email,phone,segmento,address_full")
-            .eq("cnpj", parsed.cnpj)
-            .maybeSingle();
-          if (byCnpjError) throw new Error(byCnpjError.message || "Falha ao buscar empresa por CNPJ.");
-          if (existingByCnpj) companyRow = existingByCnpj;
-        }
+          if (!companyRow && parsed.cnpj) {
+            const { data: existingByCnpj, error: byCnpjError } = await supabase
+              .from("companies")
+              .select("id,cnpj,trade_name,legal_name,email,phone,segmento,address_full")
+              .eq("cnpj", parsed.cnpj)
+              .maybeSingle();
+            if (byCnpjError) throw new Error(byCnpjError.message || "Falha ao buscar empresa por CNPJ.");
+            if (existingByCnpj) companyRow = existingByCnpj;
+          }
 
-        if (!companyRow && !parsed.cnpj) {
-          summary.skipped_without_cnpj += 1;
-          continue;
-        }
-
-        if (dryRun) {
-          summary.processed += 1;
-          continue;
-        }
-
-        const upsertPayload = {
-          legal_name: names.legal,
-          trade_name: names.trade,
-          cnpj: parsed.cnpj,
-          email: parsed.email || null,
-          phone: parsed.phone || null,
-          segmento: "OMIE",
-          address_full: parsed.addressFull || null
-        };
-
-        let companyId = "";
-
-        if (!companyRow) {
-          const { data: insertedCompany, error: insertError } = await supabase
-            .from("companies")
-            .insert(upsertPayload)
-            .select("id")
-            .single();
-
-          if (insertError) {
-            summary.errors.push(`Falha ao inserir ${parsed.cnpj || parsed.externalId}: ${insertError.message}`);
-            if (summary.errors.length > 20) summary.errors = summary.errors.slice(0, 20);
+          if (!companyRow && !parsed.cnpj) {
+            summary.skipped_without_cnpj += 1;
             continue;
           }
 
-          companyId = safeString(insertedCompany?.id);
-          summary.companies_created += 1;
-        } else {
-          companyId = safeString(companyRow.id);
-          const patchPayload: AnyRecord = {
-            trade_name: names.trade || safeString(companyRow.trade_name),
-            legal_name: names.legal || safeString(companyRow.legal_name),
-            email: parsed.email || companyRow.email || null,
-            phone: parsed.phone || companyRow.phone || null,
-            segmento: companyRow.segmento || "OMIE",
-            address_full: parsed.addressFull || companyRow.address_full || null
+          const upsertPayload = {
+            legal_name: names.legal,
+            trade_name: names.trade,
+            cnpj: parsed.cnpj,
+            email: parsed.email || null,
+            phone: parsed.phone || null,
+            segmento: "OMIE",
+            address_full: parsed.addressFull || null
           };
 
-          const { error: updateError } = await supabase.from("companies").update(patchPayload).eq("id", companyId);
-          if (updateError) {
-            summary.errors.push(`Falha ao atualizar ${parsed.cnpj || parsed.externalId}: ${updateError.message}`);
-            if (summary.errors.length > 20) summary.errors = summary.errors.slice(0, 20);
-            continue;
+          let companyId = "";
+
+          if (!companyRow) {
+            const { data: insertedCompany, error: insertError } = await supabase
+              .from("companies")
+              .insert(upsertPayload)
+              .select("id")
+              .single();
+
+            if (insertError) {
+              summary.errors.push(`Falha ao inserir ${parsed.cnpj || parsed.externalId}: ${insertError.message}`);
+              if (summary.errors.length > 20) summary.errors = summary.errors.slice(0, 20);
+              continue;
+            }
+
+            companyId = safeString(insertedCompany?.id);
+            summary.companies_created += 1;
+          } else {
+            companyId = safeString(companyRow.id);
+            const patchPayload: AnyRecord = {
+              trade_name: names.trade || safeString(companyRow.trade_name),
+              legal_name: names.legal || safeString(companyRow.legal_name),
+              email: parsed.email || companyRow.email || null,
+              phone: parsed.phone || companyRow.phone || null,
+              segmento: companyRow.segmento || "OMIE",
+              address_full: parsed.addressFull || companyRow.address_full || null
+            };
+
+            const { error: updateError } = await supabase.from("companies").update(patchPayload).eq("id", companyId);
+            if (updateError) {
+              summary.errors.push(`Falha ao atualizar ${parsed.cnpj || parsed.externalId}: ${updateError.message}`);
+              if (summary.errors.length > 20) summary.errors = summary.errors.slice(0, 20);
+              continue;
+            }
+            summary.companies_updated += 1;
           }
-          summary.companies_updated += 1;
-        }
 
-        if (companyId && parsed.externalId) {
-          await upsertIntegrationLink({
-            supabase,
-            localEntityId: companyId,
-            externalId: parsed.externalId,
-            syncedAt: new Date().toISOString()
-          });
-          summary.links_updated += 1;
-        }
+          if (companyId && parsed.externalId) {
+            try {
+              await upsertIntegrationLink({
+                supabase,
+                localEntityId: companyId,
+                externalId: parsed.externalId,
+                syncedAt: new Date().toISOString()
+              });
+              summary.links_updated += 1;
+            } catch (linkError) {
+              const message = linkError instanceof Error ? linkError.message : "Falha ao vincular integração OMIE.";
+              summary.errors.push(`Falha ao vincular ${parsed.cnpj || parsed.externalId}: ${message}`);
+              if (summary.errors.length > 20) summary.errors = summary.errors.slice(0, 20);
+            }
+          }
 
-        summary.processed += 1;
+          summary.processed += 1;
+        } catch (itemError) {
+          const itemMessage = itemError instanceof Error ? itemError.message : "Falha inesperada ao processar registro OMIE.";
+          summary.errors.push(`Falha ao processar ${parsed.cnpj || parsed.externalId || "registro_sem_id"}: ${itemMessage}`);
+          if (summary.errors.length > 20) summary.errors = summary.errors.slice(0, 20);
+          summary.skipped_invalid_payload += 1;
+        }
       }
-
-      if (!items.length) break;
       page += 1;
     }
+
+    const hasMore = stopReason !== "no_items" && page <= maxPages && page <= totalPages;
+    const nextPage = hasMore ? page : null;
 
     const resultPayload = {
       ...summary,
       records_per_page: recordsPerPage,
       max_pages: maxPages,
+      start_page: startPage,
+      page_chunk_size: pageChunkSize,
+      execution_guard_ms: executionGuardMs,
+      total_pages_detected: totalPages,
+      has_more: hasMore,
+      next_page: nextPage,
+      stop_reason: stopReason,
       dry_run: dryRun,
       started_at: startedAt,
       finished_at: new Date().toISOString()
