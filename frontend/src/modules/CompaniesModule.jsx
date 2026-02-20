@@ -350,6 +350,7 @@ export default function CompaniesModule({
   editContactRequest = 0,
   editContactPayload = null
 }) {
+  const isContactsView = focusTarget === "contact";
   const [companies, setCompanies] = useState([]);
   const [lifecycleStages, setLifecycleStages] = useState([]);
   const [companyOptions, setCompanyOptions] = useState([]);
@@ -1113,197 +1114,199 @@ export default function CompaniesModule({
     <section className="module">
       {error ? <p className="error-text">{error}</p> : null}
 
-      <div className="two-col">
-        <article className="panel">
-          <h2>Últimas empresas</h2>
-          <p className="muted">Clique em "Editar" para abrir o pop-up de edição.</p>
-          {loading ? <p className="muted">Carregando...</p> : null}
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Nome Fantasia</th>
-                  <th>CNPJ</th>
-                  <th>Segmento</th>
-                  <th>Ciclo de vida</th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {companies.map((company) => (
-                  <tr key={company.id}>
-                    <td>
-                      <button type="button" className="btn-inline-link" onClick={() => openCustomerHistoryModal(company)}>
-                        {company.trade_name}
-                      </button>
-                    </td>
-                    <td>{maskCnpj(company.cnpj)}</td>
-                    <td>{company.segmento || "-"}</td>
-                    <td>{company.lifecycle_stage?.name || "-"}</td>
-                    <td>
-                      <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerHistoryModal(company)}>
-                        Pop-up 360
-                      </button>
-                      <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerWorkspace(company)}>
-                        Abrir aba
-                      </button>
-                      <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditCompany(company)}>
-                        Editar
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!companies.length ? (
+      {!isContactsView ? (
+        <div className="two-col">
+          <article className="panel">
+            <h2>Últimas empresas</h2>
+            <p className="muted">Clique em "Editar" para abrir o pop-up de edição.</p>
+            {loading ? <p className="muted">Carregando...</p> : null}
+            <div className="table-wrap">
+              <table>
+                <thead>
                   <tr>
-                    <td colSpan={5} className="muted">
-                      Nenhuma empresa cadastrada.
-                    </td>
+                    <th>Nome Fantasia</th>
+                    <th>CNPJ</th>
+                    <th>Segmento</th>
+                    <th>Ciclo de vida</th>
+                    <th>Ações</th>
                   </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </article>
+                </thead>
+                <tbody>
+                  {companies.map((company) => (
+                    <tr key={company.id}>
+                      <td>
+                        <button type="button" className="btn-inline-link" onClick={() => openCustomerHistoryModal(company)}>
+                          {company.trade_name}
+                        </button>
+                      </td>
+                      <td>{maskCnpj(company.cnpj)}</td>
+                      <td>{company.segmento || "-"}</td>
+                      <td>{company.lifecycle_stage?.name || "-"}</td>
+                      <td>
+                        <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerHistoryModal(company)}>
+                          Pop-up 360
+                        </button>
+                        <button type="button" className="btn-ghost btn-table-action" onClick={() => openCustomerWorkspace(company)}>
+                          Abrir aba
+                        </button>
+                        <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditCompany(company)}>
+                          Editar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!companies.length ? (
+                    <tr>
+                      <td colSpan={5} className="muted">
+                        Nenhuma empresa cadastrada.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </article>
 
-        <article className="panel" ref={companyPanelRef}>
-          <h2>Empresas</h2>
-          <form className="form-grid" onSubmit={handleCompanySubmit}>
-            <input
-              required
-              placeholder="CNPJ"
-              value={form.cnpj}
-              onChange={(event) => setForm((prev) => ({ ...prev, cnpj: maskCnpj(event.target.value) }))}
-            />
-            {cnpjValidation.message ? (
-              <p className={`cnpj-status cnpj-status-${cnpjValidation.type}`}>{cnpjValidation.message}</p>
-            ) : null}
-            <input
-              required
-              placeholder="Nome Fantasia"
-              value={form.trade_name}
-              onChange={(event) => setForm((prev) => ({ ...prev, trade_name: upperLettersOnly(event.target.value) }))}
-            />
-            <input
-              required
-              placeholder="Razão Social"
-              value={form.legal_name}
-              onChange={(event) => setForm((prev) => ({ ...prev, legal_name: upperLettersOnly(event.target.value) }))}
-            />
-            <input
-              placeholder="E-mail"
-              value={form.email}
-              onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-            />
-            <input
-              placeholder="Telefone"
-              value={form.phone}
-              onChange={(event) => setForm((prev) => ({ ...prev, phone: formatBrazilPhone(event.target.value) }))}
-            />
-            <select value={form.segmento} onChange={(event) => setForm((prev) => ({ ...prev, segmento: event.target.value }))}>
-              <option value="">Segmento</option>
-              {SEGMENTOS.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-            <select
-              value={form.lifecycle_stage_id}
-              onChange={(event) => setForm((prev) => ({ ...prev, lifecycle_stage_id: event.target.value }))}
-            >
-              <option value="">Ciclo de vida</option>
-              {lifecycleStages.map((stage) => (
-                <option key={stage.id} value={stage.id}>
-                  {stage.name}
-                  {stage.is_active ? "" : " (inativa)"}
-                </option>
-              ))}
-            </select>
-            <textarea
-              placeholder="Endereço completo"
-              value={form.address_full}
-              onChange={(event) => setForm((prev) => ({ ...prev, address_full: event.target.value }))}
-            />
-            {!lifecycleStages.length ? (
-              <p className="warning-text">
-                Nenhuma fase do ciclo de vida cadastrada. Configure em <strong>Configurações</strong>.
-              </p>
-            ) : null}
-
-            <h3>Check-in de visitas (opcional)</h3>
-            <select
-              value={form.checkin_validation_mode}
-              onChange={(event) => setForm((prev) => ({ ...prev, checkin_validation_mode: event.target.value }))}
-            >
-              <option value="geo">Somente geolocalização</option>
-              <option value="geo_pin">Geolocalização + PIN do cliente</option>
-            </select>
-            <input
-              type="number"
-              min="30"
-              max="5000"
-              step="1"
-              placeholder="Raio de validação (metros)"
-              value={form.checkin_radius_meters}
-              onChange={(event) => setForm((prev) => ({ ...prev, checkin_radius_meters: event.target.value }))}
-            />
-            <input
-              type="number"
-              step="0.000001"
-              placeholder="Latitude do cliente"
-              value={form.checkin_latitude}
-              onChange={(event) => setForm((prev) => ({ ...prev, checkin_latitude: event.target.value }))}
-            />
-            <input
-              type="number"
-              step="0.000001"
-              placeholder="Longitude do cliente"
-              value={form.checkin_longitude}
-              onChange={(event) => setForm((prev) => ({ ...prev, checkin_longitude: event.target.value }))}
-            />
-            {form.checkin_validation_mode === "geo_pin" ? (
+          <article className="panel" ref={companyPanelRef}>
+            <h2>Empresas</h2>
+            <form className="form-grid" onSubmit={handleCompanySubmit}>
               <input
-                placeholder="PIN para validação no cliente"
-                value={form.checkin_pin}
-                onChange={(event) => setForm((prev) => ({ ...prev, checkin_pin: event.target.value }))}
+                required
+                placeholder="CNPJ"
+                value={form.cnpj}
+                onChange={(event) => setForm((prev) => ({ ...prev, cnpj: maskCnpj(event.target.value) }))}
               />
-            ) : null}
+              {cnpjValidation.message ? (
+                <p className={`cnpj-status cnpj-status-${cnpjValidation.type}`}>{cnpjValidation.message}</p>
+              ) : null}
+              <input
+                required
+                placeholder="Nome Fantasia"
+                value={form.trade_name}
+                onChange={(event) => setForm((prev) => ({ ...prev, trade_name: upperLettersOnly(event.target.value) }))}
+              />
+              <input
+                required
+                placeholder="Razão Social"
+                value={form.legal_name}
+                onChange={(event) => setForm((prev) => ({ ...prev, legal_name: upperLettersOnly(event.target.value) }))}
+              />
+              <input
+                placeholder="E-mail"
+                value={form.email}
+                onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+              />
+              <input
+                placeholder="Telefone"
+                value={form.phone}
+                onChange={(event) => setForm((prev) => ({ ...prev, phone: formatBrazilPhone(event.target.value) }))}
+              />
+              <select value={form.segmento} onChange={(event) => setForm((prev) => ({ ...prev, segmento: event.target.value }))}>
+                <option value="">Segmento</option>
+                {SEGMENTOS.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={form.lifecycle_stage_id}
+                onChange={(event) => setForm((prev) => ({ ...prev, lifecycle_stage_id: event.target.value }))}
+              >
+                <option value="">Ciclo de vida</option>
+                {lifecycleStages.map((stage) => (
+                  <option key={stage.id} value={stage.id}>
+                    {stage.name}
+                    {stage.is_active ? "" : " (inativa)"}
+                  </option>
+                ))}
+              </select>
+              <textarea
+                placeholder="Endereço completo"
+                value={form.address_full}
+                onChange={(event) => setForm((prev) => ({ ...prev, address_full: event.target.value }))}
+              />
+              {!lifecycleStages.length ? (
+                <p className="warning-text">
+                  Nenhuma fase do ciclo de vida cadastrada. Configure em <strong>Configurações</strong>.
+                </p>
+              ) : null}
 
-            <h3>Contato principal (opcional)</h3>
-            <input
-              placeholder="Nome do contato"
-              value={form.contact_name}
-              onChange={(event) => setForm((prev) => ({ ...prev, contact_name: upperLettersOnly(event.target.value) }))}
-            />
-            <input
-              placeholder="E-mail do contato"
-              value={form.contact_email}
-              onChange={(event) => setForm((prev) => ({ ...prev, contact_email: event.target.value }))}
-            />
-            <input
-              placeholder="Cargo do contato"
-              value={form.contact_role_title}
-              onChange={(event) => setForm((prev) => ({ ...prev, contact_role_title: event.target.value }))}
-            />
-            <input
-              placeholder="WhatsApp do contato"
-              value={form.contact_whatsapp}
-              onChange={(event) => setForm((prev) => ({ ...prev, contact_whatsapp: formatBrazilPhone(event.target.value) }))}
-            />
-            <input
-              type="date"
-              value={form.contact_birth_date}
-              onChange={(event) => setForm((prev) => ({ ...prev, contact_birth_date: event.target.value }))}
-            />
+              <h3>Check-in de visitas (opcional)</h3>
+              <select
+                value={form.checkin_validation_mode}
+                onChange={(event) => setForm((prev) => ({ ...prev, checkin_validation_mode: event.target.value }))}
+              >
+                <option value="geo">Somente geolocalização</option>
+                <option value="geo_pin">Geolocalização + PIN do cliente</option>
+              </select>
+              <input
+                type="number"
+                min="30"
+                max="5000"
+                step="1"
+                placeholder="Raio de validação (metros)"
+                value={form.checkin_radius_meters}
+                onChange={(event) => setForm((prev) => ({ ...prev, checkin_radius_meters: event.target.value }))}
+              />
+              <input
+                type="number"
+                step="0.000001"
+                placeholder="Latitude do cliente"
+                value={form.checkin_latitude}
+                onChange={(event) => setForm((prev) => ({ ...prev, checkin_latitude: event.target.value }))}
+              />
+              <input
+                type="number"
+                step="0.000001"
+                placeholder="Longitude do cliente"
+                value={form.checkin_longitude}
+                onChange={(event) => setForm((prev) => ({ ...prev, checkin_longitude: event.target.value }))}
+              />
+              {form.checkin_validation_mode === "geo_pin" ? (
+                <input
+                  placeholder="PIN para validação no cliente"
+                  value={form.checkin_pin}
+                  onChange={(event) => setForm((prev) => ({ ...prev, checkin_pin: event.target.value }))}
+                />
+              ) : null}
 
-            <button type="submit" className="btn-primary" disabled={isCheckingCnpj || isCnpjBlocked}>
-              {isCheckingCnpj ? "Validando CNPJ..." : "Salvar empresa"}
-            </button>
-          </form>
-        </article>
-      </div>
+              <h3>Contato principal (opcional)</h3>
+              <input
+                placeholder="Nome do contato"
+                value={form.contact_name}
+                onChange={(event) => setForm((prev) => ({ ...prev, contact_name: upperLettersOnly(event.target.value) }))}
+              />
+              <input
+                placeholder="E-mail do contato"
+                value={form.contact_email}
+                onChange={(event) => setForm((prev) => ({ ...prev, contact_email: event.target.value }))}
+              />
+              <input
+                placeholder="Cargo do contato"
+                value={form.contact_role_title}
+                onChange={(event) => setForm((prev) => ({ ...prev, contact_role_title: event.target.value }))}
+              />
+              <input
+                placeholder="WhatsApp do contato"
+                value={form.contact_whatsapp}
+                onChange={(event) => setForm((prev) => ({ ...prev, contact_whatsapp: formatBrazilPhone(event.target.value) }))}
+              />
+              <input
+                type="date"
+                value={form.contact_birth_date}
+                onChange={(event) => setForm((prev) => ({ ...prev, contact_birth_date: event.target.value }))}
+              />
 
-      {editingCompanyId ? (
+              <button type="submit" className="btn-primary" disabled={isCheckingCnpj || isCnpjBlocked}>
+                {isCheckingCnpj ? "Validando CNPJ..." : "Salvar empresa"}
+              </button>
+            </form>
+          </article>
+        </div>
+      ) : null}
+
+      {!isContactsView && editingCompanyId ? (
         <div className="edit-company-modal-overlay" role="presentation" onClick={cancelEditCompany}>
           <article
             className="edit-company-modal-card"
@@ -1427,6 +1430,7 @@ export default function CompaniesModule({
         </div>
       ) : null}
 
+      {isContactsView ? (
       <div className="two-col top-gap">
         <article className="panel" ref={contactPanelRef}>
           <h2>Criar contato (com ou sem vínculo)</h2>
@@ -1527,6 +1531,7 @@ export default function CompaniesModule({
           </div>
         </article>
       </div>
+      ) : null}
 
       {editingContactId ? (
         <div className="edit-company-modal-overlay" role="presentation" onClick={cancelEditContact}>
@@ -1595,6 +1600,7 @@ export default function CompaniesModule({
         </div>
       ) : null}
 
+      {!isContactsView ? (
       <article className="panel top-gap">
         <h3>Aba do cliente (360)</h3>
         {!selectedCompanyId ? (
@@ -1984,6 +1990,7 @@ export default function CompaniesModule({
           </>
         )}
       </article>
+      ) : null}
 
       <CustomerHistoryModal
         open={customerHistoryModal.open}
