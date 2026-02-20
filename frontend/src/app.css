@@ -795,6 +795,49 @@ a.btn-table-action {
   font-size: 0.82rem;
 }
 
+.settings-users-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(220px, 280px);
+  gap: 10px;
+}
+
+.settings-users-summary {
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-surface-muted);
+  padding: 10px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.settings-users-summary h3 {
+  margin: 0;
+}
+
+.settings-users-selects {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.settings-user-edit-form {
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-surface-muted);
+  padding: 10px;
+}
+
+.settings-user-link {
+  margin-top: 8px;
+  font-size: 0.84rem;
+}
+
+.settings-user-link a {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
 .settings-omie-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(220px, 1fr));
@@ -1664,6 +1707,11 @@ tbody tr:hover {
   }
 
   .settings-omie-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-users-layout,
+  .settings-users-selects {
     grid-template-columns: 1fr;
   }
 

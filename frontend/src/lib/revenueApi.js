@@ -65,6 +65,47 @@ function normalizeStoragePart(value) {
     .toLowerCase();
 }
 
+const CRM_ACCESS_MODULES = ["dashboard", "pipeline", "companies", "contacts", "tasks", "reports", "settings"];
+const CRM_ACCESS_LEVELS = ["none", "read", "edit", "admin"];
+const CRM_ROLE_DEFAULT_PERMISSIONS = {
+  admin: {
+    dashboard: "admin",
+    pipeline: "admin",
+    companies: "admin",
+    contacts: "admin",
+    tasks: "admin",
+    reports: "admin",
+    settings: "admin"
+  },
+  manager: {
+    dashboard: "admin",
+    pipeline: "admin",
+    companies: "admin",
+    contacts: "admin",
+    tasks: "admin",
+    reports: "admin",
+    settings: "read"
+  },
+  sales: {
+    dashboard: "read",
+    pipeline: "edit",
+    companies: "edit",
+    contacts: "edit",
+    tasks: "edit",
+    reports: "read",
+    settings: "none"
+  },
+  backoffice: {
+    dashboard: "read",
+    pipeline: "read",
+    companies: "edit",
+    contacts: "edit",
+    tasks: "edit",
+    reports: "edit",
+    settings: "none"
+  }
+};
+
 function pickImageExtension(fileName, mimeType) {
   const normalizedName = String(fileName || "").toLowerCase();
   if (normalizedName.endsWith(".png")) return "png";
@@ -74,6 +115,44 @@ function pickImageExtension(fileName, mimeType) {
   if (normalizedMime.includes("png")) return "png";
   if (normalizedMime.includes("webp")) return "webp";
   return "jpg";
+}
+
+function normalizeUserRole(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "admin" || normalized === "manager" || normalized === "sales" || normalized === "backoffice") {
+    return normalized;
+  }
+  return "sales";
+}
+
+function normalizeUserStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "active" || normalized === "inactive") return normalized;
+  return "active";
+}
+
+function normalizeUserFullName(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeUserEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function sanitizeUserPermissions(value, role = "sales") {
+  const normalizedRole = normalizeUserRole(role);
+  const fallback = CRM_ROLE_DEFAULT_PERMISSIONS[normalizedRole] || CRM_ROLE_DEFAULT_PERMISSIONS.sales;
+  const source = asObject(value);
+  const next = {};
+
+  for (const moduleId of CRM_ACCESS_MODULES) {
+    const level = String(source[moduleId] || fallback[moduleId] || "none")
+      .trim()
+      .toLowerCase();
+    next[moduleId] = CRM_ACCESS_LEVELS.includes(level) ? level : fallback[moduleId] || "none";
+  }
+
+  return next;
 }
 
 function buildProposalOrderNumber(opportunityId = "") {
@@ -1346,6 +1425,109 @@ export async function listOmieCustomerSyncJobs(limit = 12) {
 
   if (error) throw new Error(normalizeError(error, "Falha ao listar histórico de sincronização OMIE."));
   return data || [];
+}
+
+async function invokeManageUsers(action, payload = {}) {
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase.functions.invoke("manage-users", {
+    body: {
+      action,
+      ...payload
+    }
+  });
+
+  if (error) throw new Error(normalizeError(error, "Falha ao processar operação de usuários."));
+  const safeData = asObject(data);
+  if (safeData.error) {
+    throw new Error(String(safeData.message || safeData.error || "Falha ao processar operação de usuários."));
+  }
+  return safeData;
+}
+
+export async function listSystemUsers() {
+  const result = await invokeManageUsers("list");
+  const rows = Array.isArray(result.users) ? result.users : [];
+  return rows.map((item) => {
+    const safe = asObject(item);
+    const role = normalizeUserRole(safe.role);
+    return {
+      user_id: String(safe.user_id || "").trim(),
+      email: normalizeUserEmail(safe.email),
+      full_name: normalizeUserFullName(safe.full_name),
+      role,
+      status: normalizeUserStatus(safe.status),
+      permissions: sanitizeUserPermissions(safe.permissions, role),
+      invited_at: safe.invited_at || null,
+      last_invite_sent_at: safe.last_invite_sent_at || null,
+      last_login_at: safe.last_login_at || null,
+      created_at: safe.created_at || null,
+      updated_at: safe.updated_at || null
+    };
+  });
+}
+
+export async function createSystemUser(payload) {
+  const fullName = normalizeUserFullName(payload?.full_name);
+  const email = normalizeUserEmail(payload?.email);
+  const role = normalizeUserRole(payload?.role);
+  const status = normalizeUserStatus(payload?.status);
+
+  if (!fullName) throw new Error("Informe o nome completo do usuário.");
+  if (!email) throw new Error("Informe o e-mail de login do usuário.");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Informe um e-mail válido.");
+
+  const result = await invokeManageUsers("create", {
+    full_name: fullName,
+    email,
+    role,
+    status,
+    permissions: sanitizeUserPermissions(payload?.permissions, role)
+  });
+
+  return {
+    user: asObject(result.user),
+    delivery: String(result.delivery || ""),
+    action_link: String(result.action_link || "")
+  };
+}
+
+export async function updateSystemUser(userId, payload) {
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId) throw new Error("Usuário inválido para atualização.");
+
+  const role = normalizeUserRole(payload?.role);
+  const status = normalizeUserStatus(payload?.status);
+  const updatePayload = {
+    user_id: normalizedUserId,
+    full_name: normalizeUserFullName(payload?.full_name),
+    role,
+    status,
+    permissions: sanitizeUserPermissions(payload?.permissions, role)
+  };
+
+  if (!updatePayload.full_name) throw new Error("Informe o nome completo do usuário.");
+
+  const result = await invokeManageUsers("update", updatePayload);
+  return asObject(result.user);
+}
+
+export async function sendSystemUserPasswordReset(payload) {
+  const normalizedUserId = String(payload?.user_id || "").trim();
+  const email = normalizeUserEmail(payload?.email);
+  if (!normalizedUserId && !email) {
+    throw new Error("Informe o usuário para enviar o reset de senha.");
+  }
+
+  const result = await invokeManageUsers("reset_password", {
+    user_id: normalizedUserId || undefined,
+    email: email || undefined
+  });
+
+  return {
+    email: String(result.email || email || ""),
+    delivery: String(result.delivery || ""),
+    action_link: String(result.action_link || "")
+  };
 }
 
 export async function listCompanyOptions() {

@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   createCompanyLifecycleStage,
+  createSystemUser,
   deleteCompanyLifecycleStage,
   listCompanyLifecycleStages,
   listOmieCustomerSyncJobs,
+  listSystemUsers,
   saveCompanyLifecycleStageOrder,
+  sendSystemUserPasswordReset,
   syncOmieCustomers,
-  updateCompanyLifecycleStage
+  updateCompanyLifecycleStage,
+  updateSystemUser
 } from "../lib/revenueApi";
 
 const OMIE_STORAGE_KEY = "crm.settings.omie.customers.v1";
@@ -28,6 +32,31 @@ const EMPTY_OMIE_FORM = {
   max_pages: "20",
   omie_api_url: DEFAULT_OMIE_URL,
   dry_run: false
+};
+
+const USER_ROLE_OPTIONS = [
+  { value: "admin", label: "Admin" },
+  { value: "manager", label: "Gestor" },
+  { value: "sales", label: "Vendedor" },
+  { value: "backoffice", label: "Backoffice" }
+];
+
+const USER_STATUS_OPTIONS = [
+  { value: "active", label: "Ativo" },
+  { value: "inactive", label: "Inativo" }
+];
+
+const EMPTY_USER_FORM = {
+  full_name: "",
+  email: "",
+  role: "sales",
+  status: "active"
+};
+
+const EMPTY_EDIT_USER_FORM = {
+  full_name: "",
+  role: "sales",
+  status: "active"
 };
 
 function asObject(value) {
@@ -64,6 +93,26 @@ function syncStatusLabel(status) {
   return map[status] || String(status || "-");
 }
 
+function userRoleLabel(role) {
+  const found = USER_ROLE_OPTIONS.find((item) => item.value === role);
+  return found?.label || String(role || "-");
+}
+
+function userStatusLabel(status) {
+  const found = USER_STATUS_OPTIONS.find((item) => item.value === status);
+  return found?.label || String(status || "-");
+}
+
+function userDeliveryMessage(delivery) {
+  const map = {
+    invite_email_sent: "Convite enviado para o e-mail do usuário.",
+    reset_email_sent: "E-mail de redefinição de senha enviado ao usuário.",
+    existing_user: "Usuário já existia no Auth e foi vinculado no CRM.",
+    link_generated: "Link de acesso/redefinição gerado. Copie e envie ao usuário."
+  };
+  return map[delivery] || "Operação concluída para o usuário.";
+}
+
 function readOmieFormStorage() {
   if (typeof window === "undefined") return EMPTY_OMIE_FORM;
 
@@ -85,6 +134,18 @@ function readOmieFormStorage() {
 }
 
 export default function SettingsModule() {
+  const [users, setUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState("");
+  const [usersSuccess, setUsersSuccess] = useState("");
+  const [usersActionLink, setUsersActionLink] = useState("");
+  const [userForm, setUserForm] = useState(EMPTY_USER_FORM);
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [editingUserId, setEditingUserId] = useState("");
+  const [editUserForm, setEditUserForm] = useState(EMPTY_EDIT_USER_FORM);
+  const [savingUserId, setSavingUserId] = useState("");
+  const [resettingUserId, setResettingUserId] = useState("");
+
   const [stages, setStages] = useState([]);
   const [nameDraftById, setNameDraftById] = useState({});
   const [loading, setLoading] = useState(false);
@@ -106,6 +167,21 @@ export default function SettingsModule() {
 
   const activeCount = useMemo(() => stages.filter((item) => item.is_active).length, [stages]);
   const omieResultSummary = useMemo(() => asObject(omieResult), [omieResult]);
+  const activeUsersCount = useMemo(() => users.filter((item) => item.status === "active").length, [users]);
+
+  async function loadUsers() {
+    setUsersLoading(true);
+    setUsersError("");
+    try {
+      const rows = await listSystemUsers();
+      setUsers(rows);
+    } catch (err) {
+      setUsersError(err.message);
+      setUsers([]);
+    } finally {
+      setUsersLoading(false);
+    }
+  }
 
   async function loadStages() {
     setLoading(true);
@@ -141,6 +217,7 @@ export default function SettingsModule() {
   }
 
   useEffect(() => {
+    loadUsers();
     loadStages();
     loadOmieHistory();
   }, []);
@@ -168,6 +245,125 @@ export default function SettingsModule() {
       setLifecycleError(err.message);
     } finally {
       setSavingCreate(false);
+    }
+  }
+
+  async function handleCreateUser(event) {
+    event.preventDefault();
+    setUsersError("");
+    setUsersSuccess("");
+    setUsersActionLink("");
+    setCreatingUser(true);
+
+    try {
+      const result = await createSystemUser(userForm);
+      setUserForm(EMPTY_USER_FORM);
+      setUsersSuccess(userDeliveryMessage(result.delivery));
+      if (result.action_link) setUsersActionLink(result.action_link);
+      await loadUsers();
+    } catch (err) {
+      setUsersError(err.message);
+    } finally {
+      setCreatingUser(false);
+    }
+  }
+
+  function startEditUser(user) {
+    const userId = String(user?.user_id || "").trim();
+    if (!userId) return;
+
+    setUsersError("");
+    setUsersSuccess("");
+    setUsersActionLink("");
+    setEditingUserId(userId);
+    setEditUserForm({
+      full_name: String(user.full_name || ""),
+      role: String(user.role || "sales"),
+      status: String(user.status || "active")
+    });
+  }
+
+  function cancelEditUser() {
+    setEditingUserId("");
+    setEditUserForm(EMPTY_EDIT_USER_FORM);
+  }
+
+  async function handleSaveUser(event) {
+    event.preventDefault();
+    if (!editingUserId) return;
+
+    setUsersError("");
+    setUsersSuccess("");
+    setUsersActionLink("");
+    setSavingUserId(editingUserId);
+
+    try {
+      await updateSystemUser(editingUserId, editUserForm);
+      setUsersSuccess("Usuário atualizado com sucesso.");
+      cancelEditUser();
+      await loadUsers();
+    } catch (err) {
+      setUsersError(err.message);
+    } finally {
+      setSavingUserId("");
+    }
+  }
+
+  async function handleToggleUserStatus(user) {
+    const userId = String(user?.user_id || "").trim();
+    if (!userId) return;
+    const nextStatus = user.status === "active" ? "inactive" : "active";
+
+    setUsersError("");
+    setUsersSuccess("");
+    setUsersActionLink("");
+    setSavingUserId(userId);
+
+    try {
+      await updateSystemUser(userId, {
+        full_name: user.full_name,
+        role: user.role,
+        status: nextStatus,
+        permissions: user.permissions
+      });
+      setUsersSuccess(nextStatus === "active" ? "Usuário ativado." : "Usuário desativado.");
+      if (editingUserId === userId) {
+        setEditUserForm((prev) => ({
+          ...prev,
+          status: nextStatus
+        }));
+      }
+      await loadUsers();
+    } catch (err) {
+      setUsersError(err.message);
+    } finally {
+      setSavingUserId("");
+    }
+  }
+
+  async function handleResetUserPassword(user) {
+    const userId = String(user?.user_id || "").trim();
+    if (!userId) return;
+
+    const confirmed = window.confirm(`Enviar redefinição de senha para ${user.email || "este usuário"}?`);
+    if (!confirmed) return;
+
+    setUsersError("");
+    setUsersSuccess("");
+    setUsersActionLink("");
+    setResettingUserId(userId);
+
+    try {
+      const result = await sendSystemUserPasswordReset({
+        user_id: userId
+      });
+      setUsersSuccess(userDeliveryMessage(result.delivery));
+      if (result.action_link) setUsersActionLink(result.action_link);
+      await loadUsers();
+    } catch (err) {
+      setUsersError(err.message);
+    } finally {
+      setResettingUserId("");
     }
   }
 
@@ -411,6 +607,192 @@ export default function SettingsModule() {
 
   return (
     <section className="module">
+      <article className="panel">
+        <h2>Usuários e acessos</h2>
+        <p className="muted">
+          Cadastre usuários com login por e-mail, perfil de acesso e status. A senha é definida pelo próprio usuário via convite/reset.
+        </p>
+
+        {usersError ? <p className="error-text">{usersError}</p> : null}
+        {usersSuccess ? <p className="success-text">{usersSuccess}</p> : null}
+        {usersActionLink ? (
+          <p className="settings-user-link">
+            Link gerado manualmente:{" "}
+            <a href={usersActionLink} target="_blank" rel="noreferrer">
+              Abrir link de acesso
+            </a>
+          </p>
+        ) : null}
+
+        <div className="settings-users-layout top-gap">
+          <form className="form-grid" onSubmit={handleCreateUser}>
+            <h3>Novo usuário</h3>
+            <input
+              required
+              placeholder="Nome completo"
+              value={userForm.full_name}
+              onChange={(event) => setUserForm((prev) => ({ ...prev, full_name: event.target.value }))}
+            />
+            <input
+              required
+              type="email"
+              placeholder="email@empresa.com"
+              value={userForm.email}
+              onChange={(event) => setUserForm((prev) => ({ ...prev, email: event.target.value }))}
+            />
+
+            <div className="settings-users-selects">
+              <label className="settings-field">
+                <span>Perfil</span>
+                <select value={userForm.role} onChange={(event) => setUserForm((prev) => ({ ...prev, role: event.target.value }))}>
+                  {USER_ROLE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="settings-field">
+                <span>Status</span>
+                <select value={userForm.status} onChange={(event) => setUserForm((prev) => ({ ...prev, status: event.target.value }))}>
+                  {USER_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <button type="submit" className="btn-primary" disabled={creatingUser}>
+              {creatingUser ? "Criando..." : "Cadastrar usuário"}
+            </button>
+          </form>
+
+          <div className="settings-users-summary">
+            <h3>Resumo</h3>
+            <p className="muted">
+              {users.length} usuário(s) cadastrado(s) • {activeUsersCount} ativo(s)
+            </p>
+            <div className="inline-actions">
+              <button type="button" className="btn-ghost" onClick={loadUsers} disabled={usersLoading || creatingUser}>
+                {usersLoading ? "Atualizando..." : "Atualizar lista"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="table-wrap top-gap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>Login</th>
+                <th>Perfil</th>
+                <th>Status</th>
+                <th>Último acesso</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.user_id || user.email}>
+                  <td>{user.full_name || "-"}</td>
+                  <td>{user.email || "-"}</td>
+                  <td>{userRoleLabel(user.role)}</td>
+                  <td>{userStatusLabel(user.status)}</td>
+                  <td>{formatDateTime(user.last_login_at)}</td>
+                  <td>
+                    <div className="inline-actions">
+                      <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditUser(user)}>
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost btn-table-action"
+                        onClick={() => handleToggleUserStatus(user)}
+                        disabled={savingUserId === user.user_id}
+                      >
+                        {savingUserId === user.user_id
+                          ? "Salvando..."
+                          : user.status === "active"
+                            ? "Desativar"
+                            : "Ativar"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost btn-table-action"
+                        onClick={() => handleResetUserPassword(user)}
+                        disabled={resettingUserId === user.user_id}
+                      >
+                        {resettingUserId === user.user_id ? "Enviando..." : "Reset senha"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+
+              {!users.length && !usersLoading ? (
+                <tr>
+                  <td colSpan={6} className="muted">
+                    Nenhum usuário cadastrado.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        {editingUserId ? (
+          <form className="form-grid top-gap settings-user-edit-form" onSubmit={handleSaveUser}>
+            <h3>Editar usuário</h3>
+            <input
+              required
+              placeholder="Nome completo"
+              value={editUserForm.full_name}
+              onChange={(event) => setEditUserForm((prev) => ({ ...prev, full_name: event.target.value }))}
+            />
+
+            <div className="settings-users-selects">
+              <label className="settings-field">
+                <span>Perfil</span>
+                <select value={editUserForm.role} onChange={(event) => setEditUserForm((prev) => ({ ...prev, role: event.target.value }))}>
+                  {USER_ROLE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="settings-field">
+                <span>Status</span>
+                <select
+                  value={editUserForm.status}
+                  onChange={(event) => setEditUserForm((prev) => ({ ...prev, status: event.target.value }))}
+                >
+                  {USER_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="inline-actions">
+              <button type="submit" className="btn-primary" disabled={savingUserId === editingUserId}>
+                {savingUserId === editingUserId ? "Salvando..." : "Salvar usuário"}
+              </button>
+              <button type="button" className="btn-ghost" onClick={cancelEditUser} disabled={savingUserId === editingUserId}>
+                Cancelar
+              </button>
+            </div>
+          </form>
+        ) : null}
+      </article>
+
       <div className="two-col">
         <article className="panel">
           <h2>Ciclo de vida de empresas</h2>
