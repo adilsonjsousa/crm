@@ -988,6 +988,25 @@ tbody tr:hover {
   gap: 4px;
 }
 
+.meeting-cell {
+  min-width: 220px;
+  display: grid;
+  gap: 4px;
+}
+
+.meeting-summary {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-sub);
+}
+
+.meeting-actions {
+  margin-top: 2px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .visit-status-chip {
   width: fit-content;
   font-size: 0.7rem;

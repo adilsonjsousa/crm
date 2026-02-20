@@ -186,6 +186,13 @@ function visitExecutionSummary(task) {
   return "Check-in pendente";
 }
 
+function meetingSummary(task) {
+  if (!task?.meeting_join_url) return "-";
+  const provider = task.meeting_provider === "google_meet" ? "Google Meet" : task.meeting_provider || "Reuniao online";
+  const start = task.meeting_start_at ? formatDateTime(task.meeting_start_at) : "-";
+  return `${provider} · ${start}`;
+}
+
 export default function CustomerHistoryModal({ open, companyId, companyName, onClose }) {
   const [selectedTab, setSelectedTab] = useState("overview");
   const [loading, setLoading] = useState(false);
@@ -323,6 +330,16 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
           item: payload.task_title || "Visita",
           details: "Check-out concluido",
           note: `${durationLabel}${payload.checkout_note ? ` · ${payload.checkout_note}` : ""}`
+        };
+      }
+      if (row.event_name === "task_online_meeting_scheduled") {
+        return {
+          id: `event-${row.id}`,
+          happened_at: row.happened_at,
+          origin: "agenda",
+          item: payload.task_title || "Reuniao online",
+          details: "Reuniao agendada",
+          note: payload.meeting_join_url || "-"
         };
       }
       return {
@@ -796,6 +813,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                   <th>Prioridade</th>
                   <th>Agendamento</th>
                   <th>Data limite</th>
+                  <th>Reuniao online</th>
                   <th>Execucao em campo</th>
                   <th>Descricao</th>
                 </tr>
@@ -818,13 +836,22 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                         : "-"}
                     </td>
                     <td>{formatDate(task.due_date)}</td>
+                    <td>
+                      {task.meeting_join_url ? (
+                        <a href={task.meeting_join_url} target="_blank" rel="noreferrer">
+                          {meetingSummary(task)}
+                        </a>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
                     <td>{visitExecutionSummary(task)}</td>
                     <td>{task.description || "-"}</td>
                   </tr>
                 ))}
                 {!tasks.length ? (
                   <tr>
-                    <td colSpan={8} className="muted">
+                    <td colSpan={9} className="muted">
                       Nenhuma atividade de agenda para este cliente.
                     </td>
                   </tr>

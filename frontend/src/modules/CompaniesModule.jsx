@@ -219,6 +219,13 @@ function visitExecutionSummary(task) {
   return "Check-in pendente";
 }
 
+function meetingSummary(task) {
+  if (!task?.meeting_join_url) return "-";
+  const provider = task.meeting_provider === "google_meet" ? "Google Meet" : task.meeting_provider || "Reunião online";
+  const start = task.meeting_start_at ? formatDateTime(task.meeting_start_at) : "-";
+  return `${provider} · ${start}`;
+}
+
 function opportunityStatusLabel(value) {
   const map = {
     open: "Aberta",
@@ -429,6 +436,16 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
           title: payload.task_title || "Visita",
           details: "Check-out concluído",
           note: `${durationLabel}${payload.checkout_note ? ` · ${payload.checkout_note}` : ""}`
+        };
+      }
+      if (row.event_name === "task_online_meeting_scheduled") {
+        return {
+          id: `event-${row.id}`,
+          happened_at: row.happened_at,
+          type: "agenda",
+          title: payload.task_title || "Reunião online",
+          details: "Reunião agendada",
+          note: payload.meeting_join_url || "-"
         };
       }
       return {
@@ -1475,6 +1492,7 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                       <th>Prioridade</th>
                       <th>Agendamento</th>
                       <th>Data limite</th>
+                      <th>Reunião online</th>
                       <th>Execução em campo</th>
                       <th>Descrição</th>
                     </tr>
@@ -1491,13 +1509,22 @@ export default function CompaniesModule({ focusTarget = "company", focusRequest 
                             : "-"}
                         </td>
                         <td>{formatDate(task.due_date)}</td>
+                        <td>
+                          {task.meeting_join_url ? (
+                            <a href={task.meeting_join_url} target="_blank" rel="noreferrer">
+                              {meetingSummary(task)}
+                            </a>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
                         <td>{visitExecutionSummary(task)}</td>
                         <td>{task.description || "-"}</td>
                       </tr>
                     ))}
                     {!customerTasks.length ? (
                       <tr>
-                        <td colSpan={7} className="muted">
+                        <td colSpan={8} className="muted">
                           Nenhuma atividade de agenda para este cliente.
                         </td>
                       </tr>

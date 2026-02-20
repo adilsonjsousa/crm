@@ -6,6 +6,7 @@ import {
   logTaskFlowComment,
   registerTaskCheckin,
   registerTaskCheckout,
+  scheduleTaskOnlineMeeting,
   updateTask
 } from "../lib/revenueApi";
 
@@ -181,6 +182,43 @@ function visitProgressLabel(task) {
   return "Check-in pendente";
 }
 
+function toLocalInputFromIso(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const hour = String(parsed.getHours()).padStart(2, "0");
+  const minute = String(parsed.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function parseEmailList(value) {
+  return String(value || "")
+    .split(/[,\n;]+/)
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .filter((item) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item))
+    .filter((item, index, arr) => arr.indexOf(item) === index);
+}
+
+function meetingProviderLabel(value) {
+  const map = {
+    google_meet: "Google Meet",
+    microsoft_teams: "Microsoft Teams"
+  };
+  return map[value] || "Reunião online";
+}
+
+function meetingStatusLabel(value) {
+  const map = {
+    scheduled: "Agendada",
+    cancelled: "Cancelada"
+  };
+  return map[value] || "-";
+}
+
 export default function TasksModule() {
   const [tasks, setTasks] = useState([]);
   const [companies, setCompanies] = useState([]);
@@ -191,6 +229,7 @@ export default function TasksModule() {
   const [dragOverStatus, setDragOverStatus] = useState("");
   const [checkinTaskId, setCheckinTaskId] = useState("");
   const [checkoutTaskId, setCheckoutTaskId] = useState("");
+  const [meetingTaskId, setMeetingTaskId] = useState("");
   const [form, setForm] = useState({
     company_id: "",
     activity: "Visita",
@@ -569,6 +608,100 @@ export default function TasksModule() {
     }
   }
 
+  function buildMeetingHint(task) {
+    if (!task?.meeting_join_url) return "Sem reunião agendada.";
+    const attendeesCount = Array.isArray(task.meeting_attendees) ? task.meeting_attendees.length : 0;
+    const attendeesLabel = attendeesCount ? `${attendeesCount} convidado(s)` : "Sem convidados";
+    const status = meetingStatusLabel(task.meeting_status);
+    const startLabel = task.meeting_start_at ? formatDateTime(task.meeting_start_at) : "-";
+    return `${meetingProviderLabel(task.meeting_provider)} · ${status} · ${startLabel} · ${attendeesLabel}`;
+  }
+
+  async function handleScheduleOnlineMeeting(task) {
+    if (!task) return;
+
+    const now = new Date();
+    const fallbackStart = new Date(now.getTime() + 30 * 60 * 1000).toISOString();
+    const baseStartIso = task.meeting_start_at || task.scheduled_start_at || fallbackStart;
+    const baseEndIso =
+      task.meeting_end_at ||
+      task.scheduled_end_at ||
+      new Date(new Date(baseStartIso).getTime() + 60 * 60 * 1000).toISOString();
+
+    const currentAttendees = Array.isArray(task.meeting_attendees) ? task.meeting_attendees.join(", ") : "";
+    const defaultAttendees = currentAttendees || String(task.companies?.email || "").trim();
+
+    const startPrompt = window.prompt(
+      "Início da reunião (AAAA-MM-DDTHH:MM):",
+      toLocalInputFromIso(baseStartIso)
+    );
+    if (startPrompt === null) return;
+    const endPrompt = window.prompt(
+      "Fim da reunião (AAAA-MM-DDTHH:MM):",
+      toLocalInputFromIso(baseEndIso)
+    );
+    if (endPrompt === null) return;
+    const attendeesPrompt = window.prompt(
+      "E-mails dos convidados (separados por vírgula):",
+      defaultAttendees
+    );
+    if (attendeesPrompt === null) return;
+
+    const startAt = toIsoFromLocalInput(startPrompt);
+    const endAt = toIsoFromLocalInput(endPrompt);
+    const attendees = parseEmailList(attendeesPrompt);
+
+    if (!startAt || !endAt) {
+      setError("Datas inválidas para agendamento da reunião online.");
+      return;
+    }
+    if (new Date(endAt).getTime() <= new Date(startAt).getTime()) {
+      setError("A reunião deve terminar após o horário de início.");
+      return;
+    }
+    if (!attendees.length) {
+      setError("Informe ao menos um e-mail de convidado para enviar o link.");
+      return;
+    }
+
+    const customMessagePrompt = window.prompt(
+      "Mensagem adicional para o convite (opcional):",
+      String(task.description || "").trim()
+    );
+    const customMessage = customMessagePrompt === null ? "" : String(customMessagePrompt || "").trim();
+
+    setError("");
+    setMeetingTaskId(task.id);
+    try {
+      const response = await scheduleTaskOnlineMeeting({
+        task_id: task.id,
+        provider: "google_meet",
+        title: task.title || "Reunião online",
+        start_at: startAt,
+        end_at: endAt,
+        attendees,
+        description: customMessage || task.description || "",
+        send_email: true
+      });
+
+      await load();
+
+      if (response?.meeting_join_url) {
+        const statusText =
+          response?.email_status === "resend_sent"
+            ? "Convite por e-mail enviado e evento criado no calendário."
+            : response?.email_status === "provider_invite_sent"
+              ? "Evento criado e convite enviado pelo Google Calendar."
+              : "Evento criado com sucesso.";
+        window.alert(`${statusText}\nLink: ${response.meeting_join_url}`);
+      }
+    } catch (err) {
+      setError(err.message || "Falha ao agendar reunião online.");
+    } finally {
+      setMeetingTaskId("");
+    }
+  }
+
   function handleDragStart(event, taskId) {
     setDraggingTaskId(taskId);
     event.dataTransfer.effectAllowed = "move";
@@ -774,6 +907,7 @@ export default function TasksModule() {
                 <th>Agendamento</th>
                 <th>Data limite</th>
                 <th>Status</th>
+                <th>Reunião online</th>
                 <th>Execução em campo</th>
               </tr>
             </thead>
@@ -800,6 +934,35 @@ export default function TasksModule() {
                       ))}
                     </select>
                     <span className={`badge badge-status-${task.status}`}>{statusLabel(task.status)}</span>
+                  </td>
+                  <td>
+                    <div className="meeting-cell">
+                      {task.meeting_join_url ? (
+                        <a
+                          href={task.meeting_join_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="btn-ghost btn-table-action"
+                        >
+                          Abrir reunião
+                        </a>
+                      ) : null}
+                      <p className="meeting-summary">{buildMeetingHint(task)}</p>
+                      <div className="meeting-actions">
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          onClick={() => handleScheduleOnlineMeeting(task)}
+                          disabled={meetingTaskId === task.id}
+                        >
+                          {meetingTaskId === task.id
+                            ? "Agendando..."
+                            : task.meeting_join_url
+                              ? "Reagendar/Reenviar"
+                              : "Agendar reunião"}
+                        </button>
+                      </div>
+                    </div>
                   </td>
                   <td>
                     {!isVisitTask(task) ? (
@@ -853,7 +1016,7 @@ export default function TasksModule() {
               ))}
               {!listRows.length ? (
                 <tr>
-                  <td colSpan={7} className="muted">
+                  <td colSpan={8} className="muted">
                     Nenhuma tarefa encontrada.
                   </td>
                 </tr>

@@ -417,7 +417,7 @@ export async function listTasks() {
   const { data, error } = await supabase
     .from("tasks")
     .select(
-      "id,company_id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,visit_checkin_at,visit_checkin_latitude,visit_checkin_longitude,visit_checkin_accuracy_meters,visit_checkin_distance_meters,visit_checkin_method,visit_checkin_note,visit_checkout_at,visit_checkout_note,created_at,companies:company_id(trade_name,address_full,checkin_validation_mode,checkin_radius_meters,checkin_latitude,checkin_longitude,checkin_pin)"
+      "id,company_id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,visit_checkin_at,visit_checkin_latitude,visit_checkin_longitude,visit_checkin_accuracy_meters,visit_checkin_distance_meters,visit_checkin_method,visit_checkin_note,visit_checkout_at,visit_checkout_note,meeting_provider,meeting_external_id,meeting_join_url,meeting_start_at,meeting_end_at,meeting_attendees,meeting_status,meeting_last_sent_at,created_at,companies:company_id(trade_name,email,address_full,checkin_validation_mode,checkin_radius_meters,checkin_latitude,checkin_longitude,checkin_pin)"
     )
     .order("scheduled_start_at", { ascending: true, nullsFirst: false })
     .order("due_date", { ascending: true, nullsFirst: false })
@@ -565,6 +565,22 @@ export async function registerTaskCheckout({
   });
 }
 
+export async function scheduleTaskOnlineMeeting(payload) {
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase.functions.invoke("schedule-online-meeting", {
+    body: payload || {}
+  });
+
+  if (error) {
+    throw new Error(normalizeError(error, "Falha ao agendar reunião online."));
+  }
+  if (data?.error) {
+    throw new Error(String(data.message || data.error || "Falha ao criar reunião online."));
+  }
+
+  return data || {};
+}
+
 export async function logTaskFlowComment({ taskId, companyId, taskTitle, fromStatus, toStatus, comment }) {
   const supabase = ensureSupabase();
   const normalizedComment = String(comment || "").trim();
@@ -658,7 +674,7 @@ export async function listCompanyTasks(companyId) {
   const { data, error } = await supabase
     .from("tasks")
     .select(
-      "id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,visit_checkin_at,visit_checkin_latitude,visit_checkin_longitude,visit_checkin_accuracy_meters,visit_checkin_distance_meters,visit_checkin_method,visit_checkin_note,visit_checkout_at,visit_checkout_note,created_at,updated_at"
+      "id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,visit_checkin_at,visit_checkin_latitude,visit_checkin_longitude,visit_checkin_accuracy_meters,visit_checkin_distance_meters,visit_checkin_method,visit_checkin_note,visit_checkout_at,visit_checkout_note,meeting_provider,meeting_external_id,meeting_join_url,meeting_start_at,meeting_end_at,meeting_attendees,meeting_status,meeting_last_sent_at,created_at,updated_at"
     )
     .eq("company_id", companyId)
     .order("scheduled_start_at", { ascending: true, nullsFirst: false })
