@@ -1297,13 +1297,25 @@ tbody tr:hover {
 .pipeline-access-toolbar {
   margin: 10px 0 12px;
   display: grid;
-  gap: 8px;
+  grid-template-columns: minmax(250px, 420px) 1fr;
+  align-items: end;
+  gap: 10px;
 }
 
 .pipeline-access-note {
   margin: 0;
   font-size: 0.78rem;
   color: var(--text-sub);
+}
+
+.pipeline-form-grid {
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  align-items: end;
+  gap: 8px;
+}
+
+.pipeline-form-actions {
+  grid-column: 1 / -1;
 }
 
 .pipeline-empty {
@@ -1346,11 +1358,16 @@ tbody tr:hover {
 }
 
 .pipeline-automation-toggle {
-  margin: 8px 0 12px;
+  margin: 6px 0 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .pipeline-automation-help {
-  margin: 4px 0 0;
+  margin: 0;
   font-size: 0.76rem;
   color: var(--text-muted);
 }
@@ -1737,6 +1754,15 @@ tbody tr:hover {
     grid-template-columns: repeat(7, minmax(180px, 1fr));
   }
 
+  .pipeline-access-toolbar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .pipeline-form-grid {
+    grid-template-columns: repeat(2, minmax(170px, 1fr));
+  }
+
   .agenda-board {
     grid-template-columns: repeat(4, minmax(180px, 1fr));
   }
@@ -1763,6 +1789,15 @@ tbody tr:hover {
   .customer-popup-facts,
   .customer-popup-kpis {
     grid-template-columns: 1fr;
+  }
+
+  .pipeline-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pipeline-automation-toggle {
+    display: grid;
+    justify-content: stretch;
   }
 }
 

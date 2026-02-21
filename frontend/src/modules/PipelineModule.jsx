@@ -1039,7 +1039,7 @@ export default function PipelineModule() {
             Com este modo ativo, cada card permite gerar uma proposta automaticamente no modulo Pedidos.
           </p>
         </div>
-        <form className="form-grid" onSubmit={handleSubmit}>
+        <form className="form-grid pipeline-form-grid" onSubmit={handleSubmit}>
           <select
             value={form.company_id}
             onChange={(e) => setForm((prev) => ({ ...prev, company_id: e.target.value }))}
@@ -1150,7 +1150,7 @@ export default function PipelineModule() {
             value={form.expected_close_date}
             onChange={(e) => setForm((prev) => ({ ...prev, expected_close_date: e.target.value }))}
           />
-          <div className="inline-actions">
+          <div className="inline-actions pipeline-form-actions">
             <button type="submit" className="btn-primary">
               {editingOpportunityId ? "Atualizar oportunidade" : "Salvar oportunidade"}
             </button>
