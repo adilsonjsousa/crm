@@ -1371,6 +1371,16 @@ tbody tr:hover {
   overflow: auto;
 }
 
+.pipeline-company-suggestions-actions {
+  display: flex;
+  align-items: center;
+  justify-content: stretch;
+}
+
+.pipeline-create-company-btn {
+  width: 100%;
+}
+
 .pipeline-form-actions {
   grid-column: 1 / -1;
 }

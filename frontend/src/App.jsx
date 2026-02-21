@@ -96,6 +96,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [companiesFocusTarget, setCompaniesFocusTarget] = useState("company");
   const [companiesFocusRequest, setCompaniesFocusRequest] = useState(0);
+  const [companiesPrefillDraft, setCompaniesPrefillDraft] = useState(null);
+  const [companiesPrefillRequest, setCompaniesPrefillRequest] = useState(0);
   const [companiesEditCompanyId, setCompaniesEditCompanyId] = useState("");
   const [companiesEditRequest, setCompaniesEditRequest] = useState(0);
   const [contactsFocusRequest, setContactsFocusRequest] = useState(0);
@@ -168,6 +170,8 @@ export default function App() {
         <CompaniesModule
           focusTarget={companiesFocusTarget}
           focusRequest={companiesFocusRequest}
+          prefillCompanyDraft={companiesPrefillDraft}
+          prefillCompanyRequest={companiesPrefillRequest}
           editCompanyId={companiesEditCompanyId}
           editCompanyRequest={companiesEditRequest}
         />
@@ -184,7 +188,9 @@ export default function App() {
         />
       );
     }
-    if (activeTab === "pipeline") return <PipelineModule />;
+    if (activeTab === "pipeline") {
+      return <PipelineModule onRequestCreateCompany={handlePipelineRequestCreateCompany} />;
+    }
     if (activeTab === "orders") return <OrdersModule />;
     if (activeTab === "reports") return <ReportsModule />;
     if (activeTab === "tasks") return <TasksModule />;
@@ -197,6 +203,8 @@ export default function App() {
     companiesEditRequest,
     companiesFocusRequest,
     companiesFocusTarget,
+    companiesPrefillDraft,
+    companiesPrefillRequest,
     contactsEditContactId,
     contactsEditPayload,
     contactsEditRequest,
@@ -400,6 +408,15 @@ export default function App() {
     }
     setCompaniesFocusTarget(target);
     setCompaniesFocusRequest((previous) => previous + 1);
+    setActiveTab("companies");
+  }
+
+  function handlePipelineRequestCreateCompany(prefill = null) {
+    const nextDraft = prefill && typeof prefill === "object" ? prefill : null;
+    setCompaniesFocusTarget("company");
+    setCompaniesFocusRequest((previous) => previous + 1);
+    setCompaniesPrefillDraft(nextDraft);
+    setCompaniesPrefillRequest((previous) => previous + 1);
     setActiveTab("companies");
   }
 

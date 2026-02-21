@@ -351,6 +351,8 @@ function normalizeCompanyCheckinConfig(raw) {
 export default function CompaniesModule({
   focusTarget = "company",
   focusRequest = 0,
+  prefillCompanyDraft = null,
+  prefillCompanyRequest = 0,
   editCompanyId = "",
   editCompanyRequest = 0,
   editContactId = "",
@@ -677,6 +679,30 @@ export default function CompaniesModule({
       window.setTimeout(() => firstField.focus(), 180);
     }
   }, [focusRequest, focusTarget]);
+
+  useEffect(() => {
+    if (!prefillCompanyRequest || isContactsView) return;
+    const rawDraft = prefillCompanyDraft && typeof prefillCompanyDraft === "object" ? prefillCompanyDraft : null;
+    if (!rawDraft) return;
+
+    const normalizedTradeName = upperLettersOnly(rawDraft.trade_name || rawDraft.search_term || "");
+    const cnpjDigitsFromDraft = cleanCnpj(rawDraft.cnpj || rawDraft.search_term || "");
+    const normalizedCnpj = cnpjDigitsFromDraft.length === 14 ? maskCnpj(cnpjDigitsFromDraft) : "";
+    if (!normalizedTradeName && !normalizedCnpj) return;
+
+    const defaultLifecycleStageId = getDefaultLifecycleStageId(lifecycleStages);
+    cancelEditCompany();
+    cancelEditContact();
+    setError("");
+    setCnpjValidation({ type: "idle", message: "" });
+    setSelectedCompanyId("");
+    setForm({
+      ...EMPTY_COMPANY_FORM,
+      lifecycle_stage_id: defaultLifecycleStageId,
+      trade_name: normalizedTradeName || "",
+      cnpj: normalizedCnpj || ""
+    });
+  }, [isContactsView, prefillCompanyDraft, prefillCompanyRequest]);
 
   useEffect(() => {
     if (!editCompanyRequest) return;

@@ -426,7 +426,7 @@ function createProposalDraft({ opportunity, linkedOrder, contacts }) {
   };
 }
 
-export default function PipelineModule() {
+export default function PipelineModule({ onRequestCreateCompany = null }) {
   const [pipelineUsers, setPipelineUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [viewerUserId, setViewerUserId] = useState("");
@@ -645,6 +645,29 @@ export default function PipelineModule() {
     setForm((prev) => ({ ...prev, company_id: company.id }));
     setCompanySearchTerm(company.trade_name || "");
     setCompanySuggestionsOpen(false);
+  }
+
+  function handleRequestCreateCompany() {
+    const typedTerm = String(companySearchTerm || "").trim();
+    if (!typedTerm) {
+      setError("Digite o nome ou CNPJ para cadastrar uma nova empresa.");
+      return;
+    }
+
+    if (typeof onRequestCreateCompany !== "function") {
+      setError("Não foi possível abrir o cadastro de empresa neste contexto.");
+      return;
+    }
+
+    const cnpjDigits = typedTerm.replace(/\D/g, "");
+    setError("");
+    setSuccess("");
+    setCompanySuggestionsOpen(false);
+    onRequestCreateCompany({
+      trade_name: typedTerm,
+      cnpj: cnpjDigits.length === 14 ? cnpjDigits : "",
+      search_term: typedTerm
+    });
   }
 
   async function handleSubmit(event) {
@@ -1125,6 +1148,18 @@ export default function PipelineModule() {
                       </li>
                     ))}
                   </ul>
+                ) : null}
+                {!companySuggestions.length ? (
+                  <div className="pipeline-company-suggestions-actions">
+                    <button
+                      type="button"
+                      className="btn-ghost btn-table-action pipeline-create-company-btn"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={handleRequestCreateCompany}
+                    >
+                      + Cadastrar nova empresa
+                    </button>
+                  </div>
                 ) : null}
               </div>
             ) : null}
