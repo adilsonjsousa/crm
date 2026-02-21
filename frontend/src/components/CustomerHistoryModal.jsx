@@ -23,6 +23,7 @@ const CUSTOMER_MODAL_TABS = [
   { id: "history", label: "Historico" },
   { id: "opportunities", label: "Propostas" },
   { id: "omie_purchases", label: "Compras OMIE" },
+  { id: "omie_receivables", label: "Contas a Receber" },
   { id: "tasks", label: "Agenda" },
   { id: "assets", label: "Raio-X do Parque" },
   { id: "interactions", label: "Interacoes" }
@@ -227,6 +228,8 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     orders: [],
     receivables_summary: {},
     receivables: [],
+    purchase_warnings: [],
+    receivables_warnings: [],
     warnings: [],
     customer: {}
   });
@@ -256,6 +259,8 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
       orders: [],
       receivables_summary: {},
       receivables: [],
+      purchase_warnings: [],
+      receivables_warnings: [],
       warnings: [],
       customer: {}
     });
@@ -299,14 +304,19 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
   }, [companyId, open]);
 
   useEffect(() => {
-    if (!open || selectedTab !== "omie_purchases") return;
+    const isOmieTab = selectedTab === "omie_purchases" || selectedTab === "omie_receivables";
+    if (!open || !isOmieTab) return;
 
     const cnpjDigits = String(companyProfile?.cnpj || "").replace(/\D/g, "");
     if (cnpjDigits.length !== 14) {
-      setOmiePurchasesError("Cliente sem CNPJ valido para consultar compras no OMIE.");
+      setOmiePurchasesError("Cliente sem CNPJ valido para consultar dados no OMIE.");
       setOmiePurchases({
         summary: {},
         orders: [],
+        receivables_summary: {},
+        receivables: [],
+        purchase_warnings: [],
+        receivables_warnings: [],
         warnings: [],
         customer: {}
       });
@@ -325,6 +335,8 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
           orders: Array.isArray(data.orders) ? data.orders : [],
           receivables_summary: data.receivables_summary || {},
           receivables: Array.isArray(data.receivables) ? data.receivables : [],
+          purchase_warnings: Array.isArray(data.purchase_warnings) ? data.purchase_warnings : [],
+          receivables_warnings: Array.isArray(data.receivables_warnings) ? data.receivables_warnings : [],
           warnings: Array.isArray(data.warnings) ? data.warnings : [],
           customer: data.customer || {}
         });
@@ -337,6 +349,8 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
           orders: [],
           receivables_summary: {},
           receivables: [],
+          purchase_warnings: [],
+          receivables_warnings: [],
           warnings: [],
           customer: {}
         });
@@ -391,10 +405,14 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     () => omieReceivables.filter((item) => Number(item.valor_aberto || 0) > 0),
     [omieReceivables]
   );
-  const omieWarnings = useMemo(
-    () => (Array.isArray(omiePurchases.warnings) ? omiePurchases.warnings : []),
-    [omiePurchases.warnings]
-  );
+  const omiePurchaseWarnings = useMemo(() => {
+    if (Array.isArray(omiePurchases.purchase_warnings)) return omiePurchases.purchase_warnings;
+    return Array.isArray(omiePurchases.warnings) ? omiePurchases.warnings : [];
+  }, [omiePurchases.purchase_warnings, omiePurchases.warnings]);
+  const omieReceivablesWarnings = useMemo(() => {
+    if (Array.isArray(omiePurchases.receivables_warnings)) return omiePurchases.receivables_warnings;
+    return Array.isArray(omiePurchases.warnings) ? omiePurchases.warnings : [];
+  }, [omiePurchases.receivables_warnings, omiePurchases.warnings]);
 
   const timelineRows = useMemo(() => {
     const eventItems = historyRows.map((row) => {
@@ -962,48 +980,12 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                   </div>
                 </article>
 
-                <article className="customer-popup-card top-gap">
-                  <h4>Contas a receber (OMIE)</h4>
-                  <div className="customer-popup-kpis">
-                    <div>
-                      <span>Titulos encontrados</span>
-                      <strong>{Number(omieReceivablesSummary.total_receivables || 0)}</strong>
-                      <small>Inclui titulos liquidados e em aberto</small>
-                    </div>
-                    <div>
-                      <span>Titulos em aberto</span>
-                      <strong>{Number(omieReceivablesSummary.open_receivables_count || 0)}</strong>
-                      <small>Com saldo a receber</small>
-                    </div>
-                    <div>
-                      <span>Valor total em aberto</span>
-                      <strong>{brl(omieReceivablesSummary.open_total_amount)}</strong>
-                      <small>Base OMIE</small>
-                    </div>
-                    <div>
-                      <span>Vencidos</span>
-                      <strong>{Number(omieReceivablesSummary.overdue_receivables_count || 0)}</strong>
-                      <small>{brl(omieReceivablesSummary.overdue_total_amount)}</small>
-                    </div>
-                    <div>
-                      <span>Vencendo em 30 dias</span>
-                      <strong>{Number(omieReceivablesSummary.due_next_30_days_count || 0)}</strong>
-                      <small>{brl(omieReceivablesSummary.due_next_30_days_total)}</small>
-                    </div>
-                    <div>
-                      <span>Proximo vencimento</span>
-                      <strong>{formatDateFromIso(omieReceivablesSummary.next_due_at)}</strong>
-                      <small>Com saldo em aberto</small>
-                    </div>
-                  </div>
-                </article>
-
-                {omieWarnings.length ? (
+                {omiePurchaseWarnings.length ? (
                   <article className="customer-popup-card top-gap">
                     <h4>Avisos da consulta</h4>
                     <ul>
-                      {omieWarnings.map((warning, index) => (
-                        <li key={`omie-warning-${index}`}>{warning}</li>
+                      {omiePurchaseWarnings.map((warning, index) => (
+                        <li key={`omie-purchase-warning-${index}`}>{warning}</li>
                       ))}
                     </ul>
                   </article>
@@ -1042,6 +1024,64 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                     </tbody>
                   </table>
                 </div>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!loading && selectedTab === "omie_receivables" ? (
+          <div className="customer-popup-opportunities">
+            {omiePurchasesError ? <p className="error-text top-gap">{omiePurchasesError}</p> : null}
+            {omiePurchasesLoading ? <p className="muted top-gap">Consultando contas a receber no OMIE...</p> : null}
+
+            {!omiePurchasesLoading && !omiePurchasesError ? (
+              <>
+                <article className="customer-popup-card top-gap">
+                  <h4>Contas a receber (OMIE)</h4>
+                  <div className="customer-popup-kpis">
+                    <div>
+                      <span>Titulos encontrados</span>
+                      <strong>{Number(omieReceivablesSummary.total_receivables || 0)}</strong>
+                      <small>Inclui titulos liquidados e em aberto</small>
+                    </div>
+                    <div>
+                      <span>Titulos em aberto</span>
+                      <strong>{Number(omieReceivablesSummary.open_receivables_count || 0)}</strong>
+                      <small>Com saldo a receber</small>
+                    </div>
+                    <div>
+                      <span>Valor total em aberto</span>
+                      <strong>{brl(omieReceivablesSummary.open_total_amount)}</strong>
+                      <small>Base OMIE</small>
+                    </div>
+                    <div>
+                      <span>Vencidos</span>
+                      <strong>{Number(omieReceivablesSummary.overdue_receivables_count || 0)}</strong>
+                      <small>{brl(omieReceivablesSummary.overdue_total_amount)}</small>
+                    </div>
+                    <div>
+                      <span>Vencendo em 30 dias</span>
+                      <strong>{Number(omieReceivablesSummary.due_next_30_days_count || 0)}</strong>
+                      <small>{brl(omieReceivablesSummary.due_next_30_days_total)}</small>
+                    </div>
+                    <div>
+                      <span>Proximo vencimento</span>
+                      <strong>{formatDateFromIso(omieReceivablesSummary.next_due_at)}</strong>
+                      <small>Com saldo em aberto</small>
+                    </div>
+                  </div>
+                </article>
+
+                {omieReceivablesWarnings.length ? (
+                  <article className="customer-popup-card top-gap">
+                    <h4>Avisos da consulta</h4>
+                    <ul>
+                      {omieReceivablesWarnings.map((warning, index) => (
+                        <li key={`omie-receivable-warning-${index}`}>{warning}</li>
+                      ))}
+                    </ul>
+                  </article>
+                ) : null}
 
                 <div className="table-wrap top-gap">
                   <table>

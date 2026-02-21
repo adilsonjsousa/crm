@@ -1535,6 +1535,8 @@ export async function listCompanyOmiePurchaseHistory(company, options = {}) {
     orders: Array.isArray(purchasesData.orders) ? purchasesData.orders : [],
     receivables_summary: receivablesSummary,
     receivables: receivablesRows,
+    purchase_warnings: purchaseWarnings,
+    receivables_warnings: receivablesWarnings,
     warnings: [...purchaseWarnings, ...receivablesWarnings].filter(Boolean)
   };
 }
