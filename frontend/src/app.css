@@ -555,6 +555,13 @@ body {
   animation: fade-up 220ms ease;
 }
 
+.pipeline-module,
+.reports-module {
+  width: 100%;
+  max-width: 1280px;
+  margin-inline: auto;
+}
+
 .module h2 {
   margin: 0 0 10px;
   font-size: 1.08rem;
@@ -1196,10 +1203,11 @@ tbody tr:hover {
 
 .pipeline-board {
   display: grid;
-  grid-template-columns: repeat(7, minmax(210px, 1fr));
+  grid-template-columns: repeat(7, minmax(220px, 250px));
   gap: 10px;
   overflow-x: auto;
   padding-bottom: 4px;
+  align-items: start;
 }
 
 .pipeline-column {
@@ -1242,6 +1250,8 @@ tbody tr:hover {
   gap: 8px;
   align-content: start;
   min-height: 160px;
+  max-height: clamp(260px, 50vh, 520px);
+  overflow-y: auto;
 }
 
 .pipeline-card {

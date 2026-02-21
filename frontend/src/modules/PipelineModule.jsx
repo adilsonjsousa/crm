@@ -1002,7 +1002,7 @@ export default function PipelineModule() {
   }
 
   return (
-    <section className="module">
+    <section className="module pipeline-module">
       <article className="panel">
         <h2>Pipeline Comercial</h2>
         <p className="muted">Arraste os cards para evoluir a oportunidade para a proxima etapa.</p>
