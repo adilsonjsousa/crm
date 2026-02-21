@@ -488,11 +488,13 @@ export default function SettingsModule() {
       ? requestedRecordsPerPage
       : Math.min(requestedRecordsPerPage, OMIE_SYNC_LIVE_MAX_RECORDS_PER_PAGE);
 
+    const pageWindowSize = clampInteger(omieForm.max_pages, 1, 200, 20);
+
     const payload = {
       app_key: appKey,
       app_secret: appSecret,
       records_per_page: safeRecordsPerPage,
-      max_pages: clampInteger(omieForm.max_pages, 1, 200, 20),
+      max_pages: pageWindowSize,
       page_chunk_size: dryRun ? OMIE_SYNC_PAGE_CHUNK_DRY_RUN : OMIE_SYNC_PAGE_CHUNK_LIVE,
       dry_run: dryRun,
       omie_api_url: String(omieForm.omie_api_url || "").trim() || DEFAULT_OMIE_URL
@@ -529,9 +531,11 @@ export default function SettingsModule() {
         let result = null;
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           try {
+            const effectiveMaxPages = Math.min(200, Math.max(nextPage, nextPage + pageWindowSize - 1));
             result = await syncOmieCustomers({
               ...payload,
-              start_page: nextPage
+              start_page: nextPage,
+              max_pages: effectiveMaxPages
             });
             break;
           } catch (error) {
