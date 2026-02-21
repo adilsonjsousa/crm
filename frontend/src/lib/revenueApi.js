@@ -1447,9 +1447,9 @@ function readOmieCredentialsFromLocalStorage() {
 
 async function invokeOmieReceivablesWithFallback(supabase, body) {
   const functionNames = [
+    "omie-customer-receivables-public",
     "omie-customer-receivables-public-v3",
     "omie-customer-receivables-public-v2",
-    "omie-customer-receivables-public"
   ];
   let lastResult = null;
 
