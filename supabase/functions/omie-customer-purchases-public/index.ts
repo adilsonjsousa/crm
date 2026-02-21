@@ -79,22 +79,27 @@ function extractTotalPages(payload: AnyRecord, currentPage: number, receivedItem
 }
 
 function parseOmieMoney(value: unknown) {
+  if (value === null || value === undefined) return 0;
   if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "bigint") return Number(value);
   const raw = safeString(value);
   if (!raw) return 0;
 
-  let normalized = raw;
-  const hasDot = raw.includes(".");
-  const hasComma = raw.includes(",");
+  const cleaned = raw.replace(/[^\d.,-]/g, "");
+  if (!cleaned) return 0;
+
+  let normalized = cleaned;
+  const hasDot = cleaned.includes(".");
+  const hasComma = cleaned.includes(",");
 
   if (hasDot && hasComma) {
-    if (raw.lastIndexOf(",") > raw.lastIndexOf(".")) {
-      normalized = raw.replace(/\./g, "").replace(",", ".");
+    if (cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")) {
+      normalized = cleaned.replace(/\./g, "").replace(",", ".");
     } else {
-      normalized = raw.replace(/,/g, "");
+      normalized = cleaned.replace(/,/g, "");
     }
   } else if (hasComma) {
-    normalized = raw.replace(",", ".");
+    normalized = cleaned.replace(",", ".");
   }
 
   const parsed = Number(normalized);
@@ -166,14 +171,71 @@ function normalizeOmieOrder(rawOrder: unknown) {
 
   const orderDateIso = buildOrderDate(row);
 
-  const totalAmount = parseOmieMoney(
-    total.valor_total_pedido ?? total.valor_total ?? row.valor_total_pedido ?? row.valor_total
+  const detailsRows = extractArrayByKeys(row, ["det", "itens", "itens_pedido", "lista_itens", "produtos", "pedido_item"]);
+  const detailsProductsAmount = detailsRows.reduce((acc, detailRaw) => {
+    const detail = asObject(detailRaw);
+    const product = asObject(detail.produto ?? detail.item ?? detail);
+
+    let lineTotal = parseOmieMoney(
+      product.valor_total_item ??
+        product.valor_total ??
+        product.total ??
+        detail.valor_total_item ??
+        detail.valor_total
+    );
+
+    if (!(lineTotal > 0)) {
+      const quantity = Number(
+        product.quantidade ?? product.qtde ?? detail.quantidade ?? detail.qtde ?? 0
+      );
+      const unitPrice = parseOmieMoney(
+        product.valor_unitario ?? product.valor ?? detail.valor_unitario ?? detail.valor
+      );
+      if (Number.isFinite(quantity) && quantity > 0 && unitPrice > 0) {
+        lineTotal = quantity * unitPrice;
+      }
+    }
+
+    return acc + (lineTotal > 0 ? lineTotal : 0);
+  }, 0);
+
+  let productsAmount = parseOmieMoney(
+    total.valor_mercadorias ??
+      total.valor_produtos ??
+      header.valor_mercadorias ??
+      header.valor_produtos ??
+      row.valor_mercadorias ??
+      row.valor_produtos
   );
-  const productsAmount = parseOmieMoney(
-    total.valor_mercadorias ?? total.valor_produtos ?? row.valor_mercadorias ?? row.valor_produtos
+  if (!(productsAmount > 0) && detailsProductsAmount > 0) {
+    productsAmount = detailsProductsAmount;
+  }
+
+  const discountAmount = parseOmieMoney(
+    total.valor_desconto ??
+      header.valor_desconto ??
+      row.valor_desconto
   );
-  const discountAmount = parseOmieMoney(total.valor_desconto ?? row.valor_desconto);
-  const freightAmount = parseOmieMoney(total.valor_frete ?? row.valor_frete);
+  const freightAmount = parseOmieMoney(
+    total.valor_frete ??
+      header.valor_frete ??
+      row.valor_frete
+  );
+
+  let totalAmount = parseOmieMoney(
+    total.valor_total_pedido ??
+      total.valor_total ??
+      header.valor_total_pedido ??
+      header.valor_total ??
+      row.valor_total_pedido ??
+      row.valor_total
+  );
+  if (!(totalAmount > 0) && productsAmount > 0) {
+    totalAmount = productsAmount - discountAmount + freightAmount;
+  }
+  if (!(totalAmount > 0) && detailsProductsAmount > 0) {
+    totalAmount = detailsProductsAmount;
+  }
 
   const codigoPedido = pickFirstNonEmpty(row, ["codigo_pedido"]) || pickFirstNonEmpty(header, ["codigo_pedido"]);
   const numeroPedido = pickFirstNonEmpty(row, ["numero_pedido"]) || pickFirstNonEmpty(header, ["numero_pedido"]);
@@ -466,7 +528,7 @@ async function listOmieOrdersByCustomer({
         pagina: page,
         registros_por_pagina: recordsPerPage,
         apenas_importado_api: "N",
-        apenas_resumo: "S",
+        apenas_resumo: "N",
         filtrar_por_cliente: Number(customerCode) || customerCode
       }
     });
