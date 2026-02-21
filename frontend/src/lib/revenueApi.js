@@ -1445,6 +1445,17 @@ function readOmieCredentialsFromLocalStorage() {
   }
 }
 
+async function invokeOmieReceivablesWithFallback(supabase, body) {
+  const primary = await supabase.functions.invoke("omie-customer-receivables-public-v2", { body });
+  if (!primary?.error) return primary;
+
+  const message = normalizeError(primary.error, "");
+  const functionNotFound = /function.*not found|not found|404/i.test(message);
+  if (!functionNotFound) return primary;
+
+  return supabase.functions.invoke("omie-customer-receivables-public", { body });
+}
+
 export async function listCompanyOmiePurchaseHistory(company, options = {}) {
   const companyData = asObject(company);
   const cnpjDigits = cleanDigits(companyData.cnpj || options.cnpj || "");
@@ -1469,7 +1480,7 @@ export async function listCompanyOmiePurchaseHistory(company, options = {}) {
 
   const [purchasesResult, receivablesResult] = await Promise.allSettled([
     supabase.functions.invoke("omie-customer-purchases-public", { body }),
-    supabase.functions.invoke("omie-customer-receivables-public", { body })
+    invokeOmieReceivablesWithFallback(supabase, body)
   ]);
 
   if (purchasesResult.status !== "fulfilled") {

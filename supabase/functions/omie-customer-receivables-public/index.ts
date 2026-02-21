@@ -141,6 +141,63 @@ function isOpenStatus(value: unknown) {
   return null;
 }
 
+function sameIdentifier(value: unknown, expected: unknown) {
+  const rawValue = safeString(value);
+  const rawExpected = safeString(expected);
+  if (!rawValue || !rawExpected) return false;
+  if (rawValue === rawExpected) return true;
+  const valueDigits = digitsOnly(rawValue);
+  const expectedDigits = digitsOnly(rawExpected);
+  return Boolean(valueDigits && expectedDigits && valueDigits === expectedDigits);
+}
+
+function receivableMatchesCustomer(rawReceivable: unknown, customerCode: string, customerCnpj: string) {
+  const row = asObject(rawReceivable);
+  const header = asObject(row.cabecalho);
+  const customerBlock = asObject(
+    row.cliente_fornecedor ?? row.clienteFornecedor ?? row.cliente ?? row.cliente_cadastro
+  );
+
+  const codeCandidates = [
+    row.codigo_cliente_omie,
+    row.codigo_cliente_fornecedor,
+    row.codigo_cliente,
+    row.codigo_cliente_integracao,
+    header.codigo_cliente_omie,
+    header.codigo_cliente_fornecedor,
+    header.codigo_cliente,
+    header.codigo_cliente_integracao,
+    customerBlock.codigo_cliente_omie,
+    customerBlock.codigo_cliente_fornecedor,
+    customerBlock.codigo_cliente,
+    customerBlock.codigo_cliente_integracao
+  ];
+
+  if (codeCandidates.some((value) => sameIdentifier(value, customerCode))) {
+    return true;
+  }
+
+  const cnpjTarget = normalizeCnpj(customerCnpj);
+  if (!cnpjTarget) return false;
+
+  const cnpjCandidates = [
+    row.cnpj_cpf,
+    row.cnpj,
+    row.cpf_cnpj,
+    row.documento,
+    header.cnpj_cpf,
+    header.cnpj,
+    header.cpf_cnpj,
+    header.documento,
+    customerBlock.cnpj_cpf,
+    customerBlock.cnpj,
+    customerBlock.cpf_cnpj,
+    customerBlock.documento
+  ];
+
+  return cnpjCandidates.some((value) => normalizeCnpj(value) === cnpjTarget);
+}
+
 async function callOmieApi({
   url,
   appKey,
@@ -384,6 +441,7 @@ async function listReceivablesByCustomer({
   appSecret,
   receivablesUrl,
   customerCode,
+  customerCnpj,
   recordsPerPage,
   maxPages
 }: {
@@ -391,79 +449,67 @@ async function listReceivablesByCustomer({
   appSecret: string;
   receivablesUrl: string;
   customerCode: string;
+  customerCnpj: string;
   recordsPerPage: number;
   maxPages: number;
 }) {
   const warnings: string[] = [];
-  const filters: AnyRecord[] = [
-    { filtrar_por_cliente: Number(customerCode) || customerCode },
-    { codigo_cliente_fornecedor: Number(customerCode) || customerCode },
-    { codigo_cliente_omie: Number(customerCode) || customerCode }
-  ];
 
-  for (const filter of filters) {
-    const filterKey = Object.keys(filter)[0] || "filtrar_por_cliente";
-    let page = 1;
-    let totalPages = 1;
-    let pagesProcessed = 0;
-    const rows: AnyRecord[] = [];
+  let page = 1;
+  let totalPages = 1;
+  let pagesProcessed = 0;
+  const rows: AnyRecord[] = [];
 
-    try {
-      while (page <= maxPages && page <= totalPages) {
-        const payload = await callOmieApi({
-          url: receivablesUrl,
-          appKey,
-          appSecret,
-          call: "ListarContasReceber",
-          param: {
-            pagina: page,
-            registros_por_pagina: recordsPerPage,
-            apenas_importado_api: "N",
-            ...filter
-          }
-        });
-
-        const pageRows = extractArrayByKeys(payload, [
-          "conta_receber_cadastro",
-          "conta_receber",
-          "contas_receber",
-          "lista_contas_receber",
-          "titulo_receber",
-          "titulos_receber",
-          "lista_titulos",
-          "lancamentos"
-        ]);
-
-        totalPages = Math.max(totalPages, extractTotalPages(payload, page, pageRows.length, recordsPerPage));
-
-        for (const row of pageRows) rows.push(normalizeReceivable(row));
-
-        pagesProcessed += 1;
-        if (!pageRows.length) break;
-        page += 1;
+  while (page <= maxPages && page <= totalPages) {
+    const payload = await callOmieApi({
+      url: receivablesUrl,
+      appKey,
+      appSecret,
+      call: "ListarContasReceber",
+      param: {
+        pagina: page,
+        registros_por_pagina: recordsPerPage,
+        apenas_importado_api: "N"
       }
-    } catch (error) {
-      warnings.push(`ListarContasReceber (${filterKey}): ${error instanceof Error ? error.message : "falha inesperada"}`);
-      continue;
+    });
+
+    const pageRows = extractArrayByKeys(payload, [
+      "conta_receber_cadastro",
+      "conta_receber",
+      "contas_receber",
+      "lista_contas_receber",
+      "titulo_receber",
+      "titulos_receber",
+      "lista_titulos",
+      "lancamentos"
+    ]);
+
+    totalPages = Math.max(totalPages, extractTotalPages(payload, page, pageRows.length, recordsPerPage));
+
+    for (const row of pageRows) {
+      if (!receivableMatchesCustomer(row, customerCode, customerCnpj)) continue;
+      rows.push(normalizeReceivable(row));
     }
 
-    return {
-      receivables: rows.sort((a, b) => {
-        const aMs = parseDateIso(a.data_vencimento_iso || a.data_emissao_iso)
-          ? new Date(String(a.data_vencimento_iso || a.data_emissao_iso)).getTime()
-          : Number.POSITIVE_INFINITY;
-        const bMs = parseDateIso(b.data_vencimento_iso || b.data_emissao_iso)
-          ? new Date(String(b.data_vencimento_iso || b.data_emissao_iso)).getTime()
-          : Number.POSITIVE_INFINITY;
-        return aMs - bMs;
-      }),
-      pages_processed: pagesProcessed,
-      total_pages_detected: totalPages,
-      warnings
-    };
+    pagesProcessed += 1;
+    if (!pageRows.length) break;
+    page += 1;
   }
 
-  return { receivables: [], pages_processed: 0, total_pages_detected: 0, warnings };
+  return {
+    receivables: rows.sort((a, b) => {
+      const aMs = parseDateIso(a.data_vencimento_iso || a.data_emissao_iso)
+        ? new Date(String(a.data_vencimento_iso || a.data_emissao_iso)).getTime()
+        : Number.POSITIVE_INFINITY;
+      const bMs = parseDateIso(b.data_vencimento_iso || b.data_emissao_iso)
+        ? new Date(String(b.data_vencimento_iso || b.data_emissao_iso)).getTime()
+        : Number.POSITIVE_INFINITY;
+      return aMs - bMs;
+    }),
+    pages_processed: pagesProcessed,
+    total_pages_detected: totalPages,
+    warnings
+  };
 }
 
 Deno.serve(async (request: Request) => {
@@ -519,6 +565,7 @@ Deno.serve(async (request: Request) => {
       appSecret,
       receivablesUrl,
       customerCode: customerLookup.customer.codigo_cliente_omie,
+      customerCnpj: cnpj,
       recordsPerPage,
       maxPages
     });
