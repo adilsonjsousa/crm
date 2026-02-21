@@ -1381,6 +1381,74 @@ tbody tr:hover {
   width: 100%;
 }
 
+.tasks-company-autocomplete {
+  position: relative;
+}
+
+.tasks-company-suggestions {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 35;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-panel);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.tasks-company-suggestions .search-suggestions-list {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.tasks-company-suggestions-actions {
+  display: flex;
+  align-items: center;
+  justify-content: stretch;
+}
+
+.tasks-create-company-btn {
+  width: 100%;
+}
+
+.contacts-company-autocomplete {
+  position: relative;
+}
+
+.contacts-company-suggestions {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 35;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-panel);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.contacts-company-suggestions .search-suggestions-list {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.contacts-company-suggestions-actions {
+  display: flex;
+  align-items: center;
+  justify-content: stretch;
+}
+
+.contacts-create-company-btn {
+  width: 100%;
+}
+
 .pipeline-form-actions {
   grid-column: 1 / -1;
 }

@@ -283,6 +283,10 @@ function normalizeText(value) {
     .toLowerCase();
 }
 
+function normalizeLookupText(value) {
+  return normalizeText(value).replace(/\s+/g, " ").trim();
+}
+
 function toIsoFromLocalInput(localValue) {
   const raw = String(localValue || "").trim();
   if (!raw) return new Date().toISOString();
@@ -351,6 +355,7 @@ function normalizeCompanyCheckinConfig(raw) {
 export default function CompaniesModule({
   focusTarget = "company",
   focusRequest = 0,
+  onRequestCreateCompany = null,
   prefillCompanyDraft = null,
   prefillCompanyRequest = 0,
   editCompanyId = "",
@@ -369,6 +374,8 @@ export default function CompaniesModule({
   const [cnpjValidation, setCnpjValidation] = useState({ type: "idle", message: "" });
   const [form, setForm] = useState(EMPTY_COMPANY_FORM);
   const [contactForm, setContactForm] = useState(EMPTY_CONTACT_FORM);
+  const [contactCompanySearchTerm, setContactCompanySearchTerm] = useState("");
+  const [contactCompanySuggestionsOpen, setContactCompanySuggestionsOpen] = useState(false);
   const [editingCompanyId, setEditingCompanyId] = useState("");
   const [editForm, setEditForm] = useState(EMPTY_EDIT_COMPANY_FORM);
   const [editError, setEditError] = useState("");
@@ -420,6 +427,20 @@ export default function CompaniesModule({
   const selectedCompany = useMemo(() => {
     return companies.find((item) => item.id === selectedCompanyId) || companyOptions.find((item) => item.id === selectedCompanyId) || null;
   }, [companies, companyOptions, selectedCompanyId]);
+  const contactCompanySuggestions = useMemo(() => {
+    const normalizedTerm = normalizeLookupText(contactCompanySearchTerm);
+    const digitsTerm = String(contactCompanySearchTerm || "").replace(/\D/g, "");
+    const source = normalizedTerm || digitsTerm
+      ? companyOptions.filter((company) => {
+          const companyName = normalizeLookupText(company.trade_name);
+          const companyCnpj = String(company.cnpj || "").replace(/\D/g, "");
+          if (normalizedTerm && companyName.includes(normalizedTerm)) return true;
+          if (digitsTerm && companyCnpj.includes(digitsTerm)) return true;
+          return false;
+        })
+      : companyOptions;
+    return source.slice(0, 10);
+  }, [companyOptions, contactCompanySearchTerm]);
   const interactionWhatsDigits = useMemo(
     () => toWhatsAppBrazilNumber(interactionForm.whatsapp_number || interactionForm.phone_number),
     [interactionForm.phone_number, interactionForm.whatsapp_number]
@@ -669,6 +690,15 @@ export default function CompaniesModule({
   }, [selectedCompanyId]);
 
   useEffect(() => {
+    const selectedCompanyIdForContact = String(contactForm.company_id || "").trim();
+    if (!selectedCompanyIdForContact) return;
+    const selected = companyOptions.find((item) => item.id === selectedCompanyIdForContact);
+    const label = selected?.trade_name || "";
+    if (!label) return;
+    setContactCompanySearchTerm(label);
+  }, [companyOptions, contactForm.company_id]);
+
+  useEffect(() => {
     if (!focusRequest) return;
     const panelRef = focusTarget === "contact" ? contactPanelRef : companyPanelRef;
     if (!panelRef.current) return;
@@ -833,11 +863,67 @@ export default function CompaniesModule({
       });
 
       setContactForm((prev) => ({ ...prev, full_name: "", email: "", role_title: "", whatsapp: "", birth_date: "" }));
+      setContactCompanySuggestionsOpen(false);
       await load();
       if (selectedCompanyId) await loadCustomerWorkspace(selectedCompanyId);
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  function handleContactCompanySearchChange(value) {
+    const nextTerm = value;
+    setContactCompanySearchTerm(nextTerm);
+    setContactCompanySuggestionsOpen(Boolean(nextTerm.trim()));
+
+    const normalizedNextTerm = normalizeLookupText(nextTerm);
+    const digitsNextTerm = String(nextTerm || "").replace(/\D/g, "");
+    if (!normalizedNextTerm && !digitsNextTerm) {
+      setContactForm((prev) => ({ ...prev, company_id: "" }));
+      return;
+    }
+
+    const exactMatch = companyOptions.find((company) => {
+      const companyName = normalizeLookupText(company.trade_name);
+      const companyCnpj = String(company.cnpj || "").replace(/\D/g, "");
+      if (normalizedNextTerm && companyName === normalizedNextTerm) return true;
+      if (digitsNextTerm.length === 14 && companyCnpj === digitsNextTerm) return true;
+      return false;
+    });
+
+    setContactForm((prev) => ({
+      ...prev,
+      company_id: exactMatch ? exactMatch.id : ""
+    }));
+  }
+
+  function handleSelectContactCompany(company) {
+    if (!company?.id) return;
+    setContactForm((prev) => ({ ...prev, company_id: company.id }));
+    setContactCompanySearchTerm(company.trade_name || "");
+    setContactCompanySuggestionsOpen(false);
+  }
+
+  function handleRequestCreateCompanyFromContact() {
+    const typedTerm = String(contactCompanySearchTerm || "").trim();
+    if (!typedTerm) {
+      setError("Digite o nome ou CNPJ para cadastrar uma nova empresa.");
+      return;
+    }
+
+    if (typeof onRequestCreateCompany !== "function") {
+      setError("Não foi possível abrir o cadastro de empresa neste contexto.");
+      return;
+    }
+
+    const cnpjDigits = typedTerm.replace(/\D/g, "");
+    setError("");
+    setContactCompanySuggestionsOpen(false);
+    onRequestCreateCompany({
+      trade_name: typedTerm,
+      cnpj: cnpjDigits.length === 14 ? cnpjDigits : "",
+      search_term: typedTerm
+    });
   }
 
   function startEditCompany(company) {
@@ -1473,17 +1559,52 @@ export default function CompaniesModule({
         <article className="panel" ref={contactPanelRef}>
           <h2>Criar contato (com ou sem vínculo)</h2>
           <form className="form-grid" onSubmit={handleContactSubmit}>
-            <select
-              value={contactForm.company_id}
-              onChange={(event) => setContactForm((prev) => ({ ...prev, company_id: event.target.value }))}
-            >
-              <option value="">Sem vínculo com empresa</option>
-              {companyOptions.map((company) => (
-                <option key={company.id} value={company.id}>
-                  {company.trade_name}
-                </option>
-              ))}
-            </select>
+            <div className="contacts-company-autocomplete">
+              <input
+                type="text"
+                placeholder="Empresa (opcional: digite nome ou CNPJ)"
+                value={contactCompanySearchTerm}
+                onChange={(event) => handleContactCompanySearchChange(event.target.value)}
+                onFocus={() => setContactCompanySuggestionsOpen(Boolean(contactCompanySearchTerm.trim()))}
+                onBlur={() => window.setTimeout(() => setContactCompanySuggestionsOpen(false), 120)}
+              />
+              {contactCompanySuggestionsOpen && contactCompanySearchTerm.trim().length >= 1 ? (
+                <div className="contacts-company-suggestions">
+                  {!contactCompanySuggestions.length ? <p className="muted">Nenhuma empresa encontrada.</p> : null}
+                  {contactCompanySuggestions.length ? (
+                    <ul className="search-suggestions-list">
+                      {contactCompanySuggestions.map((company) => (
+                        <li key={company.id}>
+                          <button
+                            type="button"
+                            className="search-suggestion-btn"
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                              handleSelectContactCompany(company);
+                            }}
+                          >
+                            <strong>{company.trade_name || "Empresa"}</strong>
+                            <span>{company.cnpj ? maskCnpj(company.cnpj) : "Sem CNPJ"}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {!contactCompanySuggestions.length ? (
+                    <div className="contacts-company-suggestions-actions">
+                      <button
+                        type="button"
+                        className="btn-ghost btn-table-action contacts-create-company-btn"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={handleRequestCreateCompanyFromContact}
+                      >
+                        + Cadastrar nova empresa
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             <input
               required
               placeholder="Nome do contato"

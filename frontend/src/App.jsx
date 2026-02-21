@@ -170,6 +170,7 @@ export default function App() {
         <CompaniesModule
           focusTarget={companiesFocusTarget}
           focusRequest={companiesFocusRequest}
+          onRequestCreateCompany={handleRequestCreateCompany}
           prefillCompanyDraft={companiesPrefillDraft}
           prefillCompanyRequest={companiesPrefillRequest}
           editCompanyId={companiesEditCompanyId}
@@ -182,6 +183,7 @@ export default function App() {
         <CompaniesModule
           focusTarget="contact"
           focusRequest={contactsFocusRequest}
+          onRequestCreateCompany={handleRequestCreateCompany}
           editContactId={contactsEditContactId}
           editContactRequest={contactsEditRequest}
           editContactPayload={contactsEditPayload}
@@ -189,11 +191,11 @@ export default function App() {
       );
     }
     if (activeTab === "pipeline") {
-      return <PipelineModule onRequestCreateCompany={handlePipelineRequestCreateCompany} />;
+      return <PipelineModule onRequestCreateCompany={handleRequestCreateCompany} />;
     }
     if (activeTab === "orders") return <OrdersModule />;
     if (activeTab === "reports") return <ReportsModule />;
-    if (activeTab === "tasks") return <TasksModule />;
+    if (activeTab === "tasks") return <TasksModule onRequestCreateCompany={handleRequestCreateCompany} />;
     if (activeTab === "service") return <ServiceModule />;
     if (activeTab === "settings") return <SettingsModule />;
     return <DashboardModule />;
@@ -411,7 +413,7 @@ export default function App() {
     setActiveTab("companies");
   }
 
-  function handlePipelineRequestCreateCompany(prefill = null) {
+  function handleRequestCreateCompany(prefill = null) {
     const nextDraft = prefill && typeof prefill === "object" ? prefill : null;
     setCompaniesFocusTarget("company");
     setCompaniesFocusRequest((previous) => previous + 1);
