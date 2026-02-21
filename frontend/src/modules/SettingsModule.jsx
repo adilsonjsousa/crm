@@ -49,12 +49,14 @@ const USER_STATUS_OPTIONS = [
 const EMPTY_USER_FORM = {
   full_name: "",
   email: "",
+  whatsapp: "",
   role: "sales",
   status: "active"
 };
 
 const EMPTY_EDIT_USER_FORM = {
   full_name: "",
+  whatsapp: "",
   role: "sales",
   status: "active"
 };
@@ -278,6 +280,7 @@ export default function SettingsModule() {
     setEditingUserId(userId);
     setEditUserForm({
       full_name: String(user.full_name || ""),
+      whatsapp: String(user.whatsapp || ""),
       role: String(user.role || "sales"),
       status: String(user.status || "active")
     });
@@ -322,6 +325,7 @@ export default function SettingsModule() {
     try {
       await updateSystemUser(userId, {
         full_name: user.full_name,
+        whatsapp: user.whatsapp || "",
         role: user.role,
         status: nextStatus,
         permissions: user.permissions
@@ -644,6 +648,11 @@ export default function SettingsModule() {
               value={userForm.email}
               onChange={(event) => setUserForm((prev) => ({ ...prev, email: event.target.value }))}
             />
+            <input
+              placeholder="WhatsApp (DDD) 12345-1234"
+              value={userForm.whatsapp}
+              onChange={(event) => setUserForm((prev) => ({ ...prev, whatsapp: event.target.value }))}
+            />
 
             <div className="settings-users-selects">
               <label className="settings-field">
@@ -693,6 +702,7 @@ export default function SettingsModule() {
               <tr>
                 <th>Nome</th>
                 <th>Login</th>
+                <th>WhatsApp</th>
                 <th>Perfil</th>
                 <th>Status</th>
                 <th>Último acesso</th>
@@ -704,6 +714,7 @@ export default function SettingsModule() {
                 <tr key={user.user_id || user.email}>
                   <td>{user.full_name || "-"}</td>
                   <td>{user.email || "-"}</td>
+                  <td>{user.whatsapp || "-"}</td>
                   <td>{userRoleLabel(user.role)}</td>
                   <td>{userStatusLabel(user.status)}</td>
                   <td>{formatDateTime(user.last_login_at)}</td>
@@ -739,7 +750,7 @@ export default function SettingsModule() {
 
               {!users.length && !usersLoading ? (
                 <tr>
-                  <td colSpan={6} className="muted">
+                  <td colSpan={7} className="muted">
                     Nenhum usuário cadastrado.
                   </td>
                 </tr>
@@ -756,6 +767,11 @@ export default function SettingsModule() {
               placeholder="Nome completo"
               value={editUserForm.full_name}
               onChange={(event) => setEditUserForm((prev) => ({ ...prev, full_name: event.target.value }))}
+            />
+            <input
+              placeholder="WhatsApp (DDD) 12345-1234"
+              value={editUserForm.whatsapp}
+              onChange={(event) => setEditUserForm((prev) => ({ ...prev, whatsapp: event.target.value }))}
             />
 
             <div className="settings-users-selects">

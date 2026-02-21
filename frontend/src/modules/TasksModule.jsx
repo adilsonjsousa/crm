@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   createTask,
   listCompanyOptions,
+  listSystemUsers,
+  listTaskScheduleConflicts,
   listTasks,
   logTaskFlowComment,
   registerTaskCheckin,
@@ -9,6 +11,7 @@ import {
   scheduleTaskOnlineMeeting,
   updateTask
 } from "../lib/revenueApi";
+import { toWhatsAppBrazilNumber } from "../lib/phone";
 
 const ACTIVITY_OPTIONS = [
   "Visita",
@@ -29,6 +32,8 @@ const TASK_STATUSES = [
   { value: "done", label: "Concluída" },
   { value: "cancelled", label: "Cancelada" }
 ];
+
+const TASKS_CREATOR_STORAGE_KEY = "crm.tasks.creator-user-id.v1";
 
 function statusLabel(value) {
   return TASK_STATUSES.find((item) => item.value === value)?.label || value;
@@ -234,11 +239,58 @@ function meetingStatusLabel(value) {
   return map[value] || "-";
 }
 
+function userDisplayName(user) {
+  if (!user) return "-";
+  return String(user.full_name || user.email || "Usuário").trim() || "Usuário";
+}
+
+function localDateKeyFromIso(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatHourMinute(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(parsed);
+}
+
+function scheduleWindowLabel(task) {
+  if (!task?.scheduled_start_at) return "Sem horário";
+  const start = formatHourMinute(task.scheduled_start_at);
+  const end = task.scheduled_end_at ? formatHourMinute(task.scheduled_end_at) : "";
+  return end ? `${start} - ${end}` : start;
+}
+
+function taskWindowBounds(task) {
+  const startAt = new Date(task?.scheduled_start_at || "").getTime();
+  if (!Number.isFinite(startAt)) return null;
+  const endRaw = task?.scheduled_end_at ? new Date(task.scheduled_end_at).getTime() : startAt + 30 * 60 * 1000;
+  const endAt = Number.isFinite(endRaw) && endRaw >= startAt ? endRaw : startAt + 30 * 60 * 1000;
+  return { startAt, endAt };
+}
+
 export default function TasksModule({ onRequestCreateCompany = null }) {
   const [tasks, setTasks] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [users, setUsers] = useState([]);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [saving, setSaving] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [creatorUserId, setCreatorUserId] = useState("");
+  const [notifyAssigneeWhatsApp, setNotifyAssigneeWhatsApp] = useState(true);
+  const [calendarDate, setCalendarDate] = useState(todayYmd());
+  const [calendarAssigneeUserId, setCalendarAssigneeUserId] = useState("");
   const [onlyOpen, setOnlyOpen] = useState(true);
   const [draggingTaskId, setDraggingTaskId] = useState("");
   const [dragOverStatus, setDragOverStatus] = useState("");
@@ -249,6 +301,7 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
   const [form, setForm] = useState({
     company_id: "",
+    assignee_user_id: "",
     activity: "Visita",
     priority: "medium",
     status: "todo",
@@ -257,6 +310,43 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
     due_date: "",
     description: ""
   });
+
+  async function loadUsersContext() {
+    setUsersLoading(true);
+    setError("");
+    try {
+      const rows = await listSystemUsers();
+      const activeUsers = rows.filter((item) => item.status === "active");
+      const availableUsers = activeUsers.length ? activeUsers : rows;
+      setUsers(availableUsers);
+
+      if (!availableUsers.length) {
+        setCreatorUserId("");
+        setCalendarAssigneeUserId("");
+        setForm((prev) => ({ ...prev, assignee_user_id: "" }));
+        return;
+      }
+
+      const savedCreatorUserId =
+        typeof window === "undefined" ? "" : String(window.localStorage.getItem(TASKS_CREATOR_STORAGE_KEY) || "");
+      const selectedCreator = availableUsers.find((item) => item.user_id === savedCreatorUserId) || availableUsers[0];
+      setCreatorUserId(selectedCreator.user_id);
+      setForm((prev) => ({
+        ...prev,
+        assignee_user_id: availableUsers.some((item) => item.user_id === prev.assignee_user_id)
+          ? prev.assignee_user_id
+          : selectedCreator.user_id
+      }));
+    } catch (err) {
+      setUsers([]);
+      setCreatorUserId("");
+      setCalendarAssigneeUserId("");
+      setForm((prev) => ({ ...prev, assignee_user_id: "" }));
+      setError(err.message);
+    } finally {
+      setUsersLoading(false);
+    }
+  }
 
   async function load() {
     setError("");
@@ -270,6 +360,7 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
   }
 
   useEffect(() => {
+    loadUsersContext();
     load();
   }, []);
 
@@ -336,6 +427,62 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
     return source.slice(0, 10);
   }, [companies, companySearchTerm]);
 
+  const userById = useMemo(() => {
+    const map = {};
+    for (const user of users) {
+      map[user.user_id] = user;
+    }
+    return map;
+  }, [users]);
+
+  const calendarRows = useMemo(() => {
+    return tasks
+      .filter((task) => task.scheduled_start_at)
+      .filter((task) => localDateKeyFromIso(task.scheduled_start_at) === calendarDate)
+      .filter((task) => (calendarAssigneeUserId ? task.assignee_user_id === calendarAssigneeUserId : true))
+      .sort((a, b) => new Date(a.scheduled_start_at).getTime() - new Date(b.scheduled_start_at).getTime());
+  }, [tasks, calendarDate, calendarAssigneeUserId]);
+
+  const calendarConflictData = useMemo(() => {
+    const conflictTaskIds = new Set();
+    const pairByTaskId = {};
+    const byAssignee = {};
+
+    for (const row of calendarRows) {
+      const assigneeKey = String(row.assignee_user_id || "");
+      if (!byAssignee[assigneeKey]) byAssignee[assigneeKey] = [];
+      byAssignee[assigneeKey].push(row);
+    }
+
+    for (const assigneeRows of Object.values(byAssignee)) {
+      assigneeRows.sort((a, b) => new Date(a.scheduled_start_at).getTime() - new Date(b.scheduled_start_at).getTime());
+      for (let index = 0; index < assigneeRows.length; index += 1) {
+        const current = assigneeRows[index];
+        const currentBounds = taskWindowBounds(current);
+        if (!currentBounds) continue;
+
+        for (let nextIndex = index + 1; nextIndex < assigneeRows.length; nextIndex += 1) {
+          const next = assigneeRows[nextIndex];
+          const nextBounds = taskWindowBounds(next);
+          if (!nextBounds) continue;
+          if (nextBounds.startAt > currentBounds.endAt) break;
+          if (nextBounds.startAt <= currentBounds.endAt && nextBounds.endAt >= currentBounds.startAt) {
+            conflictTaskIds.add(current.id);
+            conflictTaskIds.add(next.id);
+            if (!pairByTaskId[current.id]) pairByTaskId[current.id] = next;
+            if (!pairByTaskId[next.id]) pairByTaskId[next.id] = current;
+          }
+        }
+      }
+    }
+
+    return {
+      conflictTaskIds,
+      pairByTaskId,
+      count: conflictTaskIds.size
+    };
+  }, [calendarRows]);
+
   function handleCompanySearchChange(value) {
     const nextTerm = value;
     setCompanySearchTerm(nextTerm);
@@ -369,6 +516,30 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
     setCompanySuggestionsOpen(false);
   }
 
+  function handleCreatorChange(nextUserId) {
+    const normalized = String(nextUserId || "").trim();
+    const selected = users.find((item) => item.user_id === normalized);
+    if (!selected) return;
+
+    setCreatorUserId(selected.user_id);
+    setForm((prev) => ({
+      ...prev,
+      assignee_user_id: prev.assignee_user_id || selected.user_id
+    }));
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(TASKS_CREATOR_STORAGE_KEY, selected.user_id);
+    }
+  }
+
+  function openWhatsAppMessage(phone, message) {
+    const normalized = toWhatsAppBrazilNumber(phone);
+    if (!normalized) return false;
+    const encoded = encodeURIComponent(message);
+    const url = `https://wa.me/${normalized}?text=${encoded}`;
+    const newWindow = window.open(url, "_blank", "noopener,noreferrer");
+    return Boolean(newWindow);
+  }
+
   function handleRequestCreateCompany() {
     const typedTerm = String(companySearchTerm || "").trim();
     if (!typedTerm) {
@@ -394,9 +565,13 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
+    setSuccess("");
     const activity = String(form.activity || "").trim();
     const description = String(form.description || "").trim();
     const dueDate = String(form.due_date || "").trim();
+    const assigneeUserId = String(form.assignee_user_id || "").trim();
+    const creator = userById[creatorUserId] || null;
+    const assignee = userById[assigneeUserId] || null;
 
     if (!activity) {
       setError("Selecione a atividade.");
@@ -410,6 +585,14 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
       setError("Descrição é obrigatória.");
       return;
     }
+    if (!assigneeUserId) {
+      setError("Selecione o usuário responsável pela agenda.");
+      return;
+    }
+    if (!creatorUserId) {
+      setError("Selecione o usuário que está criando a agenda.");
+      return;
+    }
 
     setSaving(true);
     try {
@@ -418,12 +601,33 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
       const scheduledEndAt = toIsoFromLocalInput(form.scheduled_end_local);
       if (scheduledStartAt && scheduledEndAt && new Date(scheduledEndAt).getTime() < new Date(scheduledStartAt).getTime()) {
         setError("O agendamento final não pode ser anterior ao início.");
-        setSaving(false);
         return;
+      }
+
+      if (scheduledStartAt) {
+        const conflicts = await listTaskScheduleConflicts({
+          assigneeUserId,
+          scheduledStartAt,
+          scheduledEndAt: scheduledEndAt || undefined
+        });
+        if (conflicts.length) {
+          const preview = conflicts
+            .slice(0, 3)
+            .map((item) => `${item.title || "Tarefa"} (${scheduleWindowLabel(item)})`)
+            .join("\n");
+          const confirmed = window.confirm(
+            `Conflito detectado para ${userDisplayName(assignee)}.\n\n${preview}\n\nDeseja salvar mesmo assim?`
+          );
+          if (!confirmed) {
+            return;
+          }
+        }
       }
 
       await createTask({
         company_id: form.company_id || null,
+        assignee_user_id: assigneeUserId,
+        created_by_user_id: creatorUserId,
         title: activity,
         task_type: "commercial",
         priority: form.priority,
@@ -438,6 +642,7 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
       setForm((prev) => ({
         ...prev,
         company_id: "",
+        assignee_user_id: assigneeUserId,
         activity: "Visita",
         description: "",
         scheduled_start_local: "",
@@ -448,6 +653,34 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
       setCompanySearchTerm("");
       setCompanySuggestionsOpen(false);
       await load();
+
+      const selectedCompany = companies.find((item) => item.id === form.company_id) || null;
+      const companyLabel = selectedCompany?.trade_name || "Sem empresa vinculada";
+      const scheduleText = scheduledStartAt ? scheduleLabel({ scheduled_start_at: scheduledStartAt, scheduled_end_at: scheduledEndAt }) : dueLabel(dueDate);
+      let successMessage = "Tarefa criada com sucesso.";
+
+      if (notifyAssigneeWhatsApp) {
+        if (assignee?.whatsapp) {
+          const message = [
+            `Ola, ${userDisplayName(assignee)}!`,
+            `${userDisplayName(creator)} criou uma agenda para voce no CRM.`,
+            `Atividade: ${activity}`,
+            `Empresa: ${companyLabel}`,
+            `Quando: ${scheduleText}`,
+            `Descricao: ${description}`
+          ].join("\n");
+          const opened = openWhatsAppMessage(assignee.whatsapp, message);
+          if (opened) {
+            successMessage = "Tarefa criada e mensagem do WhatsApp preparada para envio ao responsável.";
+          } else {
+            successMessage = "Tarefa criada, mas não foi possível abrir o WhatsApp no navegador.";
+          }
+        } else {
+          successMessage = "Tarefa criada, mas o responsável não possui WhatsApp cadastrado.";
+        }
+      }
+
+      setSuccess(successMessage);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -792,6 +1025,37 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
     }
   }
 
+  function handleNotifyConflictCreator(task, conflictedWith) {
+    if (!task || !task.created_by_user_id) {
+      setError("Não foi possível identificar quem criou essa agenda.");
+      return;
+    }
+
+    const creator = task.creator || userById[task.created_by_user_id];
+    if (!creator?.whatsapp) {
+      setError("Criador da agenda sem WhatsApp cadastrado.");
+      return;
+    }
+
+    const message = [
+      `Alerta de conflito na agenda de ${userDisplayName(task.assignee || userById[task.assignee_user_id])}.`,
+      `Compromisso 1: ${task.title} (${scheduleWindowLabel(task)})`,
+      conflictedWith ? `Compromisso 2: ${conflictedWith.title} (${scheduleWindowLabel(conflictedWith)})` : "",
+      `Data: ${formatDate(calendarDate)}`,
+      "Revise o calendário no CRM para ajustar os horários."
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const opened = openWhatsAppMessage(creator.whatsapp, message);
+    if (opened) {
+      setSuccess(`Aviso de conflito preparado para ${userDisplayName(creator)} no WhatsApp.`);
+      setError("");
+    } else {
+      setError("Não foi possível abrir o WhatsApp para avisar o criador.");
+    }
+  }
+
   function handleDragStart(event, taskId) {
     setDraggingTaskId(taskId);
     event.dataTransfer.effectAllowed = "move";
@@ -827,7 +1091,43 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
         <article className="panel">
           <h2>Agenda de tarefas</h2>
           <p className="muted">Cadastre tarefas para os usuários e acompanhe no fluxo da agenda.</p>
+          {usersLoading ? <p className="muted">Carregando usuários...</p> : null}
+          {!usersLoading && !users.length ? <p className="error-text">Cadastre ao menos um usuário na aba Configurações.</p> : null}
           <form className="form-grid" onSubmit={handleSubmit}>
+            <div className="tasks-users-grid">
+              <label className="settings-field">
+                <span>Usuário criando agenda</span>
+                <select
+                  value={creatorUserId}
+                  onChange={(event) => handleCreatorChange(event.target.value)}
+                  disabled={!users.length || usersLoading}
+                >
+                  {!users.length ? <option value="">Sem usuários cadastrados</option> : null}
+                  {users.map((user) => (
+                    <option key={user.user_id} value={user.user_id}>
+                      {userDisplayName(user)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="settings-field">
+                <span>Responsável pela agenda</span>
+                <select
+                  value={form.assignee_user_id}
+                  onChange={(event) => setForm((prev) => ({ ...prev, assignee_user_id: event.target.value }))}
+                  disabled={!users.length || usersLoading}
+                >
+                  {!users.length ? <option value="">Sem usuários cadastrados</option> : null}
+                  {users.map((user) => (
+                    <option key={user.user_id} value={user.user_id}>
+                      {userDisplayName(user)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
             <div className="tasks-company-autocomplete">
               <input
                 type="text"
@@ -921,7 +1221,15 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
               value={form.description}
               onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
             />
-            <button type="submit" className="btn-primary" disabled={saving}>
+            <label className="checkbox-inline">
+              <input
+                type="checkbox"
+                checked={notifyAssigneeWhatsApp}
+                onChange={(event) => setNotifyAssigneeWhatsApp(event.target.checked)}
+              />
+              Avisar responsável no WhatsApp ao salvar
+            </label>
+            <button type="submit" className="btn-primary" disabled={saving || !users.length}>
               {saving ? "Salvando..." : "Salvar tarefa"}
             </button>
           </form>
@@ -930,6 +1238,7 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
         <article className="panel">
           <h3>Indicadores da agenda</h3>
           {error ? <p className="error-text">{error}</p> : null}
+          {success ? <p className="success-text">{success}</p> : null}
           <div className="dashboard-strip">
             <article className="metric-tile">
               <span>Abertas</span>
@@ -970,11 +1279,77 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
                   <div>
                     <p className="activity-title">{task.title}</p>
                     <p className="activity-meta">{task.companies?.trade_name || "SEM VÍNCULO"}</p>
+                    <p className="activity-meta">Responsável: {userDisplayName(task.assignee || userById[task.assignee_user_id])}</p>
                   </div>
                   <span className="activity-date">{formatDateTime(task.scheduled_start_at)}</span>
                 </li>
               ))}
               {!upcomingAppointments.length ? <li className="muted">Sem agendamentos próximos.</li> : null}
+            </ul>
+          </div>
+
+          <div className="top-gap">
+            <h3>Calendário diário</h3>
+            <div className="tasks-calendar-toolbar">
+              <label className="settings-field">
+                <span>Data</span>
+                <input type="date" value={calendarDate} onChange={(event) => setCalendarDate(event.target.value)} />
+              </label>
+              <label className="settings-field">
+                <span>Responsável</span>
+                <select value={calendarAssigneeUserId} onChange={(event) => setCalendarAssigneeUserId(event.target.value)}>
+                  <option value="">Todos os responsáveis</option>
+                  {users.map((user) => (
+                    <option key={`calendar-${user.user_id}`} value={user.user_id}>
+                      {userDisplayName(user)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {calendarConflictData.count ? (
+              <p className="tasks-calendar-warning">
+                {calendarConflictData.count} compromisso(s) com conflito detectado para a data selecionada.
+              </p>
+            ) : null}
+
+            <ul className="activity-list">
+              {calendarRows.map((task) => {
+                const conflict = calendarConflictData.conflictTaskIds.has(task.id);
+                const conflictingTask = calendarConflictData.pairByTaskId[task.id] || null;
+                return (
+                  <li key={`calendar-${task.id}`} className={`activity-item ${conflict ? "task-calendar-item-conflict" : ""}`}>
+                    <div>
+                      <p className="activity-title">{task.title}</p>
+                      <p className="activity-meta">{task.companies?.trade_name || "SEM VÍNCULO"}</p>
+                      <p className="activity-meta">
+                        Responsável: {userDisplayName(task.assignee || userById[task.assignee_user_id])} · Criado por:{" "}
+                        {userDisplayName(task.creator || userById[task.created_by_user_id])}
+                      </p>
+                      {conflict ? (
+                        <p className="tasks-calendar-conflict-meta">
+                          Conflito com: {conflictingTask?.title || "Outro compromisso"}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="tasks-calendar-item-side">
+                      <span className="activity-date">{scheduleWindowLabel(task)}</span>
+                      {conflict ? <span className="badge badge-status-cancelled">Conflito</span> : null}
+                      {conflict ? (
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          onClick={() => handleNotifyConflictCreator(task, conflictingTask)}
+                        >
+                          Avisar criador
+                        </button>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
+              {!calendarRows.length ? <li className="muted">Sem compromissos para este dia.</li> : null}
             </ul>
           </div>
         </article>
@@ -1006,6 +1381,7 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
                   >
                     <p className="agenda-card-title">{task.title}</p>
                     <p className="agenda-card-company">{task.companies?.trade_name || "SEM VÍNCULO"}</p>
+                    <p className="agenda-card-company">Responsável: {userDisplayName(task.assignee || userById[task.assignee_user_id])}</p>
                     <div className="agenda-card-meta">
                       <span className={`badge badge-priority-${task.priority}`}>{priorityLabel(task.priority)}</span>
                     </div>
@@ -1028,6 +1404,8 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
               <tr>
                 <th>Atividade</th>
                 <th>Empresa</th>
+                <th>Criado por</th>
+                <th>Responsável</th>
                 <th>Prioridade</th>
                 <th>Agendamento</th>
                 <th>Data limite</th>
@@ -1041,6 +1419,8 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
                 <tr key={task.id}>
                   <td>{task.title}</td>
                   <td>{task.companies?.trade_name || "-"}</td>
+                  <td>{userDisplayName(task.creator || userById[task.created_by_user_id])}</td>
+                  <td>{userDisplayName(task.assignee || userById[task.assignee_user_id])}</td>
                   <td>
                     <span className={`badge badge-priority-${task.priority}`}>{priorityLabel(task.priority)}</span>
                   </td>
@@ -1141,7 +1521,7 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
               ))}
               {!listRows.length ? (
                 <tr>
-                  <td colSpan={8} className="muted">
+                  <td colSpan={10} className="muted">
                     Nenhuma tarefa encontrada.
                   </td>
                 </tr>

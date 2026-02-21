@@ -140,6 +140,10 @@ function normalizeUserEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeUserWhatsApp(value) {
+  return validateBrazilPhoneOrEmpty(value, "WhatsApp");
+}
+
 function sanitizeUserPermissions(value, role = "sales") {
   const normalizedRole = normalizeUserRole(role);
   const fallback = CRM_ROLE_DEFAULT_PERMISSIONS[normalizedRole] || CRM_ROLE_DEFAULT_PERMISSIONS.sales;
@@ -622,14 +626,73 @@ export async function listTasks() {
   const { data, error } = await supabase
     .from("tasks")
     .select(
-      "id,company_id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,visit_checkin_at,visit_checkin_latitude,visit_checkin_longitude,visit_checkin_accuracy_meters,visit_checkin_distance_meters,visit_checkin_method,visit_checkin_note,visit_checkout_at,visit_checkout_note,meeting_provider,meeting_external_id,meeting_join_url,meeting_start_at,meeting_end_at,meeting_attendees,meeting_status,meeting_last_sent_at,created_at,companies:company_id(trade_name,email,address_full,checkin_validation_mode,checkin_radius_meters,checkin_latitude,checkin_longitude,checkin_pin)"
+      "id,company_id,title,task_type,priority,status,due_date,scheduled_start_at,scheduled_end_at,description,completed_at,visit_checkin_at,visit_checkin_latitude,visit_checkin_longitude,visit_checkin_accuracy_meters,visit_checkin_distance_meters,visit_checkin_method,visit_checkin_note,visit_checkout_at,visit_checkout_note,meeting_provider,meeting_external_id,meeting_join_url,meeting_start_at,meeting_end_at,meeting_attendees,meeting_status,meeting_last_sent_at,assignee_user_id,created_by_user_id,created_at,companies:company_id(trade_name,email,address_full,checkin_validation_mode,checkin_radius_meters,checkin_latitude,checkin_longitude,checkin_pin),assignee:app_users!tasks_assignee_user_id_fkey(user_id,full_name,email,whatsapp,role,status),creator:app_users!tasks_created_by_user_id_fkey(user_id,full_name,email,whatsapp,role,status)"
     )
     .order("scheduled_start_at", { ascending: true, nullsFirst: false })
     .order("due_date", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: false })
-    .limit(120);
+    .limit(160);
   if (error) throw new Error(normalizeError(error, "Falha ao listar tarefas."));
   return data || [];
+}
+
+export async function listTaskScheduleConflicts({
+  assigneeUserId = "",
+  scheduledStartAt = "",
+  scheduledEndAt = "",
+  ignoreTaskId = "",
+  limit = 80
+} = {}) {
+  const normalizedAssignee = String(assigneeUserId || "").trim();
+  if (!normalizedAssignee) return [];
+
+  const startDate = new Date(String(scheduledStartAt || "").trim());
+  if (Number.isNaN(startDate.getTime())) {
+    throw new Error("Agendamento inicial inválido para validar conflito.");
+  }
+
+  const endRaw = String(scheduledEndAt || "").trim();
+  const endDate = endRaw ? new Date(endRaw) : new Date(startDate.getTime() + 30 * 60 * 1000);
+  if (Number.isNaN(endDate.getTime())) {
+    throw new Error("Agendamento final inválido para validar conflito.");
+  }
+  if (endDate.getTime() < startDate.getTime()) {
+    throw new Error("O agendamento final não pode ser anterior ao início.");
+  }
+
+  const queryWindowStart = new Date(startDate.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const queryWindowEnd = new Date(endDate.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString();
+
+  const supabase = ensureSupabase();
+  const safeLimit = Number.isFinite(limit) ? Math.max(10, Math.min(300, Math.floor(limit))) : 80;
+  let query = supabase
+    .from("tasks")
+    .select("id,title,status,scheduled_start_at,scheduled_end_at,company_id,companies:company_id(trade_name)")
+    .eq("assignee_user_id", normalizedAssignee)
+    .not("status", "in", "(done,cancelled)")
+    .not("scheduled_start_at", "is", null)
+    .gte("scheduled_start_at", queryWindowStart)
+    .lte("scheduled_start_at", queryWindowEnd)
+    .order("scheduled_start_at", { ascending: true })
+    .limit(safeLimit);
+
+  const normalizedIgnoreTaskId = String(ignoreTaskId || "").trim();
+  if (normalizedIgnoreTaskId) {
+    query = query.neq("id", normalizedIgnoreTaskId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(normalizeError(error, "Falha ao validar conflito na agenda."));
+
+  const startMs = startDate.getTime();
+  const endMs = endDate.getTime();
+
+  return (data || []).filter((item) => {
+    const rowStart = new Date(item.scheduled_start_at).getTime();
+    const rowEnd = item.scheduled_end_at ? new Date(item.scheduled_end_at).getTime() : rowStart + 30 * 60 * 1000;
+    if (!Number.isFinite(rowStart) || !Number.isFinite(rowEnd)) return false;
+    return rowStart <= endMs && rowEnd >= startMs;
+  });
 }
 
 export async function createTask(payload) {
@@ -1669,6 +1732,7 @@ export async function listSystemUsers() {
       user_id: String(safe.user_id || "").trim(),
       email: normalizeUserEmail(safe.email),
       full_name: normalizeUserFullName(safe.full_name),
+      whatsapp: formatBrazilPhone(safe.whatsapp),
       role,
       status: normalizeUserStatus(safe.status),
       permissions: sanitizeUserPermissions(safe.permissions, role),
@@ -1684,6 +1748,7 @@ export async function listSystemUsers() {
 export async function createSystemUser(payload) {
   const fullName = normalizeUserFullName(payload?.full_name);
   const email = normalizeUserEmail(payload?.email);
+  const whatsapp = normalizeUserWhatsApp(payload?.whatsapp);
   const role = normalizeUserRole(payload?.role);
   const status = normalizeUserStatus(payload?.status);
 
@@ -1694,6 +1759,7 @@ export async function createSystemUser(payload) {
   const result = await invokeManageUsers("create", {
     full_name: fullName,
     email,
+    whatsapp,
     role,
     status,
     permissions: sanitizeUserPermissions(payload?.permissions, role)
@@ -1712,6 +1778,7 @@ export async function updateSystemUser(userId, payload) {
 
   const role = normalizeUserRole(payload?.role);
   const status = normalizeUserStatus(payload?.status);
+  const hasWhatsApp = Object.prototype.hasOwnProperty.call(payload || {}, "whatsapp");
   const updatePayload = {
     user_id: normalizedUserId,
     full_name: normalizeUserFullName(payload?.full_name),
@@ -1719,6 +1786,10 @@ export async function updateSystemUser(userId, payload) {
     status,
     permissions: sanitizeUserPermissions(payload?.permissions, role)
   };
+
+  if (hasWhatsApp) {
+    updatePayload.whatsapp = normalizeUserWhatsApp(payload?.whatsapp);
+  }
 
   if (!updatePayload.full_name) throw new Error("Informe o nome completo do usuário.");
 

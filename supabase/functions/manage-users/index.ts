@@ -12,6 +12,7 @@ type AppUserRow = {
   user_id: string;
   email: string;
   full_name: string;
+  whatsapp: string | null;
   role: UserRole;
   status: UserStatus;
   permissions: UserPermissionMap;
@@ -110,6 +111,13 @@ function normalizeName(value: unknown) {
     .trim();
 }
 
+function normalizeWhatsApp(value: unknown) {
+  const raw = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return raw || null;
+}
+
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
@@ -201,6 +209,7 @@ function profileFromAuth(authUser: AnyRecord): AppUserRow {
     user_id: String(authUser.id ?? ""),
     email: normalizeEmail(authUser.email),
     full_name: normalizeName(asObject(authUser.user_metadata).full_name) || normalizeEmail(authUser.email),
+    whatsapp: null,
     role,
     status: normalizeStatus(asObject(authUser.app_metadata).crm_status),
     permissions: cloneRolePermissions(role),
@@ -233,7 +242,7 @@ function mergeProfileWithAuth(profile: AppUserRow, authUser: AnyRecord | null): 
 async function handleList(adminClient: ReturnType<typeof createClient>) {
   const { data: profiles, error } = await adminClient
     .from("app_users")
-    .select("user_id,email,full_name,role,status,permissions,invited_at,last_invite_sent_at,last_login_at,created_at,updated_at")
+    .select("user_id,email,full_name,whatsapp,role,status,permissions,invited_at,last_invite_sent_at,last_login_at,created_at,updated_at")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -256,6 +265,7 @@ async function handleList(adminClient: ReturnType<typeof createClient>) {
       user_id: String(item.user_id ?? ""),
       email: normalizeEmail(item.email),
       full_name: normalizeName(item.full_name),
+      whatsapp: normalizeWhatsApp(item.whatsapp),
       role: normalizeRole(item.role),
       status: normalizeStatus(item.status),
       permissions: sanitizePermissions(item.permissions, normalizeRole(item.role)),
@@ -291,6 +301,7 @@ async function handleList(adminClient: ReturnType<typeof createClient>) {
 async function handleCreate(adminClient: ReturnType<typeof createClient>, body: AnyRecord) {
   const email = normalizeEmail(body.email);
   const fullName = normalizeName(body.full_name);
+  const whatsapp = normalizeWhatsApp(body.whatsapp);
   const role = normalizeRole(body.role);
   const status = normalizeStatus(body.status);
   const redirectTo = parseRedirectTo(body);
@@ -374,6 +385,7 @@ async function handleCreate(adminClient: ReturnType<typeof createClient>, body: 
         user_id: authUserId,
         email,
         full_name: fullName,
+        whatsapp,
         role,
         status,
         permissions,
@@ -382,7 +394,7 @@ async function handleCreate(adminClient: ReturnType<typeof createClient>, body: 
       },
       { onConflict: "user_id" }
     )
-    .select("user_id,email,full_name,role,status,permissions,invited_at,last_invite_sent_at,last_login_at,created_at,updated_at")
+    .select("user_id,email,full_name,whatsapp,role,status,permissions,invited_at,last_invite_sent_at,last_login_at,created_at,updated_at")
     .single();
 
   if (upsertError) {
@@ -417,7 +429,7 @@ async function handleUpdate(adminClient: ReturnType<typeof createClient>, body: 
 
   const { data: currentProfile, error: currentError } = await adminClient
     .from("app_users")
-    .select("user_id,email,full_name,role,status,permissions")
+    .select("user_id,email,full_name,whatsapp,role,status,permissions")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -432,6 +444,7 @@ async function handleUpdate(adminClient: ReturnType<typeof createClient>, body: 
   const fullName = normalizeName(body.full_name ?? currentProfile?.full_name ?? asObject(authUser?.user_metadata).full_name);
   if (!fullName) throw new Error("Informe o nome completo do usuário.");
 
+  const whatsapp = normalizeWhatsApp(body.whatsapp ?? currentProfile?.whatsapp);
   const role = normalizeRole(body.role ?? currentProfile?.role ?? asObject(authUser?.app_metadata).crm_role);
   const status = normalizeStatus(body.status ?? currentProfile?.status ?? asObject(authUser?.app_metadata).crm_status);
   const permissions = sanitizePermissions(body.permissions ?? currentProfile?.permissions, role);
@@ -443,13 +456,14 @@ async function handleUpdate(adminClient: ReturnType<typeof createClient>, body: 
         user_id: userId,
         email,
         full_name: fullName,
+        whatsapp,
         role,
         status,
         permissions
       },
       { onConflict: "user_id" }
     )
-    .select("user_id,email,full_name,role,status,permissions,invited_at,last_invite_sent_at,last_login_at,created_at,updated_at")
+    .select("user_id,email,full_name,whatsapp,role,status,permissions,invited_at,last_invite_sent_at,last_login_at,created_at,updated_at")
     .single();
 
   if (upsertError) throw new Error(upsertError.message || "Falha ao atualizar usuário no CRM.");

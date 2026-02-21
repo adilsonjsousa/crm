@@ -1415,6 +1415,44 @@ tbody tr:hover {
   width: 100%;
 }
 
+.tasks-users-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.tasks-calendar-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(170px, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.tasks-calendar-warning {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  color: #9c3232;
+}
+
+.task-calendar-item-conflict {
+  border-color: rgba(214, 69, 69, 0.45);
+  background: rgba(214, 69, 69, 0.06);
+}
+
+.tasks-calendar-item-side {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+  align-content: start;
+}
+
+.tasks-calendar-conflict-meta {
+  margin: 4px 0 0;
+  font-size: 0.74rem;
+  color: #9c3232;
+  font-weight: 700;
+}
+
 .contacts-company-autocomplete {
   position: relative;
 }
@@ -1885,7 +1923,9 @@ tbody tr:hover {
   }
 
   .settings-users-layout,
-  .settings-users-selects {
+  .settings-users-selects,
+  .tasks-users-grid,
+  .tasks-calendar-toolbar {
     grid-template-columns: 1fr;
   }
 
