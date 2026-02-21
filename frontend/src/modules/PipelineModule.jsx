@@ -367,6 +367,21 @@ function pickPreferredContact(contacts = []) {
   return contacts.find((contact) => Boolean(contact.is_primary)) || contacts[0];
 }
 
+function normalizeLookupText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatCnpj(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length !== 14) return String(value || "");
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+}
+
 function emptyOpportunityForm(defaultCompanyId = "", defaultOwnerUserId = "") {
   return {
     company_id: defaultCompanyId,
@@ -440,6 +455,8 @@ export default function PipelineModule() {
     companyName: ""
   });
   const [form, setForm] = useState(() => emptyOpportunityForm("", ""));
+  const [companySearchTerm, setCompanySearchTerm] = useState("");
+  const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
 
   const viewerUser = useMemo(
     () => pipelineUsers.find((item) => item.user_id === viewerUserId) || null,
@@ -458,6 +475,20 @@ export default function PipelineModule() {
     }
     return map;
   }, [pipelineUsers]);
+  const companySuggestions = useMemo(() => {
+    const normalizedTerm = normalizeLookupText(companySearchTerm);
+    const digitsTerm = String(companySearchTerm || "").replace(/\D/g, "");
+    const source = normalizedTerm || digitsTerm
+      ? companies.filter((company) => {
+          const companyName = normalizeLookupText(company.trade_name);
+          const companyCnpj = String(company.cnpj || "").replace(/\D/g, "");
+          if (normalizedTerm && companyName.includes(normalizedTerm)) return true;
+          if (digitsTerm && companyCnpj.includes(digitsTerm)) return true;
+          return false;
+        })
+      : companies;
+    return source.slice(0, 10);
+  }, [companies, companySearchTerm]);
 
   const itemsByStage = useMemo(() => {
     const grouped = PIPELINE_STAGES.reduce((acc, stage) => {
@@ -565,17 +596,6 @@ export default function PipelineModule() {
         return acc;
       }, {});
       setProposalsByOpportunity(nextProposalMap);
-      if (companiesData.length) {
-        setForm((prev) =>
-          prev.company_id
-            ? prev
-            : {
-                ...prev,
-                company_id: companiesData[0].id,
-                owner_user_id: prev.owner_user_id || viewerUserId || ""
-              }
-        );
-      }
     } catch (err) {
       setError(err.message);
     }
@@ -602,6 +622,31 @@ export default function PipelineModule() {
     };
   }, []);
 
+  function handleCompanySearchChange(value) {
+    const nextTerm = value;
+    setCompanySearchTerm(nextTerm);
+    setCompanySuggestionsOpen(true);
+
+    const normalizedNextTerm = normalizeLookupText(nextTerm);
+    if (!normalizedNextTerm) {
+      setForm((prev) => ({ ...prev, company_id: "" }));
+      return;
+    }
+
+    const exactMatch = companies.find((company) => normalizeLookupText(company.trade_name) === normalizedNextTerm);
+    setForm((prev) => ({
+      ...prev,
+      company_id: exactMatch ? exactMatch.id : ""
+    }));
+  }
+
+  function handleSelectCompany(company) {
+    if (!company?.id) return;
+    setForm((prev) => ({ ...prev, company_id: company.id }));
+    setCompanySearchTerm(company.trade_name || "");
+    setCompanySuggestionsOpen(false);
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
@@ -621,6 +666,10 @@ export default function PipelineModule() {
       }
       if (!titleProduct) {
         setError("Informe o produto.");
+        return;
+      }
+      if (!form.company_id) {
+        setError("Selecione uma empresa cadastrada.");
         return;
       }
 
@@ -647,7 +696,9 @@ export default function PipelineModule() {
       }
 
       setEditingOpportunityId("");
-      setForm(emptyOpportunityForm(companies[0]?.id || "", viewerUserId));
+      setForm(emptyOpportunityForm("", viewerUserId));
+      setCompanySearchTerm("");
+      setCompanySuggestionsOpen(false);
       await load();
     } catch (err) {
       setError(err.message);
@@ -724,6 +775,8 @@ export default function PipelineModule() {
     setError("");
     setSuccess("");
     const parsedTitle = parseOpportunityTitle(item.title);
+    const companyLabel =
+      item.companies?.trade_name || companies.find((company) => company.id === item.company_id)?.trade_name || "";
     setEditingOpportunityId(item.id);
     setForm({
       company_id: item.company_id || "",
@@ -735,13 +788,17 @@ export default function PipelineModule() {
       estimated_value: String(item.estimated_value ?? ""),
       expected_close_date: item.expected_close_date || ""
     });
+    setCompanySearchTerm(companyLabel);
+    setCompanySuggestionsOpen(false);
   }
 
   function cancelEditOpportunity() {
     setError("");
     setSuccess("");
     setEditingOpportunityId("");
-    setForm(emptyOpportunityForm(companies[0]?.id || "", viewerUserId));
+    setForm(emptyOpportunityForm("", viewerUserId));
+    setCompanySearchTerm("");
+    setCompanySuggestionsOpen(false);
   }
 
   function handleViewerChange(nextUserId) {
@@ -752,12 +809,9 @@ export default function PipelineModule() {
     setViewerUserId(nextViewer.user_id);
     setViewerRole(String(nextViewer.role || "sales"));
     setEditingOpportunityId("");
-    setForm((prev) =>
-      emptyOpportunityForm(
-        prev.company_id || companies[0]?.id || "",
-        nextViewer.user_id
-      )
-    );
+    setForm(() => emptyOpportunityForm("", nextViewer.user_id));
+    setCompanySearchTerm("");
+    setCompanySuggestionsOpen(false);
 
     if (typeof window !== "undefined") {
       window.localStorage.setItem(PIPELINE_VIEWER_STORAGE_KEY, nextViewer.user_id);
@@ -1040,18 +1094,41 @@ export default function PipelineModule() {
           </p>
         </div>
         <form className="form-grid pipeline-form-grid" onSubmit={handleSubmit}>
-          <select
-            value={form.company_id}
-            onChange={(e) => setForm((prev) => ({ ...prev, company_id: e.target.value }))}
-            required
-          >
-            <option value="">Selecione a empresa</option>
-            {companies.map((company) => (
-              <option key={company.id} value={company.id}>
-                {company.trade_name}
-              </option>
-            ))}
-          </select>
+          <div className="pipeline-company-autocomplete">
+            <input
+              type="text"
+              placeholder="Empresa (digite para buscar)"
+              value={companySearchTerm}
+              onChange={(event) => handleCompanySearchChange(event.target.value)}
+              onFocus={() => setCompanySuggestionsOpen(Boolean(companySearchTerm.trim()))}
+              onBlur={() => window.setTimeout(() => setCompanySuggestionsOpen(false), 120)}
+              required
+            />
+            {companySuggestionsOpen && companySearchTerm.trim().length >= 1 ? (
+              <div className="pipeline-company-suggestions">
+                {!companySuggestions.length ? <p className="muted">Nenhuma empresa encontrada.</p> : null}
+                {companySuggestions.length ? (
+                  <ul className="search-suggestions-list">
+                    {companySuggestions.map((company) => (
+                      <li key={company.id}>
+                        <button
+                          type="button"
+                          className="search-suggestion-btn"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            handleSelectCompany(company);
+                          }}
+                        >
+                          <strong>{company.trade_name || "Empresa"}</strong>
+                          <span>{company.cnpj ? formatCnpj(company.cnpj) : "Sem CNPJ"}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
           <label className="settings-field">
             <span>Responsável da oportunidade</span>
             <select

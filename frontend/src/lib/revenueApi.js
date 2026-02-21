@@ -1747,7 +1747,10 @@ export async function sendSystemUserPasswordReset(payload) {
 
 export async function listCompanyOptions() {
   const supabase = ensureSupabase();
-  const { data, error } = await supabase.from("companies").select("id,trade_name").order("trade_name", { ascending: true });
+  const { data, error } = await supabase
+    .from("companies")
+    .select("id,trade_name,cnpj")
+    .order("trade_name", { ascending: true });
   if (error) throw new Error(normalizeError(error, "Falha ao listar empresas para seleção."));
   return data || [];
 }
