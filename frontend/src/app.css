@@ -1249,6 +1249,12 @@ tbody tr:hover {
   color: var(--text-sub);
 }
 
+.pipeline-card-owner {
+  margin: 6px 0 0;
+  font-size: 0.74rem;
+  color: var(--text-sub);
+}
+
 .pipeline-card-company-link {
   margin: 6px 0 0;
   padding: 0;
@@ -1286,6 +1292,18 @@ tbody tr:hover {
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.pipeline-access-toolbar {
+  margin: 10px 0 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.pipeline-access-note {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-sub);
 }
 
 .pipeline-empty {

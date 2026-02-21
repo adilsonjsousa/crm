@@ -513,13 +513,23 @@ export async function updateContact(contactId, payload) {
   if (error) throw new Error(normalizeError(error, "Falha ao atualizar contato."));
 }
 
-export async function listOpportunities() {
+export async function listOpportunities(options = {}) {
   const supabase = ensureSupabase();
-  const { data, error } = await supabase
+  const viewerUserId = String(options?.viewerUserId || "").trim();
+  const viewerRole = normalizeUserRole(options?.viewerRole);
+  const canViewAll = viewerRole === "admin" || viewerRole === "manager";
+
+  let query = supabase
     .from("opportunities")
-    .select("id,company_id,title,stage,status,estimated_value,expected_close_date,created_at,companies:company_id(trade_name,email,phone)")
-    .order("created_at", { ascending: false })
-    .limit(30);
+    .select(
+      "id,company_id,owner_user_id,title,stage,status,estimated_value,expected_close_date,created_at,companies:company_id(trade_name,email,phone)"
+    );
+
+  if (viewerUserId && !canViewAll) {
+    query = query.eq("owner_user_id", viewerUserId);
+  }
+
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(30);
   if (error) throw new Error(normalizeError(error, "Falha ao listar oportunidades."));
   return (data || []).map((item) => ({
     ...item,
@@ -532,9 +542,15 @@ export async function listOpportunities() {
   }));
 }
 
-export async function createOpportunity(payload) {
+export async function createOpportunity(payload, options = {}) {
   const supabase = ensureSupabase();
-  const { error } = await supabase.from("opportunities").insert(payload);
+  const fallbackOwnerUserId = String(options?.ownerUserId || "").trim();
+  const normalizedPayload = {
+    ...payload,
+    owner_user_id: String(payload?.owner_user_id || "").trim() || fallbackOwnerUserId || null
+  };
+
+  const { error } = await supabase.from("opportunities").insert(normalizedPayload);
   if (error) throw new Error(normalizeError(error, "Falha ao criar oportunidade."));
 }
 

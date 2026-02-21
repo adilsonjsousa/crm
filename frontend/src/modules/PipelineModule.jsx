@@ -7,6 +7,7 @@ import {
   listCompanyOptions,
   listLatestOrdersByOpportunity,
   listOpportunities,
+  listSystemUsers,
   updateOpportunity,
   updateOpportunityStage
 } from "../lib/revenueApi";
@@ -23,6 +24,7 @@ import { formatBrazilPhone, toWhatsAppBrazilNumber } from "../lib/phone";
 import CustomerHistoryModal from "../components/CustomerHistoryModal";
 
 const PROPOSAL_TEMPLATE_STORAGE_KEY = "crm.pipeline.proposal-template.v1";
+const PIPELINE_VIEWER_STORAGE_KEY = "crm.pipeline.viewer-user-id.v1";
 const ART_PRINTER_LOGO_CANDIDATES = [
   "/logo-art-printer.png",
   "/logo-artprinter.png",
@@ -365,9 +367,10 @@ function pickPreferredContact(contacts = []) {
   return contacts.find((contact) => Boolean(contact.is_primary)) || contacts[0];
 }
 
-function emptyOpportunityForm(defaultCompanyId = "") {
+function emptyOpportunityForm(defaultCompanyId = "", defaultOwnerUserId = "") {
   return {
     company_id: defaultCompanyId,
+    owner_user_id: defaultOwnerUserId,
     opportunity_type: "equipment",
     title_subcategory: "",
     title_product: "",
@@ -409,6 +412,10 @@ function createProposalDraft({ opportunity, linkedOrder, contacts }) {
 }
 
 export default function PipelineModule() {
+  const [pipelineUsers, setPipelineUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [viewerUserId, setViewerUserId] = useState("");
+  const [viewerRole, setViewerRole] = useState("sales");
   const [items, setItems] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [error, setError] = useState("");
@@ -432,7 +439,25 @@ export default function PipelineModule() {
     companyId: "",
     companyName: ""
   });
-  const [form, setForm] = useState(() => emptyOpportunityForm());
+  const [form, setForm] = useState(() => emptyOpportunityForm("", ""));
+
+  const viewerUser = useMemo(
+    () => pipelineUsers.find((item) => item.user_id === viewerUserId) || null,
+    [pipelineUsers, viewerUserId]
+  );
+  const canViewAllOpportunities = viewerRole === "admin" || viewerRole === "manager";
+  const assignableOwners = useMemo(() => {
+    const activeUsers = pipelineUsers.filter((item) => item.status === "active");
+    if (canViewAllOpportunities) return activeUsers;
+    return activeUsers.filter((item) => item.user_id === viewerUserId);
+  }, [canViewAllOpportunities, pipelineUsers, viewerUserId]);
+  const ownerNameById = useMemo(() => {
+    const map = {};
+    for (const user of pipelineUsers) {
+      map[user.user_id] = user.full_name || user.email || "Usuário";
+    }
+    return map;
+  }, [pipelineUsers]);
 
   const itemsByStage = useMemo(() => {
     const grouped = PIPELINE_STAGES.reduce((acc, stage) => {
@@ -484,11 +509,53 @@ export default function PipelineModule() {
   }, [items, proposalEditor, renderedProposalText, proposalLogoDataUrl]);
   const hasArtPrinterLogo = Boolean(proposalLogoDataUrl);
 
+  async function loadUsersContext() {
+    setLoadingUsers(true);
+    setError("");
+
+    try {
+      const users = await listSystemUsers();
+      const activeUsers = users.filter((item) => item.status === "active");
+      const availableUsers = activeUsers.length ? activeUsers : users;
+      setPipelineUsers(availableUsers);
+
+      if (!availableUsers.length) {
+        setViewerUserId("");
+        setViewerRole("sales");
+        setForm((prev) => ({ ...prev, owner_user_id: "" }));
+        return;
+      }
+
+      const savedViewerId = typeof window === "undefined" ? "" : String(window.localStorage.getItem(PIPELINE_VIEWER_STORAGE_KEY) || "");
+      const selectedViewer = availableUsers.find((item) => item.user_id === savedViewerId) || availableUsers[0];
+
+      setViewerUserId(selectedViewer.user_id);
+      setViewerRole(String(selectedViewer.role || "sales"));
+      setForm((prev) => ({
+        ...prev,
+        owner_user_id: prev.owner_user_id || selectedViewer.user_id
+      }));
+    } catch (err) {
+      setError(err.message);
+      setPipelineUsers([]);
+      setViewerUserId("");
+      setViewerRole("sales");
+    } finally {
+      setLoadingUsers(false);
+    }
+  }
+
   async function load() {
     setError("");
     setSuccess("");
     try {
-      const [opps, companiesData] = await Promise.all([listOpportunities(), listCompanyOptions()]);
+      const [opps, companiesData] = await Promise.all([
+        listOpportunities({
+          viewerUserId,
+          viewerRole
+        }),
+        listCompanyOptions()
+      ]);
       setItems(opps);
       setCompanies(companiesData);
       const linkedOrders = await listLatestOrdersByOpportunity(opps.map((opportunity) => opportunity.id));
@@ -499,7 +566,15 @@ export default function PipelineModule() {
       }, {});
       setProposalsByOpportunity(nextProposalMap);
       if (companiesData.length) {
-        setForm((prev) => (prev.company_id ? prev : { ...prev, company_id: companiesData[0].id }));
+        setForm((prev) =>
+          prev.company_id
+            ? prev
+            : {
+                ...prev,
+                company_id: companiesData[0].id,
+                owner_user_id: prev.owner_user_id || viewerUserId || ""
+              }
+        );
       }
     } catch (err) {
       setError(err.message);
@@ -507,8 +582,12 @@ export default function PipelineModule() {
   }
 
   useEffect(() => {
-    load();
+    loadUsersContext();
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [viewerUserId, viewerRole]);
 
   useEffect(() => {
     let active = true;
@@ -547,6 +626,7 @@ export default function PipelineModule() {
 
       const payload = {
         company_id: form.company_id,
+        owner_user_id: form.owner_user_id || viewerUserId || null,
         title: composeOpportunityTitle(titleSubcategory, titleProduct),
         stage: form.stage,
         status: stageStatus(form.stage),
@@ -561,11 +641,13 @@ export default function PipelineModule() {
           from_stage: currentOpportunity?.stage || null
         });
       } else {
-        await createOpportunity(payload);
+        await createOpportunity(payload, {
+          ownerUserId: viewerUserId
+        });
       }
 
       setEditingOpportunityId("");
-      setForm(emptyOpportunityForm(companies[0]?.id || ""));
+      setForm(emptyOpportunityForm(companies[0]?.id || "", viewerUserId));
       await load();
     } catch (err) {
       setError(err.message);
@@ -645,6 +727,7 @@ export default function PipelineModule() {
     setEditingOpportunityId(item.id);
     setForm({
       company_id: item.company_id || "",
+      owner_user_id: item.owner_user_id || viewerUserId,
       opportunity_type: parsedTitle.opportunity_type || "equipment",
       title_subcategory: parsedTitle.title_subcategory,
       title_product: parsedTitle.title_product,
@@ -658,7 +741,27 @@ export default function PipelineModule() {
     setError("");
     setSuccess("");
     setEditingOpportunityId("");
-    setForm(emptyOpportunityForm(companies[0]?.id || ""));
+    setForm(emptyOpportunityForm(companies[0]?.id || "", viewerUserId));
+  }
+
+  function handleViewerChange(nextUserId) {
+    const normalized = String(nextUserId || "").trim();
+    const nextViewer = pipelineUsers.find((item) => item.user_id === normalized);
+    if (!nextViewer) return;
+
+    setViewerUserId(nextViewer.user_id);
+    setViewerRole(String(nextViewer.role || "sales"));
+    setEditingOpportunityId("");
+    setForm((prev) =>
+      emptyOpportunityForm(
+        prev.company_id || companies[0]?.id || "",
+        nextViewer.user_id
+      )
+    );
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(PIPELINE_VIEWER_STORAGE_KEY, nextViewer.user_id);
+    }
   }
 
   function handleToggleAutoProposalMode(event) {
@@ -903,6 +1006,30 @@ export default function PipelineModule() {
       <article className="panel">
         <h2>Pipeline Comercial</h2>
         <p className="muted">Arraste os cards para evoluir a oportunidade para a proxima etapa.</p>
+        <div className="pipeline-access-toolbar">
+          <label className="settings-field">
+            <span>Usuário atual (visão do pipeline)</span>
+            <select
+              value={viewerUserId}
+              onChange={(event) => handleViewerChange(event.target.value)}
+              disabled={loadingUsers || !pipelineUsers.length}
+            >
+              {!pipelineUsers.length ? <option value="">Sem usuários cadastrados</option> : null}
+              {pipelineUsers.map((user) => (
+                <option key={user.user_id} value={user.user_id}>
+                  {user.full_name || user.email} ({String(user.role || "sales").toUpperCase()})
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="pipeline-access-note">
+            {viewerUser
+              ? canViewAllOpportunities
+                ? "Perfil Gestor/Admin: visualiza todas as oportunidades."
+                : "Perfil Vendedor/Backoffice: visualiza apenas as oportunidades do próprio usuário."
+              : "Cadastre ao menos um usuário ativo em Configurações para usar o controle de visibilidade."}
+          </p>
+        </div>
         <div className="pipeline-automation-toggle">
           <label className="checkbox-inline">
             <input type="checkbox" checked={autoProposalMode} onChange={handleToggleAutoProposalMode} />
@@ -925,6 +1052,22 @@ export default function PipelineModule() {
               </option>
             ))}
           </select>
+          <label className="settings-field">
+            <span>Responsável da oportunidade</span>
+            <select
+              value={form.owner_user_id}
+              onChange={(event) => setForm((prev) => ({ ...prev, owner_user_id: event.target.value }))}
+              required
+              disabled={!assignableOwners.length}
+            >
+              {!assignableOwners.length ? <option value="">Sem responsável disponível</option> : null}
+              {assignableOwners.map((user) => (
+                <option key={user.user_id} value={user.user_id}>
+                  {user.full_name || user.email}
+                </option>
+              ))}
+            </select>
+          </label>
           <select
             required
             value={form.opportunity_type}
@@ -1071,6 +1214,7 @@ export default function PipelineModule() {
                       ) : (
                         <p className="pipeline-card-company">-</p>
                       )}
+                      <p className="pipeline-card-owner">Responsável: {ownerNameById[item.owner_user_id] || "-"}</p>
                       <p className="pipeline-card-value">{brl(item.estimated_value)}</p>
                       {linkedProposal ? (
                         <p className="pipeline-card-proposal">
