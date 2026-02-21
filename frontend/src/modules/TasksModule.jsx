@@ -5,6 +5,7 @@ import {
   listSystemUsers,
   listTaskScheduleConflicts,
   listTasks,
+  sendWhatsAppMessage,
   logTaskFlowComment,
   registerTaskCheckin,
   registerTaskCheckout,
@@ -540,6 +541,29 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
     return Boolean(newWindow);
   }
 
+  async function sendWhatsAppWithFallback({ phone, message, metadata }) {
+    try {
+      const result = await sendWhatsAppMessage({
+        phone,
+        message,
+        metadata
+      });
+      return {
+        mode: "api",
+        provider: result.provider || "whatsapp_api"
+      };
+    } catch (apiError) {
+      const opened = openWhatsAppMessage(phone, message);
+      if (opened) {
+        return {
+          mode: "manual",
+          provider: "wa.me"
+        };
+      }
+      throw apiError;
+    }
+  }
+
   function handleRequestCreateCompany() {
     const typedTerm = String(companySearchTerm || "").trim();
     if (!typedTerm) {
@@ -669,11 +693,23 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
             `Quando: ${scheduleText}`,
             `Descricao: ${description}`
           ].join("\n");
-          const opened = openWhatsAppMessage(assignee.whatsapp, message);
-          if (opened) {
-            successMessage = "Tarefa criada e mensagem do WhatsApp preparada para envio ao responsável.";
-          } else {
-            successMessage = "Tarefa criada, mas não foi possível abrir o WhatsApp no navegador.";
+          try {
+            const delivery = await sendWhatsAppWithFallback({
+              phone: assignee.whatsapp,
+              message,
+              metadata: {
+                context: "task_created",
+                assignee_user_id: assigneeUserId,
+                created_by_user_id: creatorUserId
+              }
+            });
+            if (delivery.mode === "api") {
+              successMessage = "Tarefa criada e WhatsApp enviado automaticamente ao responsável.";
+            } else {
+              successMessage = "Tarefa criada. A mensagem foi preparada no WhatsApp Web para envio manual.";
+            }
+          } catch {
+            successMessage = "Tarefa criada, mas não foi possível enviar/preparar o WhatsApp automaticamente.";
           }
         } else {
           successMessage = "Tarefa criada, mas o responsável não possui WhatsApp cadastrado.";
@@ -1047,15 +1083,28 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
       .filter(Boolean)
       .join("\n");
 
-    const opened = openWhatsAppMessage(creator.whatsapp, message);
-    if (opened) {
-      setSuccess(`Aviso de conflito preparado para ${userDisplayName(creator)} no WhatsApp.`);
-      setError("");
-    } else {
-      setError("Não foi possível abrir o WhatsApp para avisar o criador.");
-    }
+    sendWhatsAppWithFallback({
+      phone: creator.whatsapp,
+      message,
+      metadata: {
+        context: "task_conflict_alert",
+        task_id: task.id,
+        conflict_task_id: conflictedWith?.id || null
+      }
+    })
+      .then((delivery) => {
+        if (delivery.mode === "api") {
+          setSuccess(`Aviso de conflito enviado automaticamente para ${userDisplayName(creator)}.`);
+        } else {
+          setSuccess(`Aviso de conflito preparado no WhatsApp Web para ${userDisplayName(creator)}.`);
+        }
+        setError("");
+      })
+      .catch(() => {
+        setError("Não foi possível enviar o alerta de conflito por WhatsApp.");
+      });
   }
-
+  
   function handleDragStart(event, taskId) {
     setDraggingTaskId(taskId);
     event.dataTransfer.effectAllowed = "move";

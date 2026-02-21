@@ -1,7 +1,7 @@
 import { ensureSupabase } from "./supabase";
 import { PIPELINE_STAGES, sortByStageOrder, stageStatus } from "./pipelineStages";
 import { parseOpportunityTitle, resolveEstimatedValueByProduct } from "./productCatalog";
-import { formatBrazilPhone, validateBrazilPhoneOrEmpty } from "./phone";
+import { formatBrazilPhone, toWhatsAppBrazilNumber, validateBrazilPhoneOrEmpty } from "./phone";
 
 function normalizeError(error, fallback) {
   return error?.message || fallback;
@@ -847,6 +847,38 @@ export async function scheduleTaskOnlineMeeting(payload) {
   }
 
   return data || {};
+}
+
+export async function sendWhatsAppMessage(payload) {
+  const phone = toWhatsAppBrazilNumber(payload?.phone);
+  const message = String(payload?.message || "").trim();
+
+  if (!phone) throw new Error("WhatsApp inválido para envio.");
+  if (!message) throw new Error("Mensagem de WhatsApp vazia.");
+
+  const supabase = ensureSupabase();
+  const { data, error } = await supabase.functions.invoke("whatsapp-send-message", {
+    body: {
+      phone,
+      message,
+      metadata: payload?.metadata || {}
+    }
+  });
+
+  if (error) {
+    throw new Error(normalizeError(error, "Falha ao enviar WhatsApp."));
+  }
+
+  const safeData = asObject(data);
+  if (safeData.error) {
+    throw new Error(String(safeData.message || safeData.error || "Falha ao enviar WhatsApp."));
+  }
+
+  return {
+    provider: String(safeData.provider || ""),
+    phone: String(safeData.phone || phone),
+    status: String(safeData.status || "queued")
+  };
 }
 
 export async function logTaskFlowComment({ taskId, companyId, taskTitle, fromStatus, toStatus, comment }) {
