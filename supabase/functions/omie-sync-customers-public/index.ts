@@ -383,8 +383,9 @@ Deno.serve(async (request: Request) => {
   const dryRun = parseBoolean(body.dry_run || body.dryRun, false);
   const requestedRecordsPerPage = clampNumber(body.records_per_page || body.recordsPerPage, 1, 500, 100);
   const recordsPerPage = dryRun ? requestedRecordsPerPage : Math.min(requestedRecordsPerPage, LIVE_MAX_RECORDS_PER_PAGE);
-  const maxPages = clampNumber(body.max_pages || body.maxPages, 1, 200, 20);
+  const requestedMaxPages = clampNumber(body.max_pages || body.maxPages, 1, 200, 20);
   const startPage = clampNumber(body.start_page || body.startPage, 1, 100000, 1);
+  const maxPages = Math.min(200, Math.max(requestedMaxPages, startPage + requestedMaxPages - 1));
   const requestedPageChunkSize = clampNumber(body.page_chunk_size || body.pageChunkSize, 1, 20, DEFAULT_PAGE_CHUNK_SIZE);
   const pageChunkSize = dryRun ? requestedPageChunkSize : Math.min(requestedPageChunkSize, LIVE_MAX_PAGE_CHUNK_SIZE);
   const executionGuardMs = clampNumber(
@@ -403,7 +404,8 @@ Deno.serve(async (request: Request) => {
       status: "running",
       payload: {
         records_per_page: recordsPerPage,
-        max_pages: maxPages,
+        max_pages: requestedMaxPages,
+        effective_max_pages: maxPages,
         start_page: startPage,
         page_chunk_size: pageChunkSize,
         execution_guard_ms: executionGuardMs,
@@ -616,7 +618,8 @@ Deno.serve(async (request: Request) => {
     const resultPayload = {
       ...summary,
       records_per_page: recordsPerPage,
-      max_pages: maxPages,
+      max_pages: requestedMaxPages,
+      effective_max_pages: maxPages,
       start_page: startPage,
       page_chunk_size: pageChunkSize,
       execution_guard_ms: executionGuardMs,
