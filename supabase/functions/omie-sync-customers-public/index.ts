@@ -90,6 +90,14 @@ function parseBoolean(value: unknown, fallback = false) {
   return fallback;
 }
 
+function isRetriableOmieHttpStatus(status: number) {
+  return [500, 502, 503, 504].includes(status);
+}
+
+function isRetriableOmiePageError(message: string) {
+  return /^omie_http_(500|502|503|504)/.test(message);
+}
+
 function pickFirstNonEmpty(source: AnyRecord, keys: string[]) {
   for (const key of keys) {
     const value = safeString(source[key]);
@@ -217,37 +225,47 @@ async function fetchOmieCustomersPage({
     ]
   };
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
 
-  const rawText = await response.text();
-  let parsed: AnyRecord = {};
-  try {
-    parsed = asObject(JSON.parse(rawText));
-  } catch {
-    parsed = {};
+    const rawText = await response.text();
+    let parsed: AnyRecord = {};
+    try {
+      parsed = asObject(JSON.parse(rawText));
+    } catch {
+      parsed = {};
+    }
+
+    const fault = safeString(parsed.faultstring || parsed.message || parsed.descricao_status);
+
+    if (!response.ok) {
+      const details = fault || safeString(rawText).slice(0, 180);
+      if (isRetriableOmieHttpStatus(response.status) && attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
+        continue;
+      }
+      throw new Error(details ? `omie_http_${response.status}:${details}` : `omie_http_${response.status}`);
+    }
+
+    if (fault && (parsed.faultcode || parsed.status === "Erro")) {
+      throw new Error(`omie_fault:${fault}`);
+    }
+
+    const items = extractOmieList(parsed);
+    const totalPages = extractTotalPages(parsed, page, items.length, recordsPerPage);
+
+    return {
+      payload: parsed,
+      items,
+      totalPages
+    };
   }
 
-  if (!response.ok) {
-    throw new Error(`omie_http_${response.status}`);
-  }
-
-  const fault = safeString(parsed.faultstring || parsed.message || parsed.descricao_status);
-  if (fault && (parsed.faultcode || parsed.status === "Erro")) {
-    throw new Error(`omie_fault:${fault}`);
-  }
-
-  const items = extractOmieList(parsed);
-  const totalPages = extractTotalPages(parsed, page, items.length, recordsPerPage);
-
-  return {
-    payload: parsed,
-    items,
-    totalPages
-  };
+  throw new Error("omie_http_500:Falha persistente ao listar clientes.");
 }
 
 async function upsertIntegrationLink({
@@ -433,6 +451,7 @@ Deno.serve(async (request: Request) => {
       companies_created: 0,
       companies_updated: 0,
       links_updated: 0,
+      skipped_pages_server_error: 0,
       skipped_without_identifier: 0,
       skipped_without_cnpj: 0,
       skipped_invalid_payload: 0,
@@ -456,13 +475,31 @@ Deno.serve(async (request: Request) => {
         break;
       }
 
-      const { items, totalPages: detectedPages } = await fetchOmieCustomersPage({
-        url: omieUrl,
-        appKey,
-        appSecret,
-        page,
-        recordsPerPage
-      });
+      let items: unknown[] = [];
+      let detectedPages = totalPages;
+      try {
+        const pageResult = await fetchOmieCustomersPage({
+          url: omieUrl,
+          appKey,
+          appSecret,
+          page,
+          recordsPerPage
+        });
+        items = pageResult.items;
+        detectedPages = pageResult.totalPages;
+      } catch (pageError) {
+        const pageMessage = pageError instanceof Error ? pageError.message : "Falha ao listar página OMIE.";
+        if (isRetriableOmiePageError(pageMessage)) {
+          summary.skipped_pages_server_error += 1;
+          summary.errors.push(`Página ${page} ignorada por falha OMIE: ${pageMessage}`);
+          if (summary.errors.length > 20) summary.errors = summary.errors.slice(0, 20);
+          totalPages = Math.max(totalPages, maxPages);
+          pagesProcessedInRun += 1;
+          page += 1;
+          continue;
+        }
+        throw pageError;
+      }
 
       totalPages = Math.max(totalPages, detectedPages);
       summary.pages_processed += 1;
