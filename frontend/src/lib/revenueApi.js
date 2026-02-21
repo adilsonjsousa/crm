@@ -1483,6 +1483,8 @@ export async function listCompanyOmiePurchaseHistory(company, options = {}) {
     customer: asObject(safeData.customer),
     summary: asObject(safeData.summary),
     orders: Array.isArray(safeData.orders) ? safeData.orders : [],
+    receivables_summary: asObject(safeData.receivables_summary),
+    receivables: Array.isArray(safeData.receivables) ? safeData.receivables : [],
     warnings: Array.isArray(safeData.warnings) ? safeData.warnings.map((item) => String(item || "")) : []
   };
 }

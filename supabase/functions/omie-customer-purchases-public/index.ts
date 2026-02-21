@@ -10,6 +10,7 @@ const corsHeaders = {
 
 const DEFAULT_OMIE_CLIENTS_URL = "https://app.omie.com.br/api/v1/geral/clientes/";
 const DEFAULT_OMIE_ORDERS_URL = "https://app.omie.com.br/api/v1/produtos/pedido/";
+const DEFAULT_OMIE_RECEIVABLES_URL = "https://app.omie.com.br/api/v1/financas/contareceber/";
 
 function jsonResponse(status: number, payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -309,6 +310,223 @@ function buildOrderSummary(orders: Array<AnyRecord>) {
   };
 }
 
+function normalizeStatusText(value: unknown) {
+  return safeString(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isOpenReceivableStatus(value: unknown) {
+  const normalized = normalizeStatusText(value);
+  if (!normalized) return null;
+
+  if (
+    normalized.includes("pago") ||
+    normalized.includes("baixad") ||
+    normalized.includes("liquid") ||
+    normalized.includes("quitad") ||
+    normalized.includes("cancel")
+  ) {
+    return false;
+  }
+
+  if (
+    normalized.includes("abert") ||
+    normalized.includes("pendente") ||
+    normalized.includes("atras") ||
+    normalized.includes("vencid") ||
+    normalized.includes("receber") ||
+    normalized.includes("parcial")
+  ) {
+    return true;
+  }
+
+  return null;
+}
+
+function pickFirstMoneyValue(sources: AnyRecord[], keys: string[]) {
+  for (const source of sources) {
+    const current = asObject(source);
+    for (const key of keys) {
+      const raw = current[key];
+      if (raw === undefined || raw === null) continue;
+      if (typeof raw === "string" && !safeString(raw)) continue;
+      return parseOmieMoney(raw);
+    }
+  }
+  return 0;
+}
+
+function normalizeOmieReceivable(rawReceivable: unknown) {
+  const row = asObject(rawReceivable);
+  const header = asObject(row.cabecalho);
+  const title = asObject(row.titulo ?? row.identificacao ?? row.info ?? row.dadosTitulo);
+  const sources = [row, header, title];
+
+  const status =
+    pickFirstNonEmpty(row, ["status_titulo", "status", "status_lancamento", "situacao"]) ||
+    pickFirstNonEmpty(header, ["status_titulo", "status", "status_lancamento", "situacao"]) ||
+    pickFirstNonEmpty(title, ["status_titulo", "status", "status_lancamento", "situacao"]);
+
+  const documentAmount = pickFirstMoneyValue(sources, [
+    "valor_documento",
+    "valor_titulo",
+    "valor_original",
+    "valor_total",
+    "valor",
+    "valor_bruto"
+  ]);
+
+  const paidAmount = pickFirstMoneyValue(sources, [
+    "valor_pago",
+    "valor_recebido",
+    "valor_baixado",
+    "valor_liquidado",
+    "valor_pago_liquido"
+  ]);
+
+  let openAmount = pickFirstMoneyValue(sources, [
+    "valor_saldo",
+    "valor_aberto",
+    "valor_em_aberto",
+    "valor_a_receber",
+    "valor_pendente",
+    "saldo_em_aberto"
+  ]);
+
+  if (!(openAmount > 0) && documentAmount > 0 && paidAmount > 0 && paidAmount < documentAmount) {
+    openAmount = documentAmount - paidAmount;
+  }
+
+  if (!(openAmount > 0) && documentAmount > 0) {
+    const openByStatus = isOpenReceivableStatus(status);
+    if (openByStatus === true) openAmount = documentAmount;
+    if (openByStatus === false) openAmount = 0;
+  }
+
+  if (openAmount < 0) openAmount = 0;
+
+  const dataVencimentoIso =
+    parseOmieDateToIso(
+      pickFirstNonEmpty(row, ["data_vencimento", "data_venc", "data_venc_original", "vencimento"])
+    ) ||
+    parseOmieDateToIso(
+      pickFirstNonEmpty(header, ["data_vencimento", "data_venc", "data_venc_original", "vencimento"])
+    ) ||
+    parseOmieDateToIso(
+      pickFirstNonEmpty(title, ["data_vencimento", "data_venc", "data_venc_original", "vencimento"])
+    );
+
+  const dataEmissaoIso =
+    parseOmieDateToIso(
+      pickFirstNonEmpty(row, ["data_emissao", "data_lancamento", "data_entrada", "data_documento"])
+    ) ||
+    parseOmieDateToIso(
+      pickFirstNonEmpty(header, ["data_emissao", "data_lancamento", "data_entrada", "data_documento"])
+    ) ||
+    parseOmieDateToIso(
+      pickFirstNonEmpty(title, ["data_emissao", "data_lancamento", "data_entrada", "data_documento"])
+    );
+
+  const dataPagamentoIso =
+    parseOmieDateToIso(
+      pickFirstNonEmpty(row, ["data_pagamento", "data_baixa", "data_liquidacao", "data_recebimento"])
+    ) ||
+    parseOmieDateToIso(
+      pickFirstNonEmpty(header, ["data_pagamento", "data_baixa", "data_liquidacao", "data_recebimento"])
+    ) ||
+    parseOmieDateToIso(
+      pickFirstNonEmpty(title, ["data_pagamento", "data_baixa", "data_liquidacao", "data_recebimento"])
+    );
+
+  const codigoLancamento =
+    pickFirstNonEmpty(row, ["codigo_lancamento_omie", "codigo_lancamento", "codigo_titulo", "codigo", "id"]) ||
+    pickFirstNonEmpty(header, ["codigo_lancamento_omie", "codigo_lancamento", "codigo_titulo", "codigo", "id"]) ||
+    pickFirstNonEmpty(title, ["codigo_lancamento_omie", "codigo_lancamento", "codigo_titulo", "codigo", "id"]);
+
+  const numeroDocumento =
+    pickFirstNonEmpty(row, ["numero_documento", "numero_titulo", "numero_parcela", "numero"]) ||
+    pickFirstNonEmpty(header, ["numero_documento", "numero_titulo", "numero_parcela", "numero"]) ||
+    pickFirstNonEmpty(title, ["numero_documento", "numero_titulo", "numero_parcela", "numero"]);
+
+  const parcela =
+    pickFirstNonEmpty(row, ["parcela", "numero_parcela"]) ||
+    pickFirstNonEmpty(header, ["parcela", "numero_parcela"]) ||
+    pickFirstNonEmpty(title, ["parcela", "numero_parcela"]);
+
+  return {
+    codigo_lancamento_omie: codigoLancamento || null,
+    numero_documento: numeroDocumento || null,
+    parcela: parcela || null,
+    status: status || null,
+    data_vencimento_iso: dataVencimentoIso || null,
+    data_emissao_iso: dataEmissaoIso || null,
+    data_pagamento_iso: dataPagamentoIso || null,
+    valor_documento: documentAmount,
+    valor_pago: paidAmount,
+    valor_aberto: openAmount,
+    codigo_cliente: pickFirstNonEmpty(row, ["codigo_cliente", "codigo_cliente_fornecedor"]) || null
+  };
+}
+
+function buildReceivablesSummary(receivables: Array<AnyRecord>) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayMs = today.getTime();
+  const next30DaysMs = todayMs + 30 * dayMs;
+
+  let openReceivablesCount = 0;
+  let openTotalAmount = 0;
+  let overdueReceivablesCount = 0;
+  let overdueTotalAmount = 0;
+  let dueNext30DaysCount = 0;
+  let dueNext30DaysTotal = 0;
+  let nextDueAt: string | null = null;
+  let lastDueAt: string | null = null;
+
+  for (const receivable of receivables) {
+    const openAmount = parseOmieMoney(receivable.valor_aberto);
+    if (!(openAmount > 0)) continue;
+
+    openReceivablesCount += 1;
+    openTotalAmount += openAmount;
+
+    const dueIso = parseOmieDateToIso(receivable.data_vencimento_iso || receivable.data_emissao_iso);
+    if (!dueIso) continue;
+    const dueMs = new Date(dueIso).getTime();
+    if (!Number.isFinite(dueMs)) continue;
+
+    if (dueMs < todayMs) {
+      overdueReceivablesCount += 1;
+      overdueTotalAmount += openAmount;
+    } else if (dueMs <= next30DaysMs) {
+      dueNext30DaysCount += 1;
+      dueNext30DaysTotal += openAmount;
+    }
+
+    if (!nextDueAt || dueMs < new Date(nextDueAt).getTime()) {
+      nextDueAt = dueIso;
+    }
+    if (!lastDueAt || dueMs > new Date(lastDueAt).getTime()) {
+      lastDueAt = dueIso;
+    }
+  }
+
+  return {
+    total_receivables: receivables.length,
+    open_receivables_count: openReceivablesCount,
+    open_total_amount: openTotalAmount,
+    overdue_receivables_count: overdueReceivablesCount,
+    overdue_total_amount: overdueTotalAmount,
+    due_next_30_days_count: dueNext30DaysCount,
+    due_next_30_days_total: dueNext30DaysTotal,
+    next_due_at: nextDueAt,
+    last_due_at: lastDueAt
+  };
+}
+
 async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -560,6 +778,102 @@ async function listOmieOrdersByCustomer({
   };
 }
 
+async function listOmieReceivablesByCustomer({
+  appKey,
+  appSecret,
+  receivablesUrl,
+  customerCode,
+  recordsPerPage,
+  maxPages
+}: {
+  appKey: string;
+  appSecret: string;
+  receivablesUrl: string;
+  customerCode: string;
+  recordsPerPage: number;
+  maxPages: number;
+}) {
+  const warnings: string[] = [];
+  const customerNumericCode = Number(customerCode) || customerCode;
+  const filterCandidates: AnyRecord[] = [
+    { filtrar_por_cliente: customerNumericCode },
+    { codigo_cliente_fornecedor: customerNumericCode },
+    { codigo_cliente_omie: customerNumericCode }
+  ];
+
+  for (let index = 0; index < filterCandidates.length; index += 1) {
+    const filter = filterCandidates[index];
+    const filterKey = Object.keys(filter)[0] || "filtrar_por_cliente";
+    let page = 1;
+    let totalPages = 1;
+    let pagesProcessed = 0;
+    const receivables: AnyRecord[] = [];
+
+    try {
+      while (page <= maxPages && page <= totalPages) {
+        const payload = await callOmieApi({
+          url: receivablesUrl,
+          appKey,
+          appSecret,
+          call: "ListarContasReceber",
+          param: {
+            pagina: page,
+            registros_por_pagina: recordsPerPage,
+            apenas_importado_api: "N",
+            ...filter
+          }
+        });
+
+        const rows = extractArrayByKeys(payload, [
+          "conta_receber_cadastro",
+          "conta_receber",
+          "contas_receber",
+          "lista_contas_receber",
+          "titulo_receber",
+          "titulos_receber",
+          "lista_titulos",
+          "lancamentos"
+        ]);
+        totalPages = Math.max(totalPages, extractTotalPages(payload, page, rows.length, recordsPerPage));
+
+        for (const row of rows) {
+          receivables.push(normalizeOmieReceivable(row));
+        }
+
+        pagesProcessed += 1;
+        if (!rows.length) break;
+        page += 1;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha ao listar contas a receber no OMIE.";
+      warnings.push(`ListarContasReceber (${filterKey}): ${message}`);
+      continue;
+    }
+
+    const sortedReceivables = [...receivables].sort((a, b) => {
+      const aDate = parseOmieDateToIso(a.data_vencimento_iso || a.data_emissao_iso);
+      const bDate = parseOmieDateToIso(b.data_vencimento_iso || b.data_emissao_iso);
+      const aTime = aDate ? new Date(aDate).getTime() : Number.POSITIVE_INFINITY;
+      const bTime = bDate ? new Date(bDate).getTime() : Number.POSITIVE_INFINITY;
+      return aTime - bTime;
+    });
+
+    return {
+      receivables: sortedReceivables,
+      pages_processed: pagesProcessed,
+      total_pages_detected: totalPages,
+      warnings
+    };
+  }
+
+  return {
+    receivables: [],
+    pages_processed: 0,
+    total_pages_detected: 0,
+    warnings
+  };
+}
+
 Deno.serve(async (request: Request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -597,6 +911,9 @@ Deno.serve(async (request: Request) => {
 
   const clientsUrl = safeString(body.omie_clients_url || body.omieClientsUrl || DEFAULT_OMIE_CLIENTS_URL) || DEFAULT_OMIE_CLIENTS_URL;
   const ordersUrl = safeString(body.omie_orders_url || body.omieOrdersUrl || DEFAULT_OMIE_ORDERS_URL) || DEFAULT_OMIE_ORDERS_URL;
+  const receivablesUrl =
+    safeString(body.omie_receivables_url || body.omieReceivablesUrl || DEFAULT_OMIE_RECEIVABLES_URL) ||
+    DEFAULT_OMIE_RECEIVABLES_URL;
   const recordsPerPage = clampNumber(body.records_per_page || body.recordsPerPage, 1, 500, 100);
   const maxPages = clampNumber(body.max_pages || body.maxPages, 1, 200, 60);
   const maxFallbackPages = clampNumber(body.max_client_scan_pages || body.maxClientScanPages, 1, 300, 80);
@@ -629,6 +946,34 @@ Deno.serve(async (request: Request) => {
     });
 
     const summary = buildOrderSummary(orderLookup.orders);
+    let receivableLookup: {
+      receivables: AnyRecord[];
+      pages_processed: number;
+      total_pages_detected: number;
+      warnings: string[];
+    } = {
+      receivables: [],
+      pages_processed: 0,
+      total_pages_detected: 0,
+      warnings: []
+    };
+
+    try {
+      receivableLookup = await listOmieReceivablesByCustomer({
+        appKey,
+        appSecret,
+        receivablesUrl,
+        customerCode: customerLookup.customer.codigo_cliente_omie,
+        recordsPerPage,
+        maxPages
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha ao listar contas a receber no OMIE.";
+      receivableLookup.warnings.push(`ListarContasReceber: ${message}`);
+    }
+
+    const receivablesSummary = buildReceivablesSummary(receivableLookup.receivables);
+    const warnings = [...customerLookup.warnings, ...receivableLookup.warnings];
 
     return jsonResponse(200, {
       cnpj,
@@ -637,7 +982,11 @@ Deno.serve(async (request: Request) => {
       orders: orderLookup.orders,
       pages_processed: orderLookup.pages_processed,
       total_pages_detected: orderLookup.total_pages_detected,
-      warnings: customerLookup.warnings
+      receivables_summary: receivablesSummary,
+      receivables: receivableLookup.receivables,
+      receivables_pages_processed: receivableLookup.pages_processed,
+      receivables_total_pages_detected: receivableLookup.total_pages_detected,
+      warnings
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha inesperada ao buscar historico de compras no OMIE.";
