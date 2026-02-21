@@ -7,6 +7,7 @@ import {
   listCompanyContacts,
   listCompanyHistory,
   listCompanyInteractions,
+  listCompanyOmiePurchaseHistory,
   listCompanyOpportunities,
   listCompanyOpportunityStageHistory,
   listCompanySalesOrders,
@@ -21,6 +22,7 @@ const CUSTOMER_MODAL_TABS = [
   { id: "overview", label: "Resumo" },
   { id: "history", label: "Historico" },
   { id: "opportunities", label: "Propostas" },
+  { id: "omie_purchases", label: "Compras OMIE" },
   { id: "tasks", label: "Agenda" },
   { id: "assets", label: "Raio-X do Parque" },
   { id: "interactions", label: "Interacoes" }
@@ -207,6 +209,14 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
   const [savingAsset, setSavingAsset] = useState(false);
   const [uploadingAssetId, setUploadingAssetId] = useState("");
   const [assetFeedback, setAssetFeedback] = useState({ type: "", message: "" });
+  const [omiePurchasesLoading, setOmiePurchasesLoading] = useState(false);
+  const [omiePurchasesError, setOmiePurchasesError] = useState("");
+  const [omiePurchases, setOmiePurchases] = useState({
+    summary: {},
+    orders: [],
+    warnings: [],
+    customer: {}
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -226,6 +236,14 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     setError("");
     setAssetFeedback({ type: "", message: "" });
     setAssetForm(emptyAssetForm());
+    setOmiePurchasesLoading(false);
+    setOmiePurchasesError("");
+    setOmiePurchases({
+      summary: {},
+      orders: [],
+      warnings: [],
+      customer: {}
+    });
 
     Promise.all([
       getCompanyById(companyId),
@@ -265,6 +283,54 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     };
   }, [companyId, open]);
 
+  useEffect(() => {
+    if (!open || selectedTab !== "omie_purchases") return;
+
+    const cnpjDigits = String(companyProfile?.cnpj || "").replace(/\D/g, "");
+    if (cnpjDigits.length !== 14) {
+      setOmiePurchasesError("Cliente sem CNPJ valido para consultar compras no OMIE.");
+      setOmiePurchases({
+        summary: {},
+        orders: [],
+        warnings: [],
+        customer: {}
+      });
+      return;
+    }
+
+    let active = true;
+    setOmiePurchasesLoading(true);
+    setOmiePurchasesError("");
+
+    listCompanyOmiePurchaseHistory({ cnpj: cnpjDigits })
+      .then((data) => {
+        if (!active) return;
+        setOmiePurchases({
+          summary: data.summary || {},
+          orders: Array.isArray(data.orders) ? data.orders : [],
+          warnings: Array.isArray(data.warnings) ? data.warnings : [],
+          customer: data.customer || {}
+        });
+      })
+      .catch((err) => {
+        if (!active) return;
+        setOmiePurchasesError(err.message);
+        setOmiePurchases({
+          summary: {},
+          orders: [],
+          warnings: [],
+          customer: {}
+        });
+      })
+      .finally(() => {
+        if (active) setOmiePurchasesLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [open, selectedTab, companyProfile?.cnpj]);
+
   const visitTasks = useMemo(() => tasks.filter((task) => isVisitTask(task)), [tasks]);
   const pendingTasks = useMemo(
     () => tasks.filter((task) => task.status === "todo" || task.status === "in_progress"),
@@ -288,6 +354,15 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
   const totalContractCost = useMemo(
     () => assets.reduce((acc, item) => acc + Number(item.contract_cost || 0), 0),
     [assets]
+  );
+  const omieSummary = useMemo(() => omiePurchases.summary || {}, [omiePurchases.summary]);
+  const omieOrders = useMemo(
+    () => (Array.isArray(omiePurchases.orders) ? omiePurchases.orders : []),
+    [omiePurchases.orders]
+  );
+  const omieWarnings = useMemo(
+    () => (Array.isArray(omiePurchases.warnings) ? omiePurchases.warnings : []),
+    [omiePurchases.warnings]
   );
 
   const timelineRows = useMemo(() => {
@@ -810,6 +885,98 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                 </tbody>
               </table>
             </div>
+          </div>
+        ) : null}
+
+        {!loading && selectedTab === "omie_purchases" ? (
+          <div className="customer-popup-opportunities">
+            {omiePurchasesError ? <p className="error-text top-gap">{omiePurchasesError}</p> : null}
+            {omiePurchasesLoading ? <p className="muted top-gap">Consultando historico de compras no OMIE...</p> : null}
+
+            {!omiePurchasesLoading && !omiePurchasesError ? (
+              <>
+                <article className="customer-popup-card top-gap">
+                  <h4>Resumo de compras no OMIE</h4>
+                  <div className="customer-popup-kpis">
+                    <div>
+                      <span>Pedidos encontrados</span>
+                      <strong>{Number(omieSummary.total_orders || 0)}</strong>
+                      <small>{omiePurchases.customer?.codigo_cliente_omie ? `Codigo OMIE ${omiePurchases.customer.codigo_cliente_omie}` : "-"}</small>
+                    </div>
+                    <div>
+                      <span>Total em compras</span>
+                      <strong>{brl(omieSummary.total_amount)}</strong>
+                      <small>Somatorio de pedidos retornados</small>
+                    </div>
+                    <div>
+                      <span>Ultima compra</span>
+                      <strong>{formatDateTime(omieSummary.last_purchase_at)}</strong>
+                      <small>Base OMIE</small>
+                    </div>
+                    <div>
+                      <span>Compras em 90 dias</span>
+                      <strong>{Number(omieSummary.orders_last_90_days || 0)}</strong>
+                      <small>Recencia curta</small>
+                    </div>
+                    <div>
+                      <span>Compras em 180 dias</span>
+                      <strong>{Number(omieSummary.orders_last_180_days || 0)}</strong>
+                      <small>Recencia media</small>
+                    </div>
+                    <div>
+                      <span>Compras em 360 dias</span>
+                      <strong>{Number(omieSummary.orders_last_360_days || 0)}</strong>
+                      <small>Recencia anual</small>
+                    </div>
+                  </div>
+                </article>
+
+                {omieWarnings.length ? (
+                  <article className="customer-popup-card top-gap">
+                    <h4>Avisos da consulta</h4>
+                    <ul>
+                      {omieWarnings.map((warning, index) => (
+                        <li key={`omie-warning-${index}`}>{warning}</li>
+                      ))}
+                    </ul>
+                  </article>
+                ) : null}
+
+                <div className="table-wrap top-gap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Data</th>
+                        <th>Pedido</th>
+                        <th>Etapa / Status</th>
+                        <th>Valor total</th>
+                        <th>Valor produtos</th>
+                        <th>Codigo OMIE</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {omieOrders.map((order, index) => (
+                        <tr key={`${order.codigo_pedido || order.numero_pedido || "order"}-${index}`}>
+                          <td>{formatDateTime(order.data_pedido_iso || order.data_faturamento_iso || order.data_emissao_iso)}</td>
+                          <td>{order.numero_pedido || order.codigo_pedido || "-"}</td>
+                          <td>{[order.etapa, order.status].filter(Boolean).join(" / ") || "-"}</td>
+                          <td>{brl(order.valor_total)}</td>
+                          <td>{brl(order.valor_mercadorias)}</td>
+                          <td>{order.codigo_pedido || "-"}</td>
+                        </tr>
+                      ))}
+                      {!omieOrders.length ? (
+                        <tr>
+                          <td colSpan={6} className="muted">
+                            Nenhuma compra retornada pelo OMIE para este cliente.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
           </div>
         ) : null}
 

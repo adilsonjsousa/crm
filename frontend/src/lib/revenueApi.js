@@ -67,6 +67,7 @@ function normalizeStoragePart(value) {
 
 const CRM_ACCESS_MODULES = ["dashboard", "pipeline", "companies", "contacts", "tasks", "reports", "settings"];
 const CRM_ACCESS_LEVELS = ["none", "read", "edit", "admin"];
+const OMIE_CUSTOMERS_STORAGE_KEY = "crm.settings.omie.customers.v1";
 const CRM_ROLE_DEFAULT_PERMISSIONS = {
   admin: {
     dashboard: "admin",
@@ -1425,6 +1426,65 @@ export async function syncOmieCustomers(payload) {
     throw new Error(String(data.message || data.error || "Falha na sincronização OMIE de clientes."));
   }
   return data || {};
+}
+
+function readOmieCredentialsFromLocalStorage() {
+  if (typeof window === "undefined") {
+    return { appKey: "", appSecret: "" };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(OMIE_CUSTOMERS_STORAGE_KEY);
+    const parsed = asObject(raw ? JSON.parse(raw) : {});
+    return {
+      appKey: String(parsed.app_key || "").trim(),
+      appSecret: String(parsed.app_secret || "").trim()
+    };
+  } catch {
+    return { appKey: "", appSecret: "" };
+  }
+}
+
+export async function listCompanyOmiePurchaseHistory(company, options = {}) {
+  const companyData = asObject(company);
+  const cnpjDigits = cleanDigits(companyData.cnpj || options.cnpj || "");
+
+  if (cnpjDigits.length !== 14) {
+    throw new Error("Cliente sem CNPJ valido para consultar historico de compras no OMIE.");
+  }
+
+  const { appKey, appSecret } = readOmieCredentialsFromLocalStorage();
+  if (!appKey || !appSecret) {
+    throw new Error("Credenciais OMIE nao encontradas neste navegador. Preencha App Key e App Secret em Configuracoes.");
+  }
+
+  const supabase = ensureSupabase();
+  const body = {
+    app_key: appKey,
+    app_secret: appSecret,
+    cnpj_cpf: cnpjDigits,
+    records_per_page: Number(options.records_per_page) > 0 ? Number(options.records_per_page) : 100,
+    max_pages: Number(options.max_pages) > 0 ? Number(options.max_pages) : 60
+  };
+
+  const { data, error } = await supabase.functions.invoke("omie-customer-purchases-public", { body });
+
+  if (error) {
+    throw new Error(normalizeError(error, "Falha ao consultar historico de compras no OMIE."));
+  }
+
+  const safeData = asObject(data);
+  if (safeData.error) {
+    throw new Error(String(safeData.message || safeData.error || "Falha ao consultar historico de compras no OMIE."));
+  }
+
+  return {
+    cnpj: String(safeData.cnpj || cnpjDigits),
+    customer: asObject(safeData.customer),
+    summary: asObject(safeData.summary),
+    orders: Array.isArray(safeData.orders) ? safeData.orders : [],
+    warnings: Array.isArray(safeData.warnings) ? safeData.warnings.map((item) => String(item || "")) : []
+  };
 }
 
 export async function listOmieCustomerSyncJobs(limit = 12) {
