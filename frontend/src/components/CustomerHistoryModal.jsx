@@ -7,7 +7,8 @@ import {
   listCompanyContacts,
   listCompanyHistory,
   listCompanyInteractions,
-  listCompanyOmiePurchaseHistory,
+  listCompanyOmiePurchases,
+  listCompanyOmieReceivables,
   listCompanyOpportunities,
   listCompanyOpportunityStageHistory,
   listCompanySalesOrders,
@@ -223,6 +224,10 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
   const [assetFeedback, setAssetFeedback] = useState({ type: "", message: "" });
   const [omiePurchasesLoading, setOmiePurchasesLoading] = useState(false);
   const [omiePurchasesError, setOmiePurchasesError] = useState("");
+  const [omiePurchasesFetched, setOmiePurchasesFetched] = useState(false);
+  const [omieReceivablesLoading, setOmieReceivablesLoading] = useState(false);
+  const [omieReceivablesError, setOmieReceivablesError] = useState("");
+  const [omieReceivablesFetched, setOmieReceivablesFetched] = useState(false);
   const [omiePurchases, setOmiePurchases] = useState({
     summary: {},
     orders: [],
@@ -254,6 +259,10 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     setAssetForm(emptyAssetForm());
     setOmiePurchasesLoading(false);
     setOmiePurchasesError("");
+    setOmiePurchasesFetched(false);
+    setOmieReceivablesLoading(false);
+    setOmieReceivablesError("");
+    setOmieReceivablesFetched(false);
     setOmiePurchases({
       summary: {},
       orders: [],
@@ -304,22 +313,11 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
   }, [companyId, open]);
 
   useEffect(() => {
-    const isOmieTab = selectedTab === "omie_purchases" || selectedTab === "omie_receivables";
-    if (!open || !isOmieTab) return;
+    if (!open || selectedTab !== "omie_purchases" || omiePurchasesFetched) return;
 
     const cnpjDigits = String(companyProfile?.cnpj || "").replace(/\D/g, "");
     if (cnpjDigits.length !== 14) {
-      setOmiePurchasesError("Cliente sem CNPJ valido para consultar dados no OMIE.");
-      setOmiePurchases({
-        summary: {},
-        orders: [],
-        receivables_summary: {},
-        receivables: [],
-        purchase_warnings: [],
-        receivables_warnings: [],
-        warnings: [],
-        customer: {}
-      });
+      setOmiePurchasesError("Cliente sem CNPJ valido para consultar compras no OMIE.");
       return;
     }
 
@@ -327,33 +325,27 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     setOmiePurchasesLoading(true);
     setOmiePurchasesError("");
 
-    listCompanyOmiePurchaseHistory({ cnpj: cnpjDigits })
+    listCompanyOmiePurchases({ cnpj: cnpjDigits })
       .then((data) => {
         if (!active) return;
-        setOmiePurchases({
+        setOmiePurchases((prev) => ({
+          ...prev,
           summary: data.summary || {},
           orders: Array.isArray(data.orders) ? data.orders : [],
-          receivables_summary: data.receivables_summary || {},
-          receivables: Array.isArray(data.receivables) ? data.receivables : [],
           purchase_warnings: Array.isArray(data.purchase_warnings) ? data.purchase_warnings : [],
-          receivables_warnings: Array.isArray(data.receivables_warnings) ? data.receivables_warnings : [],
-          warnings: Array.isArray(data.warnings) ? data.warnings : [],
-          customer: data.customer || {}
-        });
+          customer: data.customer || prev.customer || {}
+        }));
+        setOmiePurchasesFetched(true);
       })
       .catch((err) => {
         if (!active) return;
         setOmiePurchasesError(err.message);
-        setOmiePurchases({
+        setOmiePurchases((prev) => ({
+          ...prev,
           summary: {},
           orders: [],
-          receivables_summary: {},
-          receivables: [],
-          purchase_warnings: [],
-          receivables_warnings: [],
-          warnings: [],
-          customer: {}
-        });
+          purchase_warnings: []
+        }));
       })
       .finally(() => {
         if (active) setOmiePurchasesLoading(false);
@@ -362,7 +354,57 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     return () => {
       active = false;
     };
-  }, [open, selectedTab, companyProfile?.cnpj]);
+  }, [open, selectedTab, companyProfile?.cnpj, omiePurchasesFetched]);
+
+  useEffect(() => {
+    if (!open || selectedTab !== "omie_receivables" || omieReceivablesFetched) return;
+
+    const cnpjDigits = String(companyProfile?.cnpj || "").replace(/\D/g, "");
+    if (cnpjDigits.length !== 14) {
+      setOmieReceivablesError("Cliente sem CNPJ valido para consultar contas a receber no OMIE.");
+      return;
+    }
+
+    let active = true;
+    setOmieReceivablesLoading(true);
+    setOmieReceivablesError("");
+
+    listCompanyOmieReceivables(
+      { cnpj: cnpjDigits },
+      {
+        records_per_page: 500,
+        max_pages: 30
+      }
+    )
+      .then((data) => {
+        if (!active) return;
+        setOmiePurchases((prev) => ({
+          ...prev,
+          receivables_summary: data.receivables_summary || {},
+          receivables: Array.isArray(data.receivables) ? data.receivables : [],
+          receivables_warnings: Array.isArray(data.receivables_warnings) ? data.receivables_warnings : [],
+          customer: data.customer || prev.customer || {}
+        }));
+        setOmieReceivablesFetched(true);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setOmieReceivablesError(err.message);
+        setOmiePurchases((prev) => ({
+          ...prev,
+          receivables_summary: {},
+          receivables: [],
+          receivables_warnings: []
+        }));
+      })
+      .finally(() => {
+        if (active) setOmieReceivablesLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [open, selectedTab, companyProfile?.cnpj, omieReceivablesFetched]);
 
   const visitTasks = useMemo(() => tasks.filter((task) => isVisitTask(task)), [tasks]);
   const pendingTasks = useMemo(
@@ -1031,10 +1073,10 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
 
         {!loading && selectedTab === "omie_receivables" ? (
           <div className="customer-popup-opportunities">
-            {omiePurchasesError ? <p className="error-text top-gap">{omiePurchasesError}</p> : null}
-            {omiePurchasesLoading ? <p className="muted top-gap">Consultando contas a receber no OMIE...</p> : null}
+            {omieReceivablesError ? <p className="error-text top-gap">{omieReceivablesError}</p> : null}
+            {omieReceivablesLoading ? <p className="muted top-gap">Consultando contas a receber no OMIE...</p> : null}
 
-            {!omiePurchasesLoading && !omiePurchasesError ? (
+            {!omieReceivablesLoading && !omieReceivablesError ? (
               <>
                 <article className="customer-popup-card top-gap">
                   <h4>Contas a receber (OMIE)</h4>

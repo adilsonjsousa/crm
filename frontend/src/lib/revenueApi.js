@@ -1466,7 +1466,7 @@ async function invokeOmieReceivablesWithFallback(supabase, body) {
   return lastResult || { data: null, error: { message: "Falha ao consultar contas a receber no OMIE." } };
 }
 
-export async function listCompanyOmiePurchaseHistory(company, options = {}) {
+function resolveOmieLookupContext(company, options = {}, defaults = {}) {
   const companyData = asObject(company);
   const cnpjDigits = cleanDigits(companyData.cnpj || options.cnpj || "");
 
@@ -1479,67 +1479,110 @@ export async function listCompanyOmiePurchaseHistory(company, options = {}) {
     throw new Error("Credenciais OMIE nao encontradas neste navegador. Preencha App Key e App Secret em Configuracoes.");
   }
 
-  const supabase = ensureSupabase();
+  const defaultRecordsPerPage = Number(defaults.records_per_page) > 0 ? Number(defaults.records_per_page) : 100;
+  const defaultMaxPages = Number(defaults.max_pages) > 0 ? Number(defaults.max_pages) : 60;
   const body = {
     app_key: appKey,
     app_secret: appSecret,
     cnpj_cpf: cnpjDigits,
-    records_per_page: Number(options.records_per_page) > 0 ? Number(options.records_per_page) : 500,
-    max_pages: Number(options.max_pages) > 0 ? Number(options.max_pages) : 120
+    records_per_page: Number(options.records_per_page) > 0 ? Number(options.records_per_page) : defaultRecordsPerPage,
+    max_pages: Number(options.max_pages) > 0 ? Number(options.max_pages) : defaultMaxPages
   };
 
-  const [purchasesResult, receivablesResult] = await Promise.allSettled([
-    supabase.functions.invoke("omie-customer-purchases-public", { body }),
-    invokeOmieReceivablesWithFallback(supabase, body)
-  ]);
+  return { cnpjDigits, body, supabase: ensureSupabase() };
+}
 
-  if (purchasesResult.status !== "fulfilled") {
-    throw new Error("Falha ao consultar historico de compras no OMIE.");
+export async function listCompanyOmiePurchases(company, options = {}) {
+  const { cnpjDigits, body, supabase } = resolveOmieLookupContext(company, options, {
+    records_per_page: 100,
+    max_pages: 60
+  });
+
+  const { data, error } = await supabase.functions.invoke("omie-customer-purchases-public", { body });
+  if (error) {
+    throw new Error(normalizeError(error, "Falha ao consultar historico de compras no OMIE."));
   }
 
-  const purchasesPayload = purchasesResult.value || {};
-  const purchasesError = purchasesPayload.error;
-  if (purchasesError) {
-    throw new Error(normalizeError(purchasesError, "Falha ao consultar historico de compras no OMIE."));
-  }
-
-  const purchasesData = asObject(purchasesPayload.data);
+  const purchasesData = asObject(data);
   if (purchasesData.error) {
     throw new Error(String(purchasesData.message || purchasesData.error || "Falha ao consultar historico de compras no OMIE."));
   }
 
-  let receivablesSummary = {};
+  const purchaseWarnings = Array.isArray(purchasesData.warnings) ? purchasesData.warnings.map((item) => String(item || "")) : [];
+  return {
+    cnpj: String(purchasesData.cnpj || cnpjDigits),
+    customer: asObject(purchasesData.customer),
+    summary: asObject(purchasesData.summary),
+    orders: Array.isArray(purchasesData.orders) ? purchasesData.orders : [],
+    purchase_warnings: purchaseWarnings,
+    warnings: purchaseWarnings
+  };
+}
+
+export async function listCompanyOmieReceivables(company, options = {}) {
+  const { cnpjDigits, body, supabase } = resolveOmieLookupContext(company, options, {
+    records_per_page: 500,
+    max_pages: 30
+  });
+
+  const payload = await invokeOmieReceivablesWithFallback(supabase, body);
+  if (payload?.error) {
+    throw new Error(normalizeError(payload.error, "Falha ao consultar contas a receber no OMIE."));
+  }
+
+  const receivablesData = asObject(payload?.data);
+  if (receivablesData.error) {
+    throw new Error(String(receivablesData.message || receivablesData.error || "Falha ao consultar contas a receber no OMIE."));
+  }
+
+  const receivablesWarnings = Array.isArray(receivablesData.warnings)
+    ? receivablesData.warnings.map((item) => String(item || ""))
+    : [];
+  return {
+    cnpj: String(receivablesData.cnpj || cnpjDigits),
+    customer: asObject(receivablesData.customer),
+    receivables_summary: asObject(receivablesData.receivables_summary),
+    receivables: Array.isArray(receivablesData.receivables) ? receivablesData.receivables : [],
+    receivables_warnings: receivablesWarnings,
+    warnings: receivablesWarnings
+  };
+}
+
+export async function listCompanyOmiePurchaseHistory(company, options = {}) {
+  const [purchasesResult, receivablesResult] = await Promise.allSettled([
+    listCompanyOmiePurchases(company, options),
+    listCompanyOmieReceivables(company, options)
+  ]);
+
+  if (purchasesResult.status !== "fulfilled") {
+    const message = purchasesResult.reason instanceof Error ? purchasesResult.reason.message : "Falha ao consultar historico de compras no OMIE.";
+    throw new Error(message);
+  }
+
+  const purchasesData = purchasesResult.value || {};
+  let receivablesSummary = asObject({});
   let receivablesRows = [];
   let receivablesWarnings = [];
 
   if (receivablesResult.status === "fulfilled") {
-    const receivablesPayload = receivablesResult.value || {};
-    const receivablesError = receivablesPayload.error;
-
-    if (receivablesError) {
-      receivablesWarnings.push(normalizeError(receivablesError, "Falha ao consultar contas a receber no OMIE."));
-    } else {
-      const receivablesData = asObject(receivablesPayload.data);
-      if (receivablesData.error) {
-        receivablesWarnings.push(
-          String(receivablesData.message || receivablesData.error || "Falha ao consultar contas a receber no OMIE.")
-        );
-      } else {
-        receivablesSummary = asObject(receivablesData.receivables_summary);
-        receivablesRows = Array.isArray(receivablesData.receivables) ? receivablesData.receivables : [];
-        receivablesWarnings = Array.isArray(receivablesData.warnings)
-          ? receivablesData.warnings.map((item) => String(item || ""))
-          : [];
-      }
-    }
+    const receivablesData = receivablesResult.value || {};
+    receivablesSummary = asObject(receivablesData.receivables_summary);
+    receivablesRows = Array.isArray(receivablesData.receivables) ? receivablesData.receivables : [];
+    receivablesWarnings = Array.isArray(receivablesData.receivables_warnings)
+      ? receivablesData.receivables_warnings.map((item) => String(item || ""))
+      : [];
   } else {
-    receivablesWarnings.push("Falha ao consultar contas a receber no OMIE.");
+    const fallbackMessage =
+      receivablesResult.reason instanceof Error ? receivablesResult.reason.message : "Falha ao consultar contas a receber no OMIE.";
+    receivablesWarnings.push(fallbackMessage);
   }
 
-  const purchaseWarnings = Array.isArray(purchasesData.warnings) ? purchasesData.warnings.map((item) => String(item || "")) : [];
+  const purchaseWarnings = Array.isArray(purchasesData.purchase_warnings)
+    ? purchasesData.purchase_warnings.map((item) => String(item || ""))
+    : [];
 
   return {
-    cnpj: String(purchasesData.cnpj || cnpjDigits),
+    cnpj: String(purchasesData.cnpj || ""),
     customer: asObject(purchasesData.customer),
     summary: asObject(purchasesData.summary),
     orders: Array.isArray(purchasesData.orders) ? purchasesData.orders : [],
