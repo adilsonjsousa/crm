@@ -96,7 +96,7 @@ Deno.serve(async (request: Request) => {
     )
   };
 
-  const targetUrl = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/omie-sync-customers-public-v2`;
+  const targetUrl = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/omie-sync-customers-public`;
 
   try {
     const response = await fetch(targetUrl, {

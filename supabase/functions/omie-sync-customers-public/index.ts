@@ -70,6 +70,12 @@ function formatCep(value: unknown) {
   return `${digits.slice(0, 5)}-${digits.slice(5)}`;
 }
 
+function buildSyntheticCnpjFromExternalId(externalId: unknown) {
+  const normalized = safeString(externalId).replace(/[^0-9a-z_-]/gi, "").slice(0, 56);
+  if (!normalized) return "";
+  return `OMIE-${normalized}`;
+}
+
 function clampNumber(value: unknown, min: number, max: number, fallback: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -523,7 +529,9 @@ Deno.serve(async (request: Request) => {
             if (existingByCnpj) companyRow = existingByCnpj;
           }
 
-          if (!companyRow && !parsed.cnpj) {
+          const cnpjForStorage = parsed.cnpj || buildSyntheticCnpjFromExternalId(parsed.externalId);
+
+          if (!companyRow && !cnpjForStorage) {
             summary.skipped_without_cnpj += 1;
             continue;
           }
@@ -531,7 +539,7 @@ Deno.serve(async (request: Request) => {
           const upsertPayload = {
             legal_name: names.legal,
             trade_name: names.trade,
-            cnpj: parsed.cnpj,
+            cnpj: cnpjForStorage,
             email: parsed.email || null,
             phone: parsed.phone || null,
             segmento: "OMIE",
