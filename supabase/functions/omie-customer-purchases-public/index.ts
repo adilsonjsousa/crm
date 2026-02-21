@@ -911,9 +911,6 @@ Deno.serve(async (request: Request) => {
 
   const clientsUrl = safeString(body.omie_clients_url || body.omieClientsUrl || DEFAULT_OMIE_CLIENTS_URL) || DEFAULT_OMIE_CLIENTS_URL;
   const ordersUrl = safeString(body.omie_orders_url || body.omieOrdersUrl || DEFAULT_OMIE_ORDERS_URL) || DEFAULT_OMIE_ORDERS_URL;
-  const receivablesUrl =
-    safeString(body.omie_receivables_url || body.omieReceivablesUrl || DEFAULT_OMIE_RECEIVABLES_URL) ||
-    DEFAULT_OMIE_RECEIVABLES_URL;
   const recordsPerPage = clampNumber(body.records_per_page || body.recordsPerPage, 1, 500, 100);
   const maxPages = clampNumber(body.max_pages || body.maxPages, 1, 200, 60);
   const maxFallbackPages = clampNumber(body.max_client_scan_pages || body.maxClientScanPages, 1, 300, 80);
@@ -936,44 +933,38 @@ Deno.serve(async (request: Request) => {
       });
     }
 
-    const orderLookup = await listOmieOrdersByCustomer({
-      appKey,
-      appSecret,
-      ordersUrl,
-      customerCode: customerLookup.customer.codigo_cliente_omie,
-      recordsPerPage,
-      maxPages
-    });
-
-    const summary = buildOrderSummary(orderLookup.orders);
-    let receivableLookup: {
-      receivables: AnyRecord[];
+    let orderLookup: {
+      orders: AnyRecord[];
       pages_processed: number;
       total_pages_detected: number;
       warnings: string[];
     } = {
-      receivables: [],
+      orders: [],
       pages_processed: 0,
       total_pages_detected: 0,
       warnings: []
     };
 
     try {
-      receivableLookup = await listOmieReceivablesByCustomer({
+      const orderResult = await listOmieOrdersByCustomer({
         appKey,
         appSecret,
-        receivablesUrl,
+        ordersUrl,
         customerCode: customerLookup.customer.codigo_cliente_omie,
         recordsPerPage,
         maxPages
       });
+      orderLookup = {
+        ...orderResult,
+        warnings: []
+      };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Falha ao listar contas a receber no OMIE.";
-      receivableLookup.warnings.push(`ListarContasReceber: ${message}`);
+      const message = error instanceof Error ? error.message : "Falha ao listar pedidos no OMIE.";
+      orderLookup.warnings.push(`ListarPedidos: ${message}`);
     }
 
-    const receivablesSummary = buildReceivablesSummary(receivableLookup.receivables);
-    const warnings = [...customerLookup.warnings, ...receivableLookup.warnings];
+    const summary = buildOrderSummary(orderLookup.orders);
+    const warnings = [...customerLookup.warnings, ...orderLookup.warnings];
 
     return jsonResponse(200, {
       cnpj,
@@ -982,10 +973,10 @@ Deno.serve(async (request: Request) => {
       orders: orderLookup.orders,
       pages_processed: orderLookup.pages_processed,
       total_pages_detected: orderLookup.total_pages_detected,
-      receivables_summary: receivablesSummary,
-      receivables: receivableLookup.receivables,
-      receivables_pages_processed: receivableLookup.pages_processed,
-      receivables_total_pages_detected: receivableLookup.total_pages_detected,
+      receivables_summary: buildReceivablesSummary([]),
+      receivables: [],
+      receivables_pages_processed: 0,
+      receivables_total_pages_detected: 0,
       warnings
     });
   } catch (error) {

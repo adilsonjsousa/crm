@@ -1466,6 +1466,35 @@ async function invokeOmieReceivablesWithFallback(supabase, body) {
   return lastResult || { data: null, error: { message: "Falha ao consultar contas a receber no OMIE." } };
 }
 
+function isEdgeFunctionNon2xx(errorLike) {
+  const message = normalizeError(errorLike, "");
+  return /non-2xx/i.test(message);
+}
+
+function buildReducedOmieLookupBody(body) {
+  const currentRecordsPerPage = Number(body?.records_per_page) || 100;
+  const currentMaxPages = Number(body?.max_pages) || 60;
+  return {
+    ...body,
+    records_per_page: Math.max(20, Math.min(50, currentRecordsPerPage)),
+    max_pages: Math.max(5, Math.min(20, currentMaxPages))
+  };
+}
+
+async function invokeOmiePurchasesWithRetry(supabase, body) {
+  const firstAttempt = await supabase.functions.invoke("omie-customer-purchases-public", { body });
+  if (!firstAttempt?.error) return firstAttempt;
+
+  if (!isEdgeFunctionNon2xx(firstAttempt.error)) {
+    return firstAttempt;
+  }
+
+  const secondAttempt = await supabase.functions.invoke("omie-customer-purchases-public", {
+    body: buildReducedOmieLookupBody(body)
+  });
+  return secondAttempt?.error ? firstAttempt : secondAttempt;
+}
+
 function resolveOmieLookupContext(company, options = {}, defaults = {}) {
   const companyData = asObject(company);
   const cnpjDigits = cleanDigits(companyData.cnpj || options.cnpj || "");
@@ -1498,8 +1527,11 @@ export async function listCompanyOmiePurchases(company, options = {}) {
     max_pages: 60
   });
 
-  const { data, error } = await supabase.functions.invoke("omie-customer-purchases-public", { body });
+  const { data, error } = await invokeOmiePurchasesWithRetry(supabase, body);
   if (error) {
+    if (isEdgeFunctionNon2xx(error)) {
+      throw new Error("A consulta de compras OMIE ficou instavel neste lote. Tente novamente em alguns segundos.");
+    }
     throw new Error(normalizeError(error, "Falha ao consultar historico de compras no OMIE."));
   }
 
