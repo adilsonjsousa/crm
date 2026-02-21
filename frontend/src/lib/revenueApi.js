@@ -1446,14 +1446,24 @@ function readOmieCredentialsFromLocalStorage() {
 }
 
 async function invokeOmieReceivablesWithFallback(supabase, body) {
-  const primary = await supabase.functions.invoke("omie-customer-receivables-public-v2", { body });
-  if (!primary?.error) return primary;
+  const functionNames = [
+    "omie-customer-receivables-public-v3",
+    "omie-customer-receivables-public-v2",
+    "omie-customer-receivables-public"
+  ];
+  let lastResult = null;
 
-  const message = normalizeError(primary.error, "");
-  const functionNotFound = /function.*not found|not found|404/i.test(message);
-  if (!functionNotFound) return primary;
+  for (const functionName of functionNames) {
+    const result = await supabase.functions.invoke(functionName, { body });
+    if (!result?.error) return result;
 
-  return supabase.functions.invoke("omie-customer-receivables-public", { body });
+    lastResult = result;
+    const message = normalizeError(result.error, "");
+    const functionNotFound = /function.*not found|not found|404/i.test(message);
+    if (!functionNotFound) return result;
+  }
+
+  return lastResult || { data: null, error: { message: "Falha ao consultar contas a receber no OMIE." } };
 }
 
 export async function listCompanyOmiePurchaseHistory(company, options = {}) {
@@ -1474,8 +1484,8 @@ export async function listCompanyOmiePurchaseHistory(company, options = {}) {
     app_key: appKey,
     app_secret: appSecret,
     cnpj_cpf: cnpjDigits,
-    records_per_page: Number(options.records_per_page) > 0 ? Number(options.records_per_page) : 100,
-    max_pages: Number(options.max_pages) > 0 ? Number(options.max_pages) : 60
+    records_per_page: Number(options.records_per_page) > 0 ? Number(options.records_per_page) : 500,
+    max_pages: Number(options.max_pages) > 0 ? Number(options.max_pages) : 120
   };
 
   const [purchasesResult, receivablesResult] = await Promise.allSettled([

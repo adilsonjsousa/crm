@@ -151,12 +151,63 @@ function sameIdentifier(value: unknown, expected: unknown) {
   return Boolean(valueDigits && expectedDigits && valueDigits === expectedDigits);
 }
 
-function receivableMatchesCustomer(rawReceivable: unknown, customerCode: string, customerCnpj: string) {
+function uniqueNonEmptyStrings(values: unknown[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of values) {
+    const value = safeString(item);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
+}
+
+function collectDeepValuesByKeyNames(
+  value: unknown,
+  keyNames: Set<string>,
+  depth = 0,
+  maxDepth = 5,
+  output: unknown[] = []
+) {
+  if (value === null || value === undefined || depth > maxDepth) return output;
+  if (Array.isArray(value)) {
+    for (const item of value) collectDeepValuesByKeyNames(item, keyNames, depth + 1, maxDepth, output);
+    return output;
+  }
+  if (typeof value !== "object") return output;
+
+  const row = value as AnyRecord;
+  for (const [rawKey, nested] of Object.entries(row)) {
+    const key = safeString(rawKey).toLowerCase();
+    if (keyNames.has(key)) output.push(nested);
+    if (nested && typeof nested === "object") {
+      collectDeepValuesByKeyNames(nested, keyNames, depth + 1, maxDepth, output);
+    }
+  }
+  return output;
+}
+
+function collectCustomerIdentifiersFromRow(row: AnyRecord) {
+  const raw = uniqueNonEmptyStrings([
+    row.codigo_cliente_omie,
+    row.codigo_cliente_fornecedor,
+    row.codigo_cliente,
+    row.codigo_cliente_integracao,
+    row.codigo,
+    row.id
+  ]);
+  const digits = uniqueNonEmptyStrings(raw.map((value) => digitsOnly(value)).filter(Boolean));
+  return uniqueNonEmptyStrings([...raw, ...digits]);
+}
+
+function receivableMatchesCustomer(rawReceivable: unknown, customerIdentifiers: string[], customerCnpj: string) {
   const row = asObject(rawReceivable);
   const header = asObject(row.cabecalho);
   const customerBlock = asObject(
     row.cliente_fornecedor ?? row.clienteFornecedor ?? row.cliente ?? row.cliente_cadastro
   );
+  const normalizedIdentifiers = uniqueNonEmptyStrings(customerIdentifiers);
 
   const codeCandidates = [
     row.codigo_cliente_omie,
@@ -173,7 +224,23 @@ function receivableMatchesCustomer(rawReceivable: unknown, customerCode: string,
     customerBlock.codigo_cliente_integracao
   ];
 
-  if (codeCandidates.some((value) => sameIdentifier(value, customerCode))) {
+  const deepCodeCandidates = collectDeepValuesByKeyNames(
+    row,
+    new Set([
+      "codigo_cliente_omie",
+      "codigo_cliente_fornecedor",
+      "codigo_cliente",
+      "codigo_cliente_integracao",
+      "cliente_codigo",
+      "id_cliente"
+    ])
+  );
+
+  const allCodeCandidates = [...codeCandidates, ...deepCodeCandidates];
+  if (
+    normalizedIdentifiers.length &&
+    allCodeCandidates.some((candidate) => normalizedIdentifiers.some((identifier) => sameIdentifier(candidate, identifier)))
+  ) {
     return true;
   }
 
@@ -195,7 +262,12 @@ function receivableMatchesCustomer(rawReceivable: unknown, customerCode: string,
     customerBlock.documento
   ];
 
-  return cnpjCandidates.some((value) => normalizeCnpj(value) === cnpjTarget);
+  const deepCnpjCandidates = collectDeepValuesByKeyNames(
+    row,
+    new Set(["cnpj_cpf", "cnpj", "cpf_cnpj", "documento", "documento_cliente", "cpfcnpj"])
+  );
+
+  return [...cnpjCandidates, ...deepCnpjCandidates].some((value) => normalizeCnpj(value) === cnpjTarget);
 }
 
 async function callOmieApi({
@@ -241,6 +313,33 @@ async function callOmieApi({
   return parsed;
 }
 
+function mapCustomerFromRow(rowRaw: unknown, cnpj: string) {
+  const row = asObject(rowRaw);
+  const rowCnpj = normalizeCnpj(row.cnpj_cpf ?? row.cnpj ?? row.cpf_cnpj ?? row.documento);
+  if (rowCnpj !== cnpj) return null;
+
+  const identifiers = collectCustomerIdentifiersFromRow(row);
+  const customerCode =
+    pickFirstNonEmpty(row, [
+      "codigo_cliente_omie",
+      "codigo_cliente_fornecedor",
+      "codigo_cliente",
+      "codigo_cliente_integracao",
+      "codigo",
+      "id"
+    ]) || identifiers[0] || "";
+
+  if (!customerCode && !identifiers.length) return null;
+
+  return {
+    codigo_cliente_omie: customerCode || identifiers[0] || null,
+    identifiers: identifiers.length ? identifiers : customerCode ? [customerCode] : [],
+    cnpj,
+    razao_social: pickFirstNonEmpty(row, ["razao_social", "nome_cliente", "nome"]),
+    nome_fantasia: pickFirstNonEmpty(row, ["nome_fantasia", "fantasia", "empresa", "nome"])
+  };
+}
+
 async function findCustomerByCnpj({
   appKey,
   appSecret,
@@ -271,18 +370,10 @@ async function findCustomerByCnpj({
     });
     const directRows = extractArrayByKeys(payload, ["clientes_cadastro", "clientes", "cadastro"]);
     for (const rowRaw of directRows) {
-      const row = asObject(rowRaw);
-      const rowCnpj = normalizeCnpj(row.cnpj_cpf ?? row.cnpj ?? row.cpf_cnpj ?? row.documento);
-      if (rowCnpj !== cnpj) continue;
-      const customerCode = pickFirstNonEmpty(row, ["codigo_cliente_omie", "codigo_cliente", "id"]);
-      if (!customerCode) continue;
+      const customer = mapCustomerFromRow(rowRaw, cnpj);
+      if (!customer) continue;
       return {
-        customer: {
-          codigo_cliente_omie: customerCode,
-          cnpj,
-          razao_social: pickFirstNonEmpty(row, ["razao_social", "nome_cliente", "nome"]),
-          nome_fantasia: pickFirstNonEmpty(row, ["nome_fantasia", "fantasia", "empresa", "nome"])
-        },
+        customer,
         warnings
       };
     }
@@ -310,19 +401,11 @@ async function findCustomerByCnpj({
     totalPages = Math.max(totalPages, extractTotalPages(payload, page, rows.length, recordsPerPage));
 
     for (const rowRaw of rows) {
-      const row = asObject(rowRaw);
-      const rowCnpj = normalizeCnpj(row.cnpj_cpf ?? row.cnpj ?? row.cpf_cnpj ?? row.documento);
-      if (rowCnpj !== cnpj) continue;
-      const customerCode = pickFirstNonEmpty(row, ["codigo_cliente_omie", "codigo_cliente", "id"]);
-      if (!customerCode) continue;
+      const customer = mapCustomerFromRow(rowRaw, cnpj);
+      if (!customer) continue;
       warnings.push("Cliente encontrado por varredura de paginas.");
       return {
-        customer: {
-          codigo_cliente_omie: customerCode,
-          cnpj,
-          razao_social: pickFirstNonEmpty(row, ["razao_social", "nome_cliente", "nome"]),
-          nome_fantasia: pickFirstNonEmpty(row, ["nome_fantasia", "fantasia", "empresa", "nome"])
-        },
+        customer,
         warnings
       };
     }
@@ -342,17 +425,29 @@ function normalizeReceivable(raw: unknown) {
     pickFirstNonEmpty(header, ["status_titulo", "status", "status_lancamento", "situacao"]);
 
   const documentAmount = parseMoney(
-    row.valor_documento ?? row.valor_titulo ?? row.valor_original ?? row.valor_total ??
-      header.valor_documento ?? header.valor_titulo ?? header.valor_original ?? header.valor_total
+    row.valor_documento ?? row.valor_titulo ?? row.valor_original ?? row.valor_total ?? row.valor_nominal ?? row.valor_bruto ??
+      header.valor_documento ?? header.valor_titulo ?? header.valor_original ?? header.valor_total ?? header.valor_nominal
   );
   const paidAmount = parseMoney(
-    row.valor_pago ?? row.valor_recebido ?? row.valor_baixado ??
-      header.valor_pago ?? header.valor_recebido ?? header.valor_baixado
+    row.valor_pago ?? row.valor_recebido ?? row.valor_baixado ?? row.valor_quitado ??
+      header.valor_pago ?? header.valor_recebido ?? header.valor_baixado ?? header.valor_quitado
   );
 
   let openAmount = parseMoney(
-    row.valor_saldo ?? row.valor_aberto ?? row.valor_em_aberto ?? row.valor_pendente ??
-      header.valor_saldo ?? header.valor_aberto ?? header.valor_em_aberto ?? header.valor_pendente
+    row.valor_saldo ??
+      row.valor_aberto ??
+      row.valor_em_aberto ??
+      row.valor_pendente ??
+      row.valor_a_receber ??
+      row.saldo_a_receber ??
+      row.saldo ??
+      header.valor_saldo ??
+      header.valor_aberto ??
+      header.valor_em_aberto ??
+      header.valor_pendente ??
+      header.valor_a_receber ??
+      header.saldo_a_receber ??
+      header.saldo
   );
 
   if (!(openAmount > 0) && documentAmount > 0 && paidAmount > 0 && paidAmount < documentAmount) {
@@ -440,7 +535,7 @@ async function listReceivablesByCustomer({
   appKey,
   appSecret,
   receivablesUrl,
-  customerCode,
+  customerIdentifiers,
   customerCnpj,
   recordsPerPage,
   maxPages
@@ -448,16 +543,18 @@ async function listReceivablesByCustomer({
   appKey: string;
   appSecret: string;
   receivablesUrl: string;
-  customerCode: string;
+  customerIdentifiers: string[];
   customerCnpj: string;
   recordsPerPage: number;
   maxPages: number;
 }) {
   const warnings: string[] = [];
 
+  const normalizedIdentifiers = uniqueNonEmptyStrings(customerIdentifiers);
   let page = 1;
   let totalPages = 1;
   let pagesProcessed = 0;
+  let scannedRows = 0;
   const rows: AnyRecord[] = [];
 
   while (page <= maxPages && page <= totalPages) {
@@ -485,15 +582,28 @@ async function listReceivablesByCustomer({
     ]);
 
     totalPages = Math.max(totalPages, extractTotalPages(payload, page, pageRows.length, recordsPerPage));
+    scannedRows += pageRows.length;
 
     for (const row of pageRows) {
-      if (!receivableMatchesCustomer(row, customerCode, customerCnpj)) continue;
+      if (!receivableMatchesCustomer(row, normalizedIdentifiers, customerCnpj)) continue;
       rows.push(normalizeReceivable(row));
     }
 
     pagesProcessed += 1;
     if (!pageRows.length) break;
     page += 1;
+  }
+
+  const hitPageCap = totalPages > maxPages;
+  if (hitPageCap) {
+    warnings.push(
+      `Consulta parcial: processadas ${pagesProcessed} de ${totalPages} paginas detectadas em contas a receber do OMIE.`
+    );
+  }
+  if (!rows.length && scannedRows > 0) {
+    warnings.push(
+      "Nenhum titulo foi relacionado ao cliente pelo filtro de identificadores/CNPJ. Pode haver variacao de estrutura no retorno do OMIE."
+    );
   }
 
   return {
@@ -508,6 +618,7 @@ async function listReceivablesByCustomer({
     }),
     pages_processed: pagesProcessed,
     total_pages_detected: totalPages,
+    scanned_rows: scannedRows,
     warnings
   };
 }
@@ -538,8 +649,8 @@ Deno.serve(async (request: Request) => {
   const receivablesUrl =
     safeString(body.omie_receivables_url || body.omieReceivablesUrl || DEFAULT_OMIE_RECEIVABLES_URL) ||
     DEFAULT_OMIE_RECEIVABLES_URL;
-  const recordsPerPage = clampNumber(body.records_per_page || body.recordsPerPage, 1, 500, 100);
-  const maxPages = clampNumber(body.max_pages || body.maxPages, 1, 200, 60);
+  const recordsPerPage = clampNumber(body.records_per_page || body.recordsPerPage, 1, 500, 500);
+  const maxPages = clampNumber(body.max_pages || body.maxPages, 1, 400, 120);
   const maxClientScanPages = clampNumber(body.max_client_scan_pages || body.maxClientScanPages, 1, 200, 80);
 
   try {
@@ -551,7 +662,7 @@ Deno.serve(async (request: Request) => {
       maxPages: maxClientScanPages
     });
 
-    if (!customerLookup.customer?.codigo_cliente_omie) {
+    if (!customerLookup.customer) {
       return jsonResponse(404, {
         error: "omie_customer_not_found",
         message: `Cliente com CNPJ ${cnpj} nao encontrado no OMIE.`,
@@ -564,7 +675,11 @@ Deno.serve(async (request: Request) => {
       appKey,
       appSecret,
       receivablesUrl,
-      customerCode: customerLookup.customer.codigo_cliente_omie,
+      customerIdentifiers: Array.isArray(customerLookup.customer.identifiers)
+        ? customerLookup.customer.identifiers
+        : customerLookup.customer.codigo_cliente_omie
+        ? [customerLookup.customer.codigo_cliente_omie]
+        : [],
       customerCnpj: cnpj,
       recordsPerPage,
       maxPages
@@ -577,6 +692,7 @@ Deno.serve(async (request: Request) => {
       receivables: receivableLookup.receivables,
       pages_processed: receivableLookup.pages_processed,
       total_pages_detected: receivableLookup.total_pages_detected,
+      scanned_rows: receivableLookup.scanned_rows,
       warnings: [...customerLookup.warnings, ...receivableLookup.warnings]
     });
   } catch (error) {
