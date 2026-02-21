@@ -772,20 +772,43 @@ a.btn-table-action {
 }
 
 .reports-toolbar {
-  margin-top: 12px;
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(260px, 1.4fr) minmax(170px, 220px) auto auto;
+  gap: 8px;
+  align-items: end;
 }
 
 .reports-toolbar input {
-  min-width: 260px;
-  flex: 1 1 280px;
+  width: 100%;
+  min-width: 0;
 }
 
 .reports-toolbar select {
-  min-width: 180px;
+  width: 100%;
+  min-width: 0;
 }
 
 .reports-table-wrap {
-  margin-top: 12px;
+  margin-top: 4px;
+  max-height: clamp(320px, 58vh, 640px);
+  overflow: auto;
+}
+
+.reports-module {
+  display: grid;
+  gap: 10px;
+}
+
+.reports-kpi-grid {
+  grid-template-columns: repeat(2, minmax(170px, 260px));
+  justify-content: start;
+}
+
+.reports-table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .settings-stage-input {
@@ -1717,6 +1740,10 @@ tbody tr:hover {
   .crm-nav-btn {
     min-width: 200px;
   }
+
+  .reports-toolbar {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
 }
 
 @media (max-width: 980px) {
@@ -1798,6 +1825,15 @@ tbody tr:hover {
   .pipeline-automation-toggle {
     display: grid;
     justify-content: stretch;
+  }
+
+  .reports-kpi-grid,
+  .reports-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .reports-table-wrap {
+    max-height: none;
   }
 }
 
