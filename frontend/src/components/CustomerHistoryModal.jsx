@@ -205,6 +205,34 @@ function meetingSummary(task) {
   return `${provider} · ${start}`;
 }
 
+function isReceivableOverdue(receivable) {
+  const openAmount = Number(receivable?.valor_aberto || 0);
+  if (!(openAmount > 0)) return false;
+
+  const normalizedStatus = normalizeText(receivable?.status || "");
+  if (normalizedStatus.includes("atras") || normalizedStatus.includes("vencid")) return true;
+  if (
+    normalizedStatus.includes("pago") ||
+    normalizedStatus.includes("quitad") ||
+    normalizedStatus.includes("baixad") ||
+    normalizedStatus.includes("liquid") ||
+    normalizedStatus.includes("vencer") ||
+    normalizedStatus.includes("vencendo")
+  ) {
+    return false;
+  }
+
+  const dueDateRaw = receivable?.data_vencimento_iso || receivable?.data_emissao_iso;
+  if (!dueDateRaw) return false;
+  const dueDate = new Date(dueDateRaw);
+  if (Number.isNaN(dueDate.getTime())) return false;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  dueDate.setHours(0, 0, 0, 0);
+  return dueDate.getTime() < today.getTime();
+}
+
 export default function CustomerHistoryModal({ open, companyId, companyName, onClose, onRequestEditCompany = null }) {
   const [selectedTab, setSelectedTab] = useState("overview");
   const [loading, setLoading] = useState(false);
@@ -444,10 +472,28 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     () => (Array.isArray(omiePurchases.receivables) ? omiePurchases.receivables : []),
     [omiePurchases.receivables]
   );
-  const omieOpenReceivables = useMemo(
-    () => omieReceivables.filter((item) => Number(item.valor_aberto || 0) > 0),
+  const omieOverdueReceivables = useMemo(
+    () => omieReceivables.filter((item) => isReceivableOverdue(item)),
     [omieReceivables]
   );
+  const omieOverdueAmount = useMemo(
+    () => omieOverdueReceivables.reduce((acc, item) => acc + Number(item.valor_aberto || 0), 0),
+    [omieOverdueReceivables]
+  );
+  const omieOldestOverdueAt = useMemo(() => {
+    const values = omieOverdueReceivables
+      .map((item) => {
+        const source = item.data_vencimento_iso || item.data_emissao_iso || null;
+        if (!source) return null;
+        const parsed = new Date(source).getTime();
+        if (!Number.isFinite(parsed)) return null;
+        return { source, parsed };
+      })
+      .filter(Boolean);
+    if (!values.length) return null;
+    values.sort((a, b) => a.parsed - b.parsed);
+    return values[0].source;
+  }, [omieOverdueReceivables]);
   const omiePurchaseWarnings = useMemo(() => {
     if (Array.isArray(omiePurchases.purchase_warnings)) return omiePurchases.purchase_warnings;
     return Array.isArray(omiePurchases.warnings) ? omiePurchases.warnings : [];
@@ -1080,37 +1126,27 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
             {!omieReceivablesLoading && !omieReceivablesError ? (
               <>
                 <article className="customer-popup-card top-gap">
-                  <h4>Contas a receber (OMIE)</h4>
+                  <h4>Contas em atraso (OMIE)</h4>
                   <div className="customer-popup-kpis">
                     <div>
-                      <span>Titulos encontrados</span>
-                      <strong>{Number(omieReceivablesSummary.total_receivables || 0)}</strong>
-                      <small>Inclui titulos liquidados e em aberto</small>
+                      <span>Titulos atrasados</span>
+                      <strong>{Number(omieOverdueReceivables.length || 0)}</strong>
+                      <small>Somente com saldo em aberto</small>
                     </div>
                     <div>
-                      <span>Titulos em aberto</span>
-                      <strong>{Number(omieReceivablesSummary.open_receivables_count || 0)}</strong>
-                      <small>Com saldo a receber</small>
-                    </div>
-                    <div>
-                      <span>Valor total em aberto</span>
-                      <strong>{brl(omieReceivablesSummary.open_total_amount)}</strong>
+                      <span>Valor total atrasado</span>
+                      <strong>{brl(omieOverdueAmount)}</strong>
                       <small>Base OMIE</small>
                     </div>
                     <div>
-                      <span>Vencidos</span>
-                      <strong>{Number(omieReceivablesSummary.overdue_receivables_count || 0)}</strong>
-                      <small>{brl(omieReceivablesSummary.overdue_total_amount)}</small>
+                      <span>Vencimento mais antigo</span>
+                      <strong>{formatDateFromIso(omieOldestOverdueAt)}</strong>
+                      <small>Apenas titulos atrasados</small>
                     </div>
                     <div>
-                      <span>Vencendo em 30 dias</span>
-                      <strong>{Number(omieReceivablesSummary.due_next_30_days_count || 0)}</strong>
-                      <small>{brl(omieReceivablesSummary.due_next_30_days_total)}</small>
-                    </div>
-                    <div>
-                      <span>Proximo vencimento</span>
-                      <strong>{formatDateFromIso(omieReceivablesSummary.next_due_at)}</strong>
-                      <small>Com saldo em aberto</small>
+                      <span>Total retornado OMIE</span>
+                      <strong>{Number(omieReceivablesSummary.total_receivables || 0)}</strong>
+                      <small>Inclui quitados e a vencer</small>
                     </div>
                   </div>
                 </article>
@@ -1139,7 +1175,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                       </tr>
                     </thead>
                     <tbody>
-                      {omieOpenReceivables.map((receivable, index) => (
+                      {omieOverdueReceivables.map((receivable, index) => (
                         <tr
                           key={`${receivable.codigo_lancamento_omie || receivable.numero_documento || "receivable"}-${index}`}
                         >
@@ -1151,10 +1187,10 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                           <td>{brl(receivable.valor_pago)}</td>
                         </tr>
                       ))}
-                      {!omieOpenReceivables.length ? (
+                      {!omieOverdueReceivables.length ? (
                         <tr>
                           <td colSpan={6} className="muted">
-                            Nenhuma conta em aberto retornada pelo OMIE para este cliente.
+                            Nenhuma conta em atraso retornada pelo OMIE para este cliente.
                           </td>
                         </tr>
                       ) : null}
