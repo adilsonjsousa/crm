@@ -196,7 +196,7 @@ export default function App() {
     if (activeTab === "orders") return <OrdersModule />;
     if (activeTab === "reports") return <ReportsModule />;
     if (activeTab === "tasks") return <TasksModule onRequestCreateCompany={handleRequestCreateCompany} />;
-    if (activeTab === "service") return <ServiceModule />;
+    if (activeTab === "service") return <ServiceModule onRequestCreateCompany={handleRequestCreateCompany} />;
     if (activeTab === "settings") return <SettingsModule />;
     return <DashboardModule />;
   }, [
