@@ -373,7 +373,8 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
       { cnpj: cnpjDigits },
       {
         records_per_page: 500,
-        max_pages: 30
+        max_pages: 30,
+        page_concurrency: 4
       }
     )
       .then((data) => {

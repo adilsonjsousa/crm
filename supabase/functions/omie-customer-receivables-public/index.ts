@@ -74,6 +74,15 @@ function extractTotalPages(payload: AnyRecord, currentPage: number, receivedItem
   return currentPage + 1;
 }
 
+function extractDirectTotalPages(payload: AnyRecord) {
+  return clampNumber(
+    payload.total_de_paginas ?? payload.total_paginas ?? payload.totalPaginas ?? payload.quantidade_de_paginas,
+    1,
+    2000,
+    0
+  );
+}
+
 function parseMoney(value: unknown) {
   if (value === null || value === undefined) return 0;
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -633,7 +642,8 @@ async function listReceivablesByCustomer({
   customerCnpj,
   customerNames,
   recordsPerPage,
-  maxPages
+  maxPages,
+  pageConcurrency
 }: {
   appKey: string;
   appSecret: string;
@@ -643,6 +653,7 @@ async function listReceivablesByCustomer({
   customerNames: string[];
   recordsPerPage: number;
   maxPages: number;
+  pageConcurrency: number;
 }) {
   const warnings: string[] = [];
 
@@ -652,68 +663,113 @@ async function listReceivablesByCustomer({
   let pagesProcessed = 0;
   let scannedRows = 0;
   const rows: AnyRecord[] = [];
-  const processedPages = new Set<number>();
 
-  const fetchPages = async (pages: number[]) => {
-    for (const page of pages) {
-      if (processedPages.has(page)) continue;
-      processedPages.add(page);
-
-      const payload = await callOmieApi({
-        url: receivablesUrl,
-        appKey,
-        appSecret,
-        call: "ListarContasReceber",
-        param: {
-          pagina: page,
-          registros_por_pagina: recordsPerPage,
-          apenas_importado_api: "N"
-        }
-      });
-
-      const pageRows = extractArrayByKeys(payload, [
-        "conta_receber_cadastro",
-        "conta_receber",
-        "contas_receber",
-        "lista_contas_receber",
-        "titulo_receber",
-        "titulos_receber",
-        "lista_titulos",
-        "lancamentos"
-      ]);
-
-      totalPages = Math.max(totalPages, extractTotalPages(payload, page, pageRows.length, recordsPerPage));
-      scannedRows += pageRows.length;
-
-      for (const row of pageRows) {
-        if (!receivableMatchesCustomer(row, normalizedIdentifiers, customerCnpj, normalizedCustomerNames)) continue;
-        rows.push(normalizeReceivable(row));
+  async function fetchReceivablesPage(page: number) {
+    const payload = await callOmieApi({
+      url: receivablesUrl,
+      appKey,
+      appSecret,
+      call: "ListarContasReceber",
+      param: {
+        pagina: page,
+        registros_por_pagina: recordsPerPage,
+        apenas_importado_api: "N"
       }
+    });
 
-      pagesProcessed += 1;
-      if (!pageRows.length) break;
-    }
-  };
+    const pageRows = extractArrayByKeys(payload, [
+      "conta_receber_cadastro",
+      "conta_receber",
+      "contas_receber",
+      "lista_contas_receber",
+      "titulo_receber",
+      "titulos_receber",
+      "lista_titulos",
+      "lancamentos"
+    ]);
 
-  const initialPages: number[] = [];
-  const initialUpperBound = Math.min(Math.max(1, maxPages), 400);
-  for (let page = 1; page <= initialUpperBound; page += 1) {
-    initialPages.push(page);
+    return {
+      page,
+      pageRows,
+      directTotalPages: extractDirectTotalPages(payload),
+      inferredTotalPages: extractTotalPages(payload, page, pageRows.length, recordsPerPage)
+    };
   }
-  await fetchPages(initialPages);
 
-  const hitPageCapBeforeFallback = totalPages > initialUpperBound;
+  function consumePageResult(result: {
+    page: number;
+    pageRows: unknown[];
+    directTotalPages: number;
+    inferredTotalPages: number;
+  }) {
+    const { pageRows, directTotalPages, inferredTotalPages } = result;
+    totalPages = Math.max(totalPages, inferredTotalPages);
+    if (directTotalPages > 0) {
+      totalPages = Math.max(totalPages, directTotalPages);
+    }
+    scannedRows += pageRows.length;
+
+    for (const row of pageRows) {
+      if (!receivableMatchesCustomer(row, normalizedIdentifiers, customerCnpj, normalizedCustomerNames)) continue;
+      rows.push(normalizeReceivable(row));
+    }
+
+    pagesProcessed += 1;
+  }
+
+  async function fetchPagesSequentially(pages: number[]) {
+    for (const page of pages) {
+      const result = await fetchReceivablesPage(page);
+      consumePageResult(result);
+      if (!result.pageRows.length) break;
+    }
+  }
+
+  async function fetchPagesInParallel(pages: number[]) {
+    for (let offset = 0; offset < pages.length; offset += pageConcurrency) {
+      const batchPages = pages.slice(offset, offset + pageConcurrency);
+      const batchResults = await Promise.all(batchPages.map((page) => fetchReceivablesPage(page)));
+      batchResults.sort((a, b) => a.page - b.page);
+      for (const result of batchResults) {
+        consumePageResult(result);
+      }
+    }
+  }
+
+  const initialUpperBound = Math.min(Math.max(1, maxPages), 400);
+  const firstPage = await fetchReceivablesPage(1);
+  consumePageResult(firstPage);
+
+  let initialScanUpperBound = initialUpperBound;
+  if (firstPage.directTotalPages > 0) {
+    initialScanUpperBound = Math.min(initialUpperBound, firstPage.directTotalPages);
+  }
+
+  if (initialScanUpperBound > 1) {
+    const remainingPages: number[] = [];
+    for (let page = 2; page <= initialScanUpperBound; page += 1) {
+      remainingPages.push(page);
+    }
+
+    if (firstPage.directTotalPages > 0) {
+      await fetchPagesInParallel(remainingPages);
+    } else {
+      await fetchPagesSequentially(remainingPages);
+    }
+  }
+
+  const hitPageCapBeforeFallback = totalPages > initialScanUpperBound;
   if (!rows.length && hitPageCapBeforeFallback) {
-    const extendedLimit = Math.min(totalPages, Math.max(initialUpperBound + 1, Math.min(400, initialUpperBound * 4)));
-    if (extendedLimit > initialUpperBound) {
+    const extendedLimit = Math.min(totalPages, Math.max(initialScanUpperBound + 1, Math.min(400, initialScanUpperBound * 4)));
+    if (extendedLimit > initialScanUpperBound) {
       warnings.push(
-        `Busca estendida executada em contas a receber: sem match nas ${initialUpperBound} primeiras paginas, expandindo ate ${extendedLimit}.`
+        `Busca estendida executada em contas a receber: sem match nas ${initialScanUpperBound} primeiras paginas, expandindo ate ${extendedLimit}.`
       );
       const extendedPages: number[] = [];
-      for (let page = initialUpperBound + 1; page <= extendedLimit; page += 1) {
+      for (let page = initialScanUpperBound + 1; page <= extendedLimit; page += 1) {
         extendedPages.push(page);
       }
-      await fetchPages(extendedPages);
+      await fetchPagesInParallel(extendedPages);
     }
   }
 
@@ -775,6 +831,7 @@ Deno.serve(async (request: Request) => {
   const recordsPerPage = clampNumber(body.records_per_page || body.recordsPerPage, 1, 500, 500);
   const maxPages = clampNumber(body.max_pages || body.maxPages, 1, 400, 120);
   const maxClientScanPages = clampNumber(body.max_client_scan_pages || body.maxClientScanPages, 1, 200, 80);
+  const pageConcurrency = clampNumber(body.page_concurrency || body.pageConcurrency, 1, 8, 4);
 
   try {
     const customerLookup = await findCustomerByCnpj({
@@ -809,7 +866,8 @@ Deno.serve(async (request: Request) => {
         customerLookup.customer.nome_fantasia
       ].map((value) => safeString(value)).filter(Boolean),
       recordsPerPage,
-      maxPages
+      maxPages,
+      pageConcurrency
     });
 
     return jsonResponse(200, {

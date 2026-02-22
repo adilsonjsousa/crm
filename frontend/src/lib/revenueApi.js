@@ -1652,7 +1652,13 @@ export async function listCompanyOmieReceivables(company, options = {}) {
     max_pages: 30
   });
 
-  const payload = await invokeOmieReceivablesWithFallback(supabase, body);
+  const concurrency = Number(options.page_concurrency);
+  const requestBody = {
+    ...body,
+    page_concurrency: Number.isFinite(concurrency) && concurrency > 0 ? Math.min(8, Math.max(1, Math.floor(concurrency))) : 4
+  };
+
+  const payload = await invokeOmieReceivablesWithFallback(supabase, requestBody);
   if (payload?.error) {
     throw new Error(normalizeError(payload.error, "Falha ao consultar contas a receber no OMIE."));
   }
