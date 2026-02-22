@@ -35,6 +35,44 @@ const TASK_STATUSES = [
 ];
 
 const TASKS_CREATOR_STORAGE_KEY = "crm.tasks.creator-user-id.v1";
+const TASKS_FORM_DEFAULTS_STORAGE_KEY = "crm.tasks.form-defaults.v1";
+const TASKS_NOTIFY_STORAGE_KEY = "crm.tasks.notify-whatsapp.v1";
+
+function normalizeTaskFormDefaults(rawDefaults = {}) {
+  const safeActivity = ACTIVITY_OPTIONS.includes(String(rawDefaults.activity || ""))
+    ? String(rawDefaults.activity)
+    : "Visita";
+  const safePriority = TASK_PRIORITIES.some((item) => item.value === rawDefaults.priority)
+    ? String(rawDefaults.priority)
+    : "medium";
+  const safeStatus = TASK_STATUSES.some((item) => item.value === rawDefaults.status)
+    ? String(rawDefaults.status)
+    : "todo";
+
+  return {
+    activity: safeActivity,
+    priority: safePriority,
+    status: safeStatus
+  };
+}
+
+function readTaskFormDefaults() {
+  if (typeof window === "undefined") return normalizeTaskFormDefaults();
+  try {
+    const raw = window.localStorage.getItem(TASKS_FORM_DEFAULTS_STORAGE_KEY);
+    if (!raw) return normalizeTaskFormDefaults();
+    return normalizeTaskFormDefaults(JSON.parse(raw));
+  } catch {
+    return normalizeTaskFormDefaults();
+  }
+}
+
+function readTaskNotifyDefault() {
+  if (typeof window === "undefined") return true;
+  const raw = String(window.localStorage.getItem(TASKS_NOTIFY_STORAGE_KEY) || "").trim();
+  if (!raw) return true;
+  return raw !== "0";
+}
 
 function statusLabel(value) {
   return TASK_STATUSES.find((item) => item.value === value)?.label || value;
@@ -286,6 +324,7 @@ export default function TasksModule({
   prefillCompanyRequest = 0
 }) {
   const handledPrefillRequestRef = useRef(0);
+  const taskDefaultsRef = useRef(readTaskFormDefaults());
   const [tasks, setTasks] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [users, setUsers] = useState([]);
@@ -294,7 +333,7 @@ export default function TasksModule({
   const [saving, setSaving] = useState(false);
   const [usersLoading, setUsersLoading] = useState(false);
   const [creatorUserId, setCreatorUserId] = useState("");
-  const [notifyAssigneeWhatsApp, setNotifyAssigneeWhatsApp] = useState(true);
+  const [notifyAssigneeWhatsApp, setNotifyAssigneeWhatsApp] = useState(() => readTaskNotifyDefault());
   const [calendarDate, setCalendarDate] = useState(todayYmd());
   const [calendarAssigneeUserId, setCalendarAssigneeUserId] = useState("");
   const [onlyOpen, setOnlyOpen] = useState(true);
@@ -308,9 +347,9 @@ export default function TasksModule({
   const [form, setForm] = useState({
     company_id: "",
     assignee_user_id: "",
-    activity: "Visita",
-    priority: "medium",
-    status: "todo",
+    activity: taskDefaultsRef.current.activity,
+    priority: taskDefaultsRef.current.priority,
+    status: taskDefaultsRef.current.status,
     scheduled_start_local: "",
     scheduled_end_local: "",
     due_date: "",
@@ -369,6 +408,23 @@ export default function TasksModule({
     loadUsersContext();
     load();
   }, []);
+
+  useEffect(() => {
+    const nextDefaults = normalizeTaskFormDefaults({
+      activity: form.activity,
+      priority: form.priority,
+      status: form.status
+    });
+    taskDefaultsRef.current = nextDefaults;
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(TASKS_FORM_DEFAULTS_STORAGE_KEY, JSON.stringify(nextDefaults));
+    }
+  }, [form.activity, form.priority, form.status]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(TASKS_NOTIFY_STORAGE_KEY, notifyAssigneeWhatsApp ? "1" : "0");
+  }, [notifyAssigneeWhatsApp]);
 
   useEffect(() => {
     if (!prefillCompanyRequest || prefillCompanyRequest === handledPrefillRequestRef.current) return;
@@ -616,6 +672,8 @@ export default function TasksModule({
     event.preventDefault();
     setError("");
     setSuccess("");
+    const submitIntent = String(event?.nativeEvent?.submitter?.value || "save");
+    const createAnotherAfterSave = submitIntent === "save_and_create";
     const activity = String(form.activity || "").trim();
     const description = String(form.description || "").trim();
     const dueDate = String(form.due_date || "").trim();
@@ -689,18 +747,30 @@ export default function TasksModule({
         completed_at: nextStatus === "done" ? new Date().toISOString() : null
       });
 
-      setForm((prev) => ({
-        ...prev,
-        company_id: "",
-        assignee_user_id: assigneeUserId,
-        activity: "Visita",
-        description: "",
-        scheduled_start_local: "",
-        scheduled_end_local: "",
-        due_date: "",
-        status: "todo"
-      }));
-      setCompanySearchTerm("");
+      if (createAnotherAfterSave) {
+        setForm((prev) => ({
+          ...prev,
+          assignee_user_id: assigneeUserId,
+          description: "",
+          scheduled_start_local: "",
+          scheduled_end_local: "",
+          due_date: ""
+        }));
+      } else {
+        setForm((prev) => ({
+          ...prev,
+          company_id: "",
+          assignee_user_id: assigneeUserId,
+          activity: taskDefaultsRef.current.activity,
+          priority: taskDefaultsRef.current.priority,
+          status: taskDefaultsRef.current.status,
+          description: "",
+          scheduled_start_local: "",
+          scheduled_end_local: "",
+          due_date: ""
+        }));
+        setCompanySearchTerm("");
+      }
       setCompanySuggestionsOpen(false);
       await load();
 
@@ -800,6 +870,9 @@ export default function TasksModule({
         }
       }
 
+      if (createAnotherAfterSave) {
+        successMessage = `${successMessage} Formulário mantido para cadastrar a próxima tarefa.`;
+      }
       setSuccess(successMessage);
     } catch (err) {
       setError(err.message);
@@ -1362,9 +1435,14 @@ export default function TasksModule({
               />
               Avisar responsável no WhatsApp ao salvar
             </label>
-            <button type="submit" className="btn-primary" disabled={saving || !users.length}>
-              {saving ? "Salvando..." : "Salvar tarefa"}
-            </button>
+            <div className="inline-actions">
+              <button type="submit" value="save" className="btn-primary" disabled={saving || !users.length}>
+                {saving ? "Salvando..." : "Salvar tarefa"}
+              </button>
+              <button type="submit" value="save_and_create" className="btn-ghost" disabled={saving || !users.length}>
+                Salvar e criar outra
+              </button>
+            </div>
           </form>
         </article>
 

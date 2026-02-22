@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createTicket, listCompanyOptions, listTickets } from "../lib/revenueApi";
 
+const SERVICE_FORM_DEFAULTS_STORAGE_KEY = "crm.service.form-defaults.v1";
+
 function normalizeLookupText(value) {
   return String(value || "")
     .normalize("NFD")
@@ -16,7 +18,30 @@ function formatCnpj(value) {
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
 }
 
+function normalizeServiceFormDefaults(rawDefaults = {}) {
+  const safeType = rawDefaults.ticket_type === "preventive" ? "preventive" : "corrective";
+  const safePriority = ["low", "medium", "high", "critical"].includes(String(rawDefaults.priority))
+    ? String(rawDefaults.priority)
+    : "medium";
+  return {
+    ticket_type: safeType,
+    priority: safePriority
+  };
+}
+
+function readServiceFormDefaults() {
+  if (typeof window === "undefined") return normalizeServiceFormDefaults();
+  try {
+    const raw = window.localStorage.getItem(SERVICE_FORM_DEFAULTS_STORAGE_KEY);
+    if (!raw) return normalizeServiceFormDefaults();
+    return normalizeServiceFormDefaults(JSON.parse(raw));
+  } catch {
+    return normalizeServiceFormDefaults();
+  }
+}
+
 export default function ServiceModule({ onRequestCreateCompany = null }) {
+  const initialDefaults = useMemo(() => readServiceFormDefaults(), []);
   const [tickets, setTickets] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [error, setError] = useState("");
@@ -25,8 +50,8 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
   const [form, setForm] = useState({
     company_id: "",
-    ticket_type: "corrective",
-    priority: "medium",
+    ticket_type: initialDefaults.ticket_type,
+    priority: initialDefaults.priority,
     status: "open",
     description: ""
   });
@@ -61,10 +86,22 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
     load();
   }, []);
 
+  useEffect(() => {
+    const nextDefaults = normalizeServiceFormDefaults({
+      ticket_type: form.ticket_type,
+      priority: form.priority
+    });
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(SERVICE_FORM_DEFAULTS_STORAGE_KEY, JSON.stringify(nextDefaults));
+    }
+  }, [form.ticket_type, form.priority]);
+
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
     setSuccess("");
+    const submitIntent = String(event?.nativeEvent?.submitter?.value || "save");
+    const createAnotherAfterSave = submitIntent === "save_and_create";
 
     if (!form.company_id) {
       setError("Selecione uma empresa cadastrada.");
@@ -80,8 +117,21 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
         description: form.description,
         opened_at: new Date().toISOString()
       });
-      setForm((prev) => ({ ...prev, description: "" }));
-      setSuccess("Chamado aberto com sucesso.");
+      if (createAnotherAfterSave) {
+        setForm((prev) => ({
+          ...prev,
+          description: ""
+        }));
+        setSuccess("Chamado aberto. Formulário mantido para registrar o próximo.");
+      } else {
+        setForm((prev) => ({
+          ...prev,
+          company_id: "",
+          description: ""
+        }));
+        setCompanySearchTerm("");
+        setSuccess("Chamado aberto com sucesso.");
+      }
       await load();
     } catch (err) {
       setError(err.message);
@@ -212,7 +262,10 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
             value={form.description}
             onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
           />
-          <button type="submit" className="btn-primary">Abrir chamado</button>
+          <div className="inline-actions">
+            <button type="submit" value="save" className="btn-primary">Abrir chamado</button>
+            <button type="submit" value="save_and_create" className="btn-ghost">Salvar e abrir outro</button>
+          </div>
         </form>
       </article>
 

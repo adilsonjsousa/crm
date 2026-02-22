@@ -25,6 +25,7 @@ import CustomerHistoryModal from "../components/CustomerHistoryModal";
 
 const PROPOSAL_TEMPLATE_STORAGE_KEY = "crm.pipeline.proposal-template.v1";
 const PIPELINE_VIEWER_STORAGE_KEY = "crm.pipeline.viewer-user-id.v1";
+const PIPELINE_FORM_DEFAULTS_STORAGE_KEY = "crm.pipeline.form-defaults.v1";
 const ART_PRINTER_LOGO_CANDIDATES = [
   "/logo-art-printer.png",
   "/logo-artprinter.png",
@@ -382,14 +383,44 @@ function formatCnpj(value) {
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
 }
 
-function emptyOpportunityForm(defaultCompanyId = "", defaultOwnerUserId = "") {
+function normalizePipelineFormDefaults(rawDefaults = {}) {
+  const normalizedType = SALES_TYPES.some((item) => item.value === rawDefaults.opportunity_type)
+    ? String(rawDefaults.opportunity_type)
+    : "equipment";
+  const normalizedStage = PIPELINE_STAGES.some((stage) => stage.value === rawDefaults.stage)
+    ? String(rawDefaults.stage)
+    : "lead";
+  const normalizedSubcategory = String(rawDefaults.title_subcategory || "").trim();
+  const availableSubcategories = getSubcategoriesByType(normalizedType);
+  const safeSubcategory = normalizedSubcategory && availableSubcategories.includes(normalizedSubcategory) ? normalizedSubcategory : "";
+
+  return {
+    opportunity_type: normalizedType,
+    title_subcategory: safeSubcategory,
+    stage: normalizedStage
+  };
+}
+
+function readPipelineFormDefaults() {
+  if (typeof window === "undefined") return normalizePipelineFormDefaults();
+  try {
+    const raw = window.localStorage.getItem(PIPELINE_FORM_DEFAULTS_STORAGE_KEY);
+    if (!raw) return normalizePipelineFormDefaults();
+    return normalizePipelineFormDefaults(JSON.parse(raw));
+  } catch {
+    return normalizePipelineFormDefaults();
+  }
+}
+
+function emptyOpportunityForm(defaultCompanyId = "", defaultOwnerUserId = "", rawDefaults = null) {
+  const defaults = normalizePipelineFormDefaults(rawDefaults || {});
   return {
     company_id: defaultCompanyId,
     owner_user_id: defaultOwnerUserId,
-    opportunity_type: "equipment",
-    title_subcategory: "",
+    opportunity_type: defaults.opportunity_type,
+    title_subcategory: defaults.title_subcategory,
     title_product: "",
-    stage: "lead",
+    stage: defaults.stage,
     estimated_value: "",
     expected_close_date: ""
   };
@@ -432,6 +463,7 @@ export default function PipelineModule({
   prefillCompanyRequest = 0
 }) {
   const handledPrefillRequestRef = useRef(0);
+  const pipelineDefaultsRef = useRef(readPipelineFormDefaults());
   const [pipelineUsers, setPipelineUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [viewerUserId, setViewerUserId] = useState("");
@@ -459,7 +491,7 @@ export default function PipelineModule({
     companyId: "",
     companyName: ""
   });
-  const [form, setForm] = useState(() => emptyOpportunityForm("", ""));
+  const [form, setForm] = useState(() => emptyOpportunityForm("", "", pipelineDefaultsRef.current));
   const [companySearchTerm, setCompanySearchTerm] = useState("");
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
 
@@ -615,6 +647,18 @@ export default function PipelineModule({
   }, [viewerUserId, viewerRole]);
 
   useEffect(() => {
+    const nextDefaults = normalizePipelineFormDefaults({
+      opportunity_type: form.opportunity_type,
+      title_subcategory: form.title_subcategory,
+      stage: form.stage
+    });
+    pipelineDefaultsRef.current = nextDefaults;
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(PIPELINE_FORM_DEFAULTS_STORAGE_KEY, JSON.stringify(nextDefaults));
+    }
+  }, [form.opportunity_type, form.title_subcategory, form.stage]);
+
+  useEffect(() => {
     if (!prefillCompanyRequest || prefillCompanyRequest === handledPrefillRequestRef.current) return;
     handledPrefillRequestRef.current = prefillCompanyRequest;
 
@@ -626,7 +670,7 @@ export default function PipelineModule({
     setEditingOpportunityId("");
     setError("");
     setSuccess("");
-    setForm(() => emptyOpportunityForm(prefillCompanyId || companyById?.id || "", viewerUserId));
+    setForm(() => emptyOpportunityForm(prefillCompanyId || companyById?.id || "", viewerUserId, pipelineDefaultsRef.current));
     setCompanySearchTerm(prefillCompanyName || companyById?.trade_name || "");
     setCompanySuggestionsOpen(false);
   }, [prefillCompanyDraft, prefillCompanyRequest, companies, viewerUserId]);
@@ -696,6 +740,9 @@ export default function PipelineModule({
     event.preventDefault();
     setError("");
     setSuccess("");
+    const submitIntent = String(event?.nativeEvent?.submitter?.value || "save");
+    const createAnotherAfterSave = !editingOpportunityId && submitIntent === "save_and_create";
+    let postSaveSuccessMessage = "";
 
     try {
       const opportunityType = String(form.opportunity_type || "").trim();
@@ -740,11 +787,29 @@ export default function PipelineModule({
         });
       }
 
-      setEditingOpportunityId("");
-      setForm(emptyOpportunityForm("", viewerUserId));
-      setCompanySearchTerm("");
+      if (editingOpportunityId) {
+        setEditingOpportunityId("");
+        setForm(emptyOpportunityForm("", viewerUserId, pipelineDefaultsRef.current));
+        setCompanySearchTerm("");
+        postSaveSuccessMessage = "Oportunidade atualizada com sucesso.";
+      } else if (createAnotherAfterSave) {
+        setForm((prev) => ({
+          ...prev,
+          title_product: "",
+          estimated_value: "",
+          expected_close_date: ""
+        }));
+        postSaveSuccessMessage = "Oportunidade salva. Formulário mantido para cadastrar a próxima.";
+      } else {
+        setForm(emptyOpportunityForm("", viewerUserId, pipelineDefaultsRef.current));
+        setCompanySearchTerm("");
+        postSaveSuccessMessage = "Oportunidade salva com sucesso.";
+      }
       setCompanySuggestionsOpen(false);
       await load();
+      if (postSaveSuccessMessage) {
+        setSuccess(postSaveSuccessMessage);
+      }
     } catch (err) {
       setError(err.message);
     }
@@ -841,7 +906,7 @@ export default function PipelineModule({
     setError("");
     setSuccess("");
     setEditingOpportunityId("");
-    setForm(emptyOpportunityForm("", viewerUserId));
+    setForm(emptyOpportunityForm("", viewerUserId, pipelineDefaultsRef.current));
     setCompanySearchTerm("");
     setCompanySuggestionsOpen(false);
   }
@@ -854,7 +919,7 @@ export default function PipelineModule({
     setViewerUserId(nextViewer.user_id);
     setViewerRole(String(nextViewer.role || "sales"));
     setEditingOpportunityId("");
-    setForm(() => emptyOpportunityForm("", nextViewer.user_id));
+    setForm(() => emptyOpportunityForm("", nextViewer.user_id, pipelineDefaultsRef.current));
     setCompanySearchTerm("");
     setCompanySuggestionsOpen(false);
 
@@ -1285,9 +1350,14 @@ export default function PipelineModule({
             onChange={(e) => setForm((prev) => ({ ...prev, expected_close_date: e.target.value }))}
           />
           <div className="inline-actions pipeline-form-actions">
-            <button type="submit" className="btn-primary">
+            <button type="submit" value="save" className="btn-primary">
               {editingOpportunityId ? "Atualizar oportunidade" : "Salvar oportunidade"}
             </button>
+            {!editingOpportunityId ? (
+              <button type="submit" value="save_and_create" className="btn-ghost">
+                Salvar e criar outra
+              </button>
+            ) : null}
             {editingOpportunityId ? (
               <button type="button" className="btn-ghost" onClick={cancelEditOpportunity}>
                 Cancelar edicao
