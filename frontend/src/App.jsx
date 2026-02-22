@@ -13,6 +13,8 @@ import ReportsModule from "./modules/ReportsModule";
 import CustomerHistoryModal from "./components/CustomerHistoryModal";
 
 const THEME_STORAGE_KEY = "crm-theme";
+const CANONICAL_CRM_HOST = "crm-adilson-sousas-projects.vercel.app";
+const LEGACY_ALIAS_REDIRECT_HOSTS = new Set(["crm-kappa-peach.vercel.app"]);
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", hint: "Indicadores", icon: "◩" },
@@ -136,6 +138,17 @@ export default function App() {
     () => (typeof navigator !== "undefined" && /mac|iphone|ipad/i.test(navigator.platform) ? "⌘K" : "Ctrl+K"),
     []
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const currentHost = String(window.location.hostname || "").toLowerCase();
+    if (!LEGACY_ALIAS_REDIRECT_HOSTS.has(currentHost)) return;
+
+    const { pathname, search, hash } = window.location;
+    const nextUrl = `https://${CANONICAL_CRM_HOST}${pathname}${search}${hash}`;
+    window.location.replace(nextUrl);
+  }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
