@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createAutomatedProposalFromOpportunity,
   createCompanyInteraction,
@@ -426,7 +426,12 @@ function createProposalDraft({ opportunity, linkedOrder, contacts }) {
   };
 }
 
-export default function PipelineModule({ onRequestCreateCompany = null }) {
+export default function PipelineModule({
+  onRequestCreateCompany = null,
+  prefillCompanyDraft = null,
+  prefillCompanyRequest = 0
+}) {
+  const handledPrefillRequestRef = useRef(0);
   const [pipelineUsers, setPipelineUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [viewerUserId, setViewerUserId] = useState("");
@@ -608,6 +613,23 @@ export default function PipelineModule({ onRequestCreateCompany = null }) {
   useEffect(() => {
     load();
   }, [viewerUserId, viewerRole]);
+
+  useEffect(() => {
+    if (!prefillCompanyRequest || prefillCompanyRequest === handledPrefillRequestRef.current) return;
+    handledPrefillRequestRef.current = prefillCompanyRequest;
+
+    const rawDraft = prefillCompanyDraft && typeof prefillCompanyDraft === "object" ? prefillCompanyDraft : {};
+    const prefillCompanyId = String(rawDraft.company_id || rawDraft.id || "").trim();
+    const prefillCompanyName = String(rawDraft.trade_name || rawDraft.company_name || rawDraft.search_term || "").trim();
+    const companyById = prefillCompanyId ? companies.find((item) => item.id === prefillCompanyId) || null : null;
+
+    setEditingOpportunityId("");
+    setError("");
+    setSuccess("");
+    setForm(() => emptyOpportunityForm(prefillCompanyId || companyById?.id || "", viewerUserId));
+    setCompanySearchTerm(prefillCompanyName || companyById?.trade_name || "");
+    setCompanySuggestionsOpen(false);
+  }, [prefillCompanyDraft, prefillCompanyRequest, companies, viewerUserId]);
 
   useEffect(() => {
     let active = true;

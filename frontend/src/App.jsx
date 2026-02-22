@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { listUpcomingBirthdays, searchGlobalRecords } from "./lib/revenueApi";
 import { toWhatsAppBrazilNumber } from "./lib/phone";
@@ -93,6 +93,7 @@ function buildBirthdayWhatsAppUrl(alertItem) {
 }
 
 export default function App() {
+  const searchInputRef = useRef(null);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [companiesFocusTarget, setCompaniesFocusTarget] = useState("company");
   const [companiesFocusRequest, setCompaniesFocusRequest] = useState(0);
@@ -104,6 +105,10 @@ export default function App() {
   const [contactsEditContactId, setContactsEditContactId] = useState("");
   const [contactsEditRequest, setContactsEditRequest] = useState(0);
   const [contactsEditPayload, setContactsEditPayload] = useState(null);
+  const [pipelinePrefillDraft, setPipelinePrefillDraft] = useState(null);
+  const [pipelinePrefillRequest, setPipelinePrefillRequest] = useState(0);
+  const [tasksPrefillDraft, setTasksPrefillDraft] = useState(null);
+  const [tasksPrefillRequest, setTasksPrefillRequest] = useState(0);
   const [globalSearch, setGlobalSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -125,6 +130,10 @@ export default function App() {
     if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
+  const searchShortcutLabel = useMemo(
+    () => (typeof navigator !== "undefined" && /mac|iphone|ipad/i.test(navigator.platform) ? "⌘K" : "Ctrl+K"),
+    []
+  );
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -191,11 +200,25 @@ export default function App() {
       );
     }
     if (activeTab === "pipeline") {
-      return <PipelineModule onRequestCreateCompany={handleRequestCreateCompany} />;
+      return (
+        <PipelineModule
+          onRequestCreateCompany={handleRequestCreateCompany}
+          prefillCompanyDraft={pipelinePrefillDraft}
+          prefillCompanyRequest={pipelinePrefillRequest}
+        />
+      );
     }
     if (activeTab === "orders") return <OrdersModule />;
     if (activeTab === "reports") return <ReportsModule />;
-    if (activeTab === "tasks") return <TasksModule onRequestCreateCompany={handleRequestCreateCompany} />;
+    if (activeTab === "tasks") {
+      return (
+        <TasksModule
+          onRequestCreateCompany={handleRequestCreateCompany}
+          prefillCompanyDraft={tasksPrefillDraft}
+          prefillCompanyRequest={tasksPrefillRequest}
+        />
+      );
+    }
     if (activeTab === "service") return <ServiceModule onRequestCreateCompany={handleRequestCreateCompany} />;
     if (activeTab === "settings") return <SettingsModule />;
     return <DashboardModule />;
@@ -210,7 +233,11 @@ export default function App() {
     contactsEditContactId,
     contactsEditPayload,
     contactsEditRequest,
-    contactsFocusRequest
+    contactsFocusRequest,
+    pipelinePrefillDraft,
+    pipelinePrefillRequest,
+    tasksPrefillDraft,
+    tasksPrefillRequest
   ]);
 
   const activeMeta = PAGE_META[activeTab] || PAGE_META.dashboard;
@@ -239,6 +266,16 @@ export default function App() {
       day: "2-digit",
       month: "2-digit"
     }).format(new Date(`${dateValue}T00:00:00`));
+  }
+
+  function focusGlobalSearchInput({ selectAll = true } = {}) {
+    const input = searchInputRef.current;
+    if (!input) return;
+    input.focus();
+    if (selectAll && typeof input.select === "function") {
+      input.select();
+    }
+    setSearchFocused(true);
   }
 
   async function runGlobalSearch() {
@@ -325,6 +362,17 @@ export default function App() {
     return "";
   }
 
+  function resolveSearchCompanyContext(item) {
+    const normalizedCompanyId = String(item?.company_id || "").trim();
+    if (!normalizedCompanyId) return null;
+    const companyName = String(item?.company_name || item?.title || "").trim();
+    return {
+      company_id: normalizedCompanyId,
+      trade_name: companyName || "Empresa",
+      search_term: companyName || ""
+    };
+  }
+
   function canQuickEditSearchItem(item) {
     if (item?.entity_type === "company") {
       return Boolean(String(item?.company_id || "").trim());
@@ -333,6 +381,10 @@ export default function App() {
       return Boolean(resolveSearchContactId(item));
     }
     return false;
+  }
+
+  function canQuickCreateFromSearch(item) {
+    return Boolean(resolveSearchCompanyContext(item));
   }
 
   function quickEditLabel(item) {
@@ -363,6 +415,32 @@ export default function App() {
       handleSearchRequestEditContact(contactId, item);
       return;
     }
+  }
+
+  function openTaskQuickCreateFromSearch(item) {
+    const companyContext = resolveSearchCompanyContext(item);
+    if (!companyContext) {
+      setSearchError("Este resultado nao possui empresa vinculada para criar tarefa.");
+      return;
+    }
+
+    setSearchError("");
+    setTasksPrefillDraft(companyContext);
+    setTasksPrefillRequest((previous) => previous + 1);
+    setActiveTab("tasks");
+  }
+
+  function openPipelineQuickCreateFromSearch(item) {
+    const companyContext = resolveSearchCompanyContext(item);
+    if (!companyContext) {
+      setSearchError("Este resultado nao possui empresa vinculada para criar oportunidade.");
+      return;
+    }
+
+    setSearchError("");
+    setPipelinePrefillDraft(companyContext);
+    setPipelinePrefillRequest((previous) => previous + 1);
+    setActiveTab("pipeline");
   }
 
   function openCustomerHistoryFromSearch(item) {
@@ -458,6 +536,25 @@ export default function App() {
     };
   }, [globalSearch]);
 
+  useEffect(() => {
+    function handleGlobalShortcuts(event) {
+      const key = String(event.key || "").toLowerCase();
+      const isSearchShortcut = (event.ctrlKey || event.metaKey) && !event.altKey && key === "k";
+      if (isSearchShortcut) {
+        event.preventDefault();
+        focusGlobalSearchInput({ selectAll: true });
+        return;
+      }
+
+      if (event.key === "Escape" && searchFocused) {
+        setSearchFocused(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalShortcuts);
+    return () => window.removeEventListener("keydown", handleGlobalShortcuts);
+  }, [searchFocused]);
+
   return (
     <div className="crm-layout">
       <aside className="crm-sidebar">
@@ -505,9 +602,13 @@ export default function App() {
       <div className="crm-main">
         <header className="crm-topbar">
           <form className="crm-search" onSubmit={handleSearchSubmit}>
-            <span>Busca Global</span>
+            <div className="crm-search-meta">
+              <span>Busca Global</span>
+              <kbd className="crm-search-shortcut">{searchShortcutLabel}</kbd>
+            </div>
             <div className="crm-search-row">
               <input
+                ref={searchInputRef}
                 value={globalSearch}
                 onChange={(event) => setGlobalSearch(event.target.value)}
                 onFocus={() => setSearchFocused(true)}
@@ -645,11 +746,31 @@ export default function App() {
                       <strong>{item.title}</strong>
                       <span>{item.subtitle}</span>
                     </button>
-                    {canQuickEditSearchItem(item) ? (
-                      <button type="button" className="btn-primary btn-table-action search-result-edit-btn" onClick={() => handleQuickEditFromSearch(item)}>
-                        {quickEditLabel(item)}
-                      </button>
-                    ) : null}
+                    <div className="search-result-actions">
+                      {canQuickEditSearchItem(item) ? (
+                        <button type="button" className="btn-primary btn-table-action search-result-edit-btn" onClick={() => handleQuickEditFromSearch(item)}>
+                          {quickEditLabel(item)}
+                        </button>
+                      ) : null}
+                      {canQuickCreateFromSearch(item) ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action search-result-action-btn"
+                            onClick={() => openTaskQuickCreateFromSearch(item)}
+                          >
+                            Nova Tarefa
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action search-result-action-btn"
+                            onClick={() => openPipelineQuickCreateFromSearch(item)}
+                          >
+                            Novo Negócio
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
                   </li>
                 ))}
               </ul>

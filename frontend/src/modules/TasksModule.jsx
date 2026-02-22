@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createTask,
   listCompanyOptions,
@@ -280,7 +280,12 @@ function taskWindowBounds(task) {
   return { startAt, endAt };
 }
 
-export default function TasksModule({ onRequestCreateCompany = null }) {
+export default function TasksModule({
+  onRequestCreateCompany = null,
+  prefillCompanyDraft = null,
+  prefillCompanyRequest = 0
+}) {
+  const handledPrefillRequestRef = useRef(0);
   const [tasks, setTasks] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [users, setUsers] = useState([]);
@@ -364,6 +369,27 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
     loadUsersContext();
     load();
   }, []);
+
+  useEffect(() => {
+    if (!prefillCompanyRequest || prefillCompanyRequest === handledPrefillRequestRef.current) return;
+    handledPrefillRequestRef.current = prefillCompanyRequest;
+
+    const rawDraft = prefillCompanyDraft && typeof prefillCompanyDraft === "object" ? prefillCompanyDraft : {};
+    const prefillCompanyId = String(rawDraft.company_id || rawDraft.id || "").trim();
+    const prefillCompanyName = String(rawDraft.trade_name || rawDraft.company_name || rawDraft.search_term || "").trim();
+
+    const companyById = prefillCompanyId ? companies.find((item) => item.id === prefillCompanyId) || null : null;
+    const companyLabel = prefillCompanyName || companyById?.trade_name || "";
+
+    setForm((prev) => ({
+      ...prev,
+      company_id: prefillCompanyId || companyById?.id || ""
+    }));
+    setCompanySearchTerm(companyLabel);
+    setCompanySuggestionsOpen(false);
+    setError("");
+    setSuccess("");
+  }, [prefillCompanyDraft, prefillCompanyRequest, companies]);
 
   const summary = useMemo(() => {
     const today = todayYmd();
