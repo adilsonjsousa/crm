@@ -141,10 +141,26 @@ function normalizeStatus(value: unknown) {
 function isOpenStatus(value: unknown) {
   const status = normalizeStatus(value);
   if (!status) return null;
-  if (status.includes("pago") || status.includes("baixad") || status.includes("liquid") || status.includes("quitad")) {
+  if (
+    status.includes("pago") ||
+    status.includes("baixad") ||
+    status.includes("liquid") ||
+    status.includes("quitad") ||
+    status.includes("cancel") ||
+    status.includes("estorn")
+  ) {
     return false;
   }
-  if (status.includes("abert") || status.includes("pendente") || status.includes("atras") || status.includes("receber")) {
+  if (
+    status.includes("abert") ||
+    status.includes("pendente") ||
+    status.includes("atras") ||
+    status.includes("receber") ||
+    status.includes("vencid") ||
+    status.includes("vencer") ||
+    status.includes("vencendo") ||
+    status.includes("parcial")
+  ) {
     return true;
   }
   return null;
@@ -551,6 +567,9 @@ function normalizeReceivable(raw: unknown) {
       row.valor_pendente ??
       row.valor_a_receber ??
       row.saldo_a_receber ??
+      row.valor_saldo_restante ??
+      row.valor_restante ??
+      row.saldo_em_aberto ??
       row.saldo ??
       header.valor_saldo ??
       header.valor_aberto ??
@@ -558,6 +577,9 @@ function normalizeReceivable(raw: unknown) {
       header.valor_pendente ??
       header.valor_a_receber ??
       header.saldo_a_receber ??
+      header.valor_saldo_restante ??
+      header.valor_restante ??
+      header.saldo_em_aberto ??
       header.saldo
   );
 
@@ -568,6 +590,10 @@ function normalizeReceivable(raw: unknown) {
     const byStatus = isOpenStatus(status);
     if (byStatus === true) openAmount = documentAmount;
     if (byStatus === false) openAmount = 0;
+  }
+  if (!(openAmount > 0) && documentAmount > 0 && !(paidAmount > 0)) {
+    const byStatus = isOpenStatus(status);
+    if (byStatus !== false) openAmount = documentAmount;
   }
   if (openAmount < 0) openAmount = 0;
 
@@ -691,6 +717,8 @@ async function listReceivablesByCustomer({
     let pagesProcessed = 0;
     let scannedRows = 0;
     const rows: AnyRecord[] = [];
+    const hasServerFilter = Object.keys(filterParams).length > 0;
+    let acceptedByServerFilterWithoutLocalMatch = 0;
 
     async function fetchReceivablesPage(page: number): Promise<PageResult> {
       const payload = await callOmieApi({
@@ -734,7 +762,9 @@ async function listReceivablesByCustomer({
       scannedRows += pageRows.length;
 
       for (const row of pageRows) {
-        if (!receivableMatchesCustomer(row, normalizedIdentifiers, customerCnpj, normalizedCustomerNames)) continue;
+        const matched = receivableMatchesCustomer(row, normalizedIdentifiers, customerCnpj, normalizedCustomerNames);
+        if (!matched && !hasServerFilter) continue;
+        if (!matched && hasServerFilter) acceptedByServerFilterWithoutLocalMatch += 1;
         rows.push(normalizeReceivable(row));
       }
 
@@ -806,6 +836,11 @@ async function listReceivablesByCustomer({
     if (!rows.length && scannedRows > 0) {
       warnings.push(
         "Nenhum titulo foi relacionado ao cliente pelo filtro de identificadores/CNPJ. Pode haver variacao de estrutura no retorno do OMIE."
+      );
+    }
+    if (acceptedByServerFilterWithoutLocalMatch > 0) {
+      warnings.push(
+        `Foram aceitos ${acceptedByServerFilterWithoutLocalMatch} titulos com filtro nativo do OMIE mesmo sem match local estrito.`
       );
     }
 
