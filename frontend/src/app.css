@@ -596,10 +596,15 @@ body {
   animation: fade-up 220ms ease;
 }
 
-.pipeline-module,
-.reports-module {
+.pipeline-module {
   width: 100%;
   max-width: 1280px;
+  margin-inline: auto;
+}
+
+.reports-module {
+  width: 100%;
+  max-width: 1140px;
   margin-inline: auto;
 }
 
@@ -820,7 +825,7 @@ a.btn-table-action {
 }
 
 .reports-toolbar {
-  margin-top: 8px;
+  margin-top: 0;
   display: grid;
   grid-template-columns: minmax(260px, 1.4fr) minmax(170px, 220px) auto auto;
   gap: 8px;
@@ -838,19 +843,58 @@ a.btn-table-action {
 }
 
 .reports-table-wrap {
-  margin-top: 4px;
-  max-height: clamp(320px, 58vh, 640px);
+  margin-top: 2px;
+  max-height: clamp(240px, 46vh, 520px);
   overflow: auto;
 }
 
 .reports-module {
   display: grid;
-  gap: 10px;
+  gap: 8px;
+}
+
+.reports-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.reports-header {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.reports-heading h2 {
+  margin: 0;
+}
+
+.reports-intro {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
 }
 
 .reports-kpi-grid {
-  grid-template-columns: repeat(2, minmax(170px, 260px));
+  grid-template-columns: repeat(2, minmax(150px, 200px));
+  gap: 8px;
   justify-content: start;
+}
+
+.reports-kpi-grid .kpi-card {
+  padding: 8px 10px;
+}
+
+.reports-kpi-grid .kpi-label {
+  font-size: 0.74rem;
+}
+
+.reports-kpi-grid .kpi-value {
+  margin-top: 2px;
+  font-size: 1.06rem;
+}
+
+.reports-toolbar button {
+  white-space: nowrap;
 }
 
 .reports-table-wrap thead th {
@@ -1934,6 +1978,15 @@ tbody tr:hover {
 
   .reports-toolbar {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
+  .reports-header {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .reports-kpi-grid {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
 }
 

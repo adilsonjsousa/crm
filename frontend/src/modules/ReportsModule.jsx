@@ -120,18 +120,22 @@ export default function ReportsModule() {
 
   return (
     <section className="module reports-module">
-      <article className="panel">
-        <h2>Relatório de empresas cadastradas</h2>
-        <p className="muted">Filtre os registros e exporte para Excel.</p>
-
-        <div className="kpi-grid reports-kpi-grid">
-          <div className="kpi-card">
-            <span className="kpi-label">Total de empresas</span>
-            <strong className="kpi-value">{rows.length}</strong>
+      <article className="panel reports-panel">
+        <div className="reports-header">
+          <div className="reports-heading">
+            <h2>Relatório de empresas cadastradas</h2>
+            <p className="muted reports-intro">Filtre os registros e exporte para Excel.</p>
           </div>
-          <div className="kpi-card">
-            <span className="kpi-label">Empresas filtradas</span>
-            <strong className="kpi-value">{filteredRows.length}</strong>
+
+          <div className="kpi-grid reports-kpi-grid">
+            <div className="kpi-card">
+              <span className="kpi-label">Total de empresas</span>
+              <strong className="kpi-value">{rows.length}</strong>
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Empresas filtradas</span>
+              <strong className="kpi-value">{filteredRows.length}</strong>
+            </div>
           </div>
         </div>
 
