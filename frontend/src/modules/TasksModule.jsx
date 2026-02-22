@@ -684,35 +684,93 @@ export default function TasksModule({ onRequestCreateCompany = null }) {
       let successMessage = "Tarefa criada com sucesso.";
 
       if (notifyAssigneeWhatsApp) {
+        const sends = [];
+        const shouldSendCopyToCreator = Boolean(creatorUserId) && creatorUserId !== assigneeUserId;
+        let skippedWithoutWhatsapp = 0;
+
+        const assigneeMessage = [
+          `Ola, ${userDisplayName(assignee)}!`,
+          `${userDisplayName(creator)} criou uma agenda para voce no CRM.`,
+          `Atividade: ${activity}`,
+          `Empresa: ${companyLabel}`,
+          `Quando: ${scheduleText}`,
+          `Descricao: ${description}`
+        ].join("\n");
+
         if (assignee?.whatsapp) {
-          const message = [
-            `Ola, ${userDisplayName(assignee)}!`,
-            `${userDisplayName(creator)} criou uma agenda para voce no CRM.`,
+          sends.push({
+            target: "assignee",
+            promise: sendWhatsAppWithFallback({
+              phone: assignee.whatsapp,
+              message: assigneeMessage,
+              metadata: {
+                context: "task_created",
+                recipient_role: "assignee",
+                assignee_user_id: assigneeUserId,
+                created_by_user_id: creatorUserId
+              }
+            })
+          });
+        } else {
+          skippedWithoutWhatsapp += 1;
+        }
+
+        if (shouldSendCopyToCreator) {
+          const creatorCopyMessage = [
+            `Ola, ${userDisplayName(creator)}!`,
+            "Copia da agenda criada no CRM.",
+            `Responsavel: ${userDisplayName(assignee)}`,
             `Atividade: ${activity}`,
             `Empresa: ${companyLabel}`,
             `Quando: ${scheduleText}`,
             `Descricao: ${description}`
           ].join("\n");
-          try {
-            const delivery = await sendWhatsAppWithFallback({
-              phone: assignee.whatsapp,
-              message,
-              metadata: {
-                context: "task_created",
-                assignee_user_id: assigneeUserId,
-                created_by_user_id: creatorUserId
-              }
+
+          if (creator?.whatsapp) {
+            sends.push({
+              target: "creator",
+              promise: sendWhatsAppWithFallback({
+                phone: creator.whatsapp,
+                message: creatorCopyMessage,
+                metadata: {
+                  context: "task_created_creator_copy",
+                  recipient_role: "creator",
+                  assignee_user_id: assigneeUserId,
+                  created_by_user_id: creatorUserId
+                }
+              })
             });
-            if (delivery.mode === "api") {
-              successMessage = "Tarefa criada e WhatsApp enviado automaticamente ao responsável.";
-            } else {
-              successMessage = "Tarefa criada. A mensagem foi preparada no WhatsApp Web para envio manual.";
-            }
-          } catch {
-            successMessage = "Tarefa criada, mas não foi possível enviar/preparar o WhatsApp automaticamente.";
+          } else {
+            skippedWithoutWhatsapp += 1;
           }
-        } else {
-          successMessage = "Tarefa criada, mas o responsável não possui WhatsApp cadastrado.";
+        }
+
+        if (sends.length) {
+          const results = await Promise.allSettled(sends.map((item) => item.promise));
+          let apiSent = 0;
+          let manualPrepared = 0;
+          let failures = 0;
+
+          results.forEach((result) => {
+            if (result.status === "fulfilled") {
+              if (result.value?.mode === "api") {
+                apiSent += 1;
+              } else {
+                manualPrepared += 1;
+              }
+            } else {
+              failures += 1;
+            }
+          });
+
+          const parts = ["Tarefa criada."];
+          if (apiSent) parts.push(`WhatsApp enviado automaticamente para ${apiSent} destinatario(s).`);
+          if (manualPrepared) parts.push(`Mensagem preparada no WhatsApp Web para ${manualPrepared} destinatario(s).`);
+          if (failures) parts.push(`${failures} envio(s) falharam.`);
+          if (skippedWithoutWhatsapp) parts.push(`${skippedWithoutWhatsapp} usuario(s) sem WhatsApp cadastrado.`);
+          successMessage = parts.join(" ");
+        } else if (skippedWithoutWhatsapp) {
+          successMessage = "Tarefa criada, mas os destinatarios nao possuem WhatsApp cadastrado.";
         }
       }
 
