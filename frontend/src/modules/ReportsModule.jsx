@@ -79,6 +79,10 @@ export default function ReportsModule() {
         row.cnpj,
         row.email,
         row.phone,
+        row.city,
+        row.state,
+        row.country,
+        row.address_full,
         row.segmento,
         row?.lifecycle_stage?.name
       ].join(" "));
@@ -143,7 +147,7 @@ export default function ReportsModule() {
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar por nome, CNPJ, e-mail, telefone..."
+            placeholder="Buscar por nome, CNPJ, e-mail, telefone, cidade ou UF..."
           />
           <select
             value={stageFilter}
