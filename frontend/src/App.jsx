@@ -117,6 +117,8 @@ export default function App() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [searchKeyboardIndex, setSearchKeyboardIndex] = useState(-1);
+  const [searchKeyboardNavigating, setSearchKeyboardNavigating] = useState(false);
   const [searchCustomerHistoryModal, setSearchCustomerHistoryModal] = useState({
     open: false,
     companyId: "",
@@ -268,6 +270,12 @@ export default function App() {
     }).format(new Date(`${dateValue}T00:00:00`));
   }
 
+  function closeSearchFocus() {
+    setSearchFocused(false);
+    setSearchKeyboardNavigating(false);
+    setSearchKeyboardIndex(-1);
+  }
+
   function focusGlobalSearchInput({ selectAll = true } = {}) {
     const input = searchInputRef.current;
     if (!input) return;
@@ -276,6 +284,8 @@ export default function App() {
       input.select();
     }
     setSearchFocused(true);
+    setSearchKeyboardNavigating(false);
+    setSearchKeyboardIndex(-1);
   }
 
   async function runGlobalSearch() {
@@ -308,6 +318,7 @@ export default function App() {
 
   function handleSearchSubmit(event) {
     event.preventDefault();
+    setSearchKeyboardNavigating(false);
     runGlobalSearch();
   }
 
@@ -463,7 +474,7 @@ export default function App() {
     if (!item) return;
 
     if (fromSuggestion) {
-      setSearchFocused(false);
+      closeSearchFocus();
       setSearchExecuted(true);
       setSearchError("");
       setSearchLoading(false);
@@ -491,6 +502,22 @@ export default function App() {
     setActiveTab("companies");
   }
 
+  function openPipelineQuickAction() {
+    setPipelinePrefillDraft(null);
+    setPipelinePrefillRequest((previous) => previous + 1);
+    setActiveTab("pipeline");
+  }
+
+  function openTasksQuickAction() {
+    setTasksPrefillDraft(null);
+    setTasksPrefillRequest((previous) => previous + 1);
+    setActiveTab("tasks");
+  }
+
+  function openServiceQuickAction() {
+    setActiveTab("service");
+  }
+
   function handleRequestCreateCompany(prefill = null) {
     const nextDraft = prefill && typeof prefill === "object" ? prefill : null;
     setCompaniesFocusTarget("company");
@@ -503,6 +530,133 @@ export default function App() {
   function selectSuggestion(item) {
     handleSearchItemAction(item, { fromSuggestion: true });
   }
+
+  const hasTypedSearchTerm = globalSearch.trim().length >= 2;
+  const quickSearchActions = [
+    {
+      id: "quick-create-company",
+      type: "Atalho",
+      title: "Nova Empresa",
+      subtitle: "Abrir cadastro de empresa.",
+      onSelect: () => {
+        openCompanyQuickAction("company");
+        closeSearchFocus();
+      }
+    },
+    {
+      id: "quick-create-contact",
+      type: "Atalho",
+      title: "Novo Contato",
+      subtitle: "Abrir cadastro de contato.",
+      onSelect: () => {
+        openCompanyQuickAction("contact");
+        closeSearchFocus();
+      }
+    },
+    {
+      id: "quick-create-pipeline",
+      type: "Atalho",
+      title: "Novo Negócio",
+      subtitle: "Abrir Pipeline para cadastrar oportunidade.",
+      onSelect: () => {
+        openPipelineQuickAction();
+        closeSearchFocus();
+      }
+    },
+    {
+      id: "quick-create-task",
+      type: "Atalho",
+      title: "Nova Tarefa",
+      subtitle: "Abrir Agenda para nova tarefa.",
+      onSelect: () => {
+        openTasksQuickAction();
+        closeSearchFocus();
+      }
+    },
+    {
+      id: "quick-create-service",
+      type: "Atalho",
+      title: "Novo Chamado",
+      subtitle: "Abrir Assistência para registrar chamado.",
+      onSelect: () => {
+        openServiceQuickAction();
+        closeSearchFocus();
+      }
+    },
+    {
+      id: "quick-open-reports",
+      type: "Atalho",
+      title: "Ir para Relatórios",
+      subtitle: "Abrir extração e exportação de dados.",
+      onSelect: () => {
+        setActiveTab("reports");
+        closeSearchFocus();
+      }
+    }
+  ];
+  const searchDropdownItems = hasTypedSearchTerm
+    ? searchSuggestions.map((item) => ({
+        id: `suggestion-${item.type}-${item.id}`,
+        type: item.type,
+        title: item.title,
+        subtitle: item.subtitle,
+        onSelect: () => selectSuggestion(item)
+      }))
+    : quickSearchActions;
+
+  function executeSearchDropdownItem(item) {
+    if (!item || typeof item.onSelect !== "function") return;
+    item.onSelect();
+  }
+
+  function handleSearchInputKeyDown(event) {
+    if (event.key === "Escape" && searchFocused) {
+      event.preventDefault();
+      closeSearchFocus();
+      return;
+    }
+
+    if (!searchFocused || !searchDropdownItems.length) return;
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setSearchKeyboardNavigating(true);
+      setSearchKeyboardIndex((previous) => {
+        if (previous < 0) {
+          return direction > 0 ? 0 : searchDropdownItems.length - 1;
+        }
+        const currentIndex = previous;
+        return (currentIndex + direction + searchDropdownItems.length) % searchDropdownItems.length;
+      });
+      return;
+    }
+
+    if (event.key === "Enter" && searchKeyboardNavigating && searchKeyboardIndex >= 0) {
+      event.preventDefault();
+      executeSearchDropdownItem(searchDropdownItems[searchKeyboardIndex]);
+    }
+  }
+
+  useEffect(() => {
+    if (!searchFocused) {
+      setSearchKeyboardIndex(-1);
+      setSearchKeyboardNavigating(false);
+      return;
+    }
+    if (!searchDropdownItems.length) {
+      setSearchKeyboardIndex(-1);
+      return;
+    }
+    setSearchKeyboardIndex((previous) => {
+      if (previous >= 0 && previous < searchDropdownItems.length) return previous;
+      return 0;
+    });
+  }, [searchFocused, searchDropdownItems.length]);
+
+  useEffect(() => {
+    setSearchKeyboardNavigating(false);
+  }, [globalSearch]);
 
   useEffect(() => {
     let active = true;
@@ -547,7 +701,7 @@ export default function App() {
       }
 
       if (event.key === "Escape" && searchFocused) {
-        setSearchFocused(false);
+        closeSearchFocus();
       }
     }
 
@@ -610,11 +764,18 @@ export default function App() {
               <input
                 ref={searchInputRef}
                 value={globalSearch}
-                onChange={(event) => setGlobalSearch(event.target.value)}
-                onFocus={() => setSearchFocused(true)}
-                onBlur={() => {
-                  window.setTimeout(() => setSearchFocused(false), 120);
+                onChange={(event) => {
+                  setGlobalSearch(event.target.value);
+                  setSearchKeyboardNavigating(false);
                 }}
+                onFocus={() => {
+                  setSearchFocused(true);
+                  setSearchKeyboardNavigating(false);
+                }}
+                onBlur={() => {
+                  window.setTimeout(() => closeSearchFocus(), 120);
+                }}
+                onKeyDown={handleSearchInputKeyDown}
                 placeholder="Pesquisar empresas, contatos, negócios, pedidos e chamados..."
               />
               <button type="submit" className="crm-search-btn" aria-label="Pesquisar">
@@ -622,19 +783,28 @@ export default function App() {
               </button>
             </div>
 
-            {searchFocused && globalSearch.trim().length >= 2 ? (
+            {searchFocused ? (
               <div className="search-suggestions">
-                {suggestionsLoading ? <p className="muted">Buscando sugestões...</p> : null}
-                {!suggestionsLoading && !searchSuggestions.length ? <p className="muted">Sem sugestões.</p> : null}
-                {!suggestionsLoading && searchSuggestions.length ? (
+                <p className="search-suggestions-context">{hasTypedSearchTerm ? "Sugestões de busca" : "Ações rápidas"}</p>
+                {hasTypedSearchTerm && suggestionsLoading ? <p className="muted">Buscando sugestões...</p> : null}
+                {hasTypedSearchTerm && !suggestionsLoading && !searchDropdownItems.length ? <p className="muted">Sem sugestões.</p> : null}
+                {(!hasTypedSearchTerm || !suggestionsLoading) && searchDropdownItems.length ? (
                   <ul className="search-suggestions-list">
-                    {searchSuggestions.map((item) => (
-                      <li key={`suggestion-${item.type}-${item.id}`}>
+                    {searchDropdownItems.map((item, index) => (
+                      <li key={item.id}>
                         <button
                           type="button"
-                          className="search-suggestion-btn"
+                          className={searchKeyboardIndex === index ? "search-suggestion-btn is-active" : "search-suggestion-btn"}
                           onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => selectSuggestion(item)}
+                          onMouseEnter={() => {
+                            setSearchKeyboardIndex(index);
+                            setSearchKeyboardNavigating(true);
+                          }}
+                          onFocus={() => {
+                            setSearchKeyboardIndex(index);
+                            setSearchKeyboardNavigating(true);
+                          }}
+                          onClick={() => executeSearchDropdownItem(item)}
                         >
                           <span className="search-result-type">{item.type}</span>
                           <strong>{item.title}</strong>
@@ -648,10 +818,10 @@ export default function App() {
             ) : null}
           </form>
           <div className="crm-topbar-actions">
-            <button type="button" className="btn-ghost" onClick={() => setActiveTab("pipeline")}>
+            <button type="button" className="btn-ghost" onClick={openPipelineQuickAction}>
               + Novo Negócio
             </button>
-            <button type="button" className="btn-ghost" onClick={() => setActiveTab("tasks")}>
+            <button type="button" className="btn-ghost" onClick={openTasksQuickAction}>
               + Nova Tarefa
             </button>
             <button type="button" className="btn-ghost" onClick={() => openCompanyQuickAction("contact")}>

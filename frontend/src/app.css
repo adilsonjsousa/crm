@@ -309,6 +309,15 @@ body {
   gap: 5px;
 }
 
+.search-suggestions-context {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .search-suggestion-btn {
   width: 100%;
   text-align: left;
@@ -325,6 +334,12 @@ body {
 .search-suggestion-btn:hover {
   border-color: var(--accent-1);
   background: var(--accent-soft);
+}
+
+.search-suggestion-btn.is-active {
+  border-color: var(--accent-1);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.25);
 }
 
 .search-suggestion-btn strong {
