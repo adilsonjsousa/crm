@@ -182,6 +182,14 @@ function uniqueNonEmptyStrings(values: unknown[]) {
   return result;
 }
 
+function parsePositiveInteger(value: unknown) {
+  const digits = digitsOnly(value);
+  if (!digits) return null;
+  const parsed = Number(digits);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.floor(parsed);
+}
+
 function collectDeepValuesByKeyNames(
   value: unknown,
   keyNames: Set<string>,
@@ -655,149 +663,223 @@ async function listReceivablesByCustomer({
   maxPages: number;
   pageConcurrency: number;
 }) {
-  const warnings: string[] = [];
-
   const normalizedIdentifiers = uniqueNonEmptyStrings(customerIdentifiers);
   const normalizedCustomerNames = uniqueNonEmptyStrings(customerNames);
-  let totalPages = 1;
-  let pagesProcessed = 0;
-  let scannedRows = 0;
-  const rows: AnyRecord[] = [];
+  const numericCustomerCode =
+    normalizedIdentifiers
+      .map((identifier) => parsePositiveInteger(identifier))
+      .find((value): value is number => Number.isInteger(value) && value > 0) || null;
 
-  async function fetchReceivablesPage(page: number) {
-    const payload = await callOmieApi({
-      url: receivablesUrl,
-      appKey,
-      appSecret,
-      call: "ListarContasReceber",
-      param: {
-        pagina: page,
-        registros_por_pagina: recordsPerPage,
-        apenas_importado_api: "N"
-      }
-    });
-
-    const pageRows = extractArrayByKeys(payload, [
-      "conta_receber_cadastro",
-      "conta_receber",
-      "contas_receber",
-      "lista_contas_receber",
-      "titulo_receber",
-      "titulos_receber",
-      "lista_titulos",
-      "lancamentos"
-    ]);
-
-    return {
-      page,
-      pageRows,
-      directTotalPages: extractDirectTotalPages(payload),
-      inferredTotalPages: extractTotalPages(payload, page, pageRows.length, recordsPerPage)
-    };
-  }
-
-  function consumePageResult(result: {
+  type PageResult = {
     page: number;
     pageRows: unknown[];
     directTotalPages: number;
     inferredTotalPages: number;
-  }) {
-    const { pageRows, directTotalPages, inferredTotalPages } = result;
-    totalPages = Math.max(totalPages, inferredTotalPages);
-    if (directTotalPages > 0) {
-      totalPages = Math.max(totalPages, directTotalPages);
+  };
+
+  type ScanResult = {
+    receivables: AnyRecord[];
+    pages_processed: number;
+    total_pages_detected: number;
+    scanned_rows: number;
+    warnings: string[];
+  };
+
+  async function scanReceivables(filterParams: AnyRecord): Promise<ScanResult> {
+    const warnings: string[] = [];
+    let totalPages = 1;
+    let pagesProcessed = 0;
+    let scannedRows = 0;
+    const rows: AnyRecord[] = [];
+
+    async function fetchReceivablesPage(page: number): Promise<PageResult> {
+      const payload = await callOmieApi({
+        url: receivablesUrl,
+        appKey,
+        appSecret,
+        call: "ListarContasReceber",
+        param: {
+          pagina: page,
+          registros_por_pagina: recordsPerPage,
+          apenas_importado_api: "N",
+          ...filterParams
+        }
+      });
+
+      const pageRows = extractArrayByKeys(payload, [
+        "conta_receber_cadastro",
+        "conta_receber",
+        "contas_receber",
+        "lista_contas_receber",
+        "titulo_receber",
+        "titulos_receber",
+        "lista_titulos",
+        "lancamentos"
+      ]);
+
+      return {
+        page,
+        pageRows,
+        directTotalPages: extractDirectTotalPages(payload),
+        inferredTotalPages: extractTotalPages(payload, page, pageRows.length, recordsPerPage)
+      };
     }
-    scannedRows += pageRows.length;
 
-    for (const row of pageRows) {
-      if (!receivableMatchesCustomer(row, normalizedIdentifiers, customerCnpj, normalizedCustomerNames)) continue;
-      rows.push(normalizeReceivable(row));
+    function consumePageResult(result: PageResult) {
+      const { pageRows, directTotalPages, inferredTotalPages } = result;
+      totalPages = Math.max(totalPages, inferredTotalPages);
+      if (directTotalPages > 0) {
+        totalPages = Math.max(totalPages, directTotalPages);
+      }
+      scannedRows += pageRows.length;
+
+      for (const row of pageRows) {
+        if (!receivableMatchesCustomer(row, normalizedIdentifiers, customerCnpj, normalizedCustomerNames)) continue;
+        rows.push(normalizeReceivable(row));
+      }
+
+      pagesProcessed += 1;
     }
 
-    pagesProcessed += 1;
-  }
-
-  async function fetchPagesSequentially(pages: number[]) {
-    for (const page of pages) {
-      const result = await fetchReceivablesPage(page);
-      consumePageResult(result);
-      if (!result.pageRows.length) break;
-    }
-  }
-
-  async function fetchPagesInParallel(pages: number[]) {
-    for (let offset = 0; offset < pages.length; offset += pageConcurrency) {
-      const batchPages = pages.slice(offset, offset + pageConcurrency);
-      const batchResults = await Promise.all(batchPages.map((page) => fetchReceivablesPage(page)));
-      batchResults.sort((a, b) => a.page - b.page);
-      for (const result of batchResults) {
+    async function fetchPagesSequentially(pages: number[]) {
+      for (const page of pages) {
+        const result = await fetchReceivablesPage(page);
         consumePageResult(result);
+        if (!result.pageRows.length) break;
       }
     }
-  }
 
-  const initialUpperBound = Math.min(Math.max(1, maxPages), 400);
-  const firstPage = await fetchReceivablesPage(1);
-  consumePageResult(firstPage);
-
-  let initialScanUpperBound = initialUpperBound;
-  if (firstPage.directTotalPages > 0) {
-    initialScanUpperBound = Math.min(initialUpperBound, firstPage.directTotalPages);
-  }
-
-  if (initialScanUpperBound > 1) {
-    const remainingPages: number[] = [];
-    for (let page = 2; page <= initialScanUpperBound; page += 1) {
-      remainingPages.push(page);
+    async function fetchPagesInParallel(pages: number[]) {
+      for (let offset = 0; offset < pages.length; offset += pageConcurrency) {
+        const batchPages = pages.slice(offset, offset + pageConcurrency);
+        const batchResults = await Promise.all(batchPages.map((page) => fetchReceivablesPage(page)));
+        batchResults.sort((a, b) => a.page - b.page);
+        for (const result of batchResults) {
+          consumePageResult(result);
+        }
+      }
     }
 
+    const initialUpperBound = Math.min(Math.max(1, maxPages), 400);
+    const firstPage = await fetchReceivablesPage(1);
+    consumePageResult(firstPage);
+
+    let initialScanUpperBound = initialUpperBound;
     if (firstPage.directTotalPages > 0) {
-      await fetchPagesInParallel(remainingPages);
-    } else {
-      await fetchPagesSequentially(remainingPages);
+      initialScanUpperBound = Math.min(initialUpperBound, firstPage.directTotalPages);
     }
-  }
 
-  const hitPageCapBeforeFallback = totalPages > initialScanUpperBound;
-  if (!rows.length && hitPageCapBeforeFallback) {
-    const extendedLimit = Math.min(totalPages, Math.max(initialScanUpperBound + 1, Math.min(400, initialScanUpperBound * 4)));
-    if (extendedLimit > initialScanUpperBound) {
-      warnings.push(
-        `Busca estendida executada em contas a receber: sem match nas ${initialScanUpperBound} primeiras paginas, expandindo ate ${extendedLimit}.`
-      );
-      const extendedPages: number[] = [];
-      for (let page = initialScanUpperBound + 1; page <= extendedLimit; page += 1) {
-        extendedPages.push(page);
+    if (initialScanUpperBound > 1) {
+      const remainingPages: number[] = [];
+      for (let page = 2; page <= initialScanUpperBound; page += 1) {
+        remainingPages.push(page);
       }
-      await fetchPagesInParallel(extendedPages);
+
+      if (firstPage.directTotalPages > 0) {
+        await fetchPagesInParallel(remainingPages);
+      } else {
+        await fetchPagesSequentially(remainingPages);
+      }
+    }
+
+    const hitPageCapBeforeFallback = totalPages > initialScanUpperBound;
+    if (!rows.length && hitPageCapBeforeFallback) {
+      const extendedLimit = Math.min(totalPages, Math.max(initialScanUpperBound + 1, Math.min(400, initialScanUpperBound * 4)));
+      if (extendedLimit > initialScanUpperBound) {
+        warnings.push(
+          `Busca estendida executada em contas a receber: sem match nas ${initialScanUpperBound} primeiras paginas, expandindo ate ${extendedLimit}.`
+        );
+        const extendedPages: number[] = [];
+        for (let page = initialScanUpperBound + 1; page <= extendedLimit; page += 1) {
+          extendedPages.push(page);
+        }
+        await fetchPagesInParallel(extendedPages);
+      }
+    }
+
+    const hitPageCap = totalPages > pagesProcessed;
+    if (hitPageCap) {
+      warnings.push(
+        `Consulta parcial: processadas ${pagesProcessed} de ${totalPages} paginas detectadas em contas a receber do OMIE.`
+      );
+    }
+    if (!rows.length && scannedRows > 0) {
+      warnings.push(
+        "Nenhum titulo foi relacionado ao cliente pelo filtro de identificadores/CNPJ. Pode haver variacao de estrutura no retorno do OMIE."
+      );
+    }
+
+    return {
+      receivables: rows.sort((a, b) => {
+        const aMs = parseDateIso(a.data_vencimento_iso || a.data_emissao_iso)
+          ? new Date(String(a.data_vencimento_iso || a.data_emissao_iso)).getTime()
+          : Number.POSITIVE_INFINITY;
+        const bMs = parseDateIso(b.data_vencimento_iso || b.data_emissao_iso)
+          ? new Date(String(b.data_vencimento_iso || b.data_emissao_iso)).getTime()
+          : Number.POSITIVE_INFINITY;
+        return aMs - bMs;
+      }),
+      pages_processed: pagesProcessed,
+      total_pages_detected: totalPages,
+      scanned_rows: scannedRows,
+      warnings
+    };
+  }
+
+  const attempts: Array<{ label: string; filterParams: AnyRecord; allowFallback: boolean }> = [];
+  if (numericCustomerCode) {
+    attempts.push({
+      label: `filtrar_cliente=${numericCustomerCode}`,
+      filterParams: { filtrar_cliente: numericCustomerCode },
+      allowFallback: true
+    });
+  }
+  if (customerCnpj) {
+    attempts.push({
+      label: `filtrar_por_cpf_cnpj=${customerCnpj}`,
+      filterParams: { filtrar_por_cpf_cnpj: customerCnpj },
+      allowFallback: true
+    });
+  }
+  attempts.push({ label: "varredura_sem_filtro", filterParams: {}, allowFallback: false });
+
+  const warnings: string[] = [];
+  let lastError: unknown = null;
+
+  for (const attempt of attempts) {
+    try {
+      const result = await scanReceivables(attempt.filterParams);
+      const hasPartialNoMatch =
+        !result.receivables.length && result.total_pages_detected > result.pages_processed && result.scanned_rows > 0;
+
+      if (attempt.allowFallback && hasPartialNoMatch) {
+        warnings.push(
+          `Tentativa ${attempt.label} sem match completo (${result.pages_processed}/${result.total_pages_detected} paginas). Aplicando fallback.`
+        );
+        warnings.push(...result.warnings);
+        continue;
+      }
+
+      return {
+        ...result,
+        warnings: [...warnings, ...result.warnings]
+      };
+    } catch (error) {
+      lastError = error;
+      warnings.push(`Tentativa ${attempt.label} falhou: ${error instanceof Error ? error.message : "falha inesperada"}`);
+      continue;
     }
   }
 
-  const hitPageCap = totalPages > pagesProcessed;
-  if (hitPageCap) {
-    warnings.push(
-      `Consulta parcial: processadas ${pagesProcessed} de ${totalPages} paginas detectadas em contas a receber do OMIE.`
-    );
-  }
-  if (!rows.length && scannedRows > 0) {
-    warnings.push(
-      "Nenhum titulo foi relacionado ao cliente pelo filtro de identificadores/CNPJ. Pode haver variacao de estrutura no retorno do OMIE."
-    );
+  if (lastError) {
+    throw new Error(warnings.join(" | ") || (lastError instanceof Error ? lastError.message : "Falha ao consultar contas a receber no OMIE."));
   }
 
   return {
-    receivables: rows.sort((a, b) => {
-      const aMs = parseDateIso(a.data_vencimento_iso || a.data_emissao_iso)
-        ? new Date(String(a.data_vencimento_iso || a.data_emissao_iso)).getTime()
-        : Number.POSITIVE_INFINITY;
-      const bMs = parseDateIso(b.data_vencimento_iso || b.data_emissao_iso)
-        ? new Date(String(b.data_vencimento_iso || b.data_emissao_iso)).getTime()
-        : Number.POSITIVE_INFINITY;
-      return aMs - bMs;
-    }),
-    pages_processed: pagesProcessed,
-    total_pages_detected: totalPages,
-    scanned_rows: scannedRows,
+    receivables: [],
+    pages_processed: 0,
+    total_pages_detected: 0,
+    scanned_rows: 0,
     warnings
   };
 }
