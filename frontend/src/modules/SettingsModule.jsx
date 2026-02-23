@@ -733,7 +733,10 @@ export default function SettingsModule() {
       };
 
       let hasMore = true;
-      let cursor = rdResumeCursor && typeof rdResumeCursor === "object" ? rdResumeCursor : null;
+      const previousResult = asObject(rdResult);
+      const previousWasDryRun = Boolean(previousResult.dry_run);
+      let cursor =
+        !dryRun && !previousWasDryRun && rdResumeCursor && typeof rdResumeCursor === "object" ? rdResumeCursor : null;
 
       while (hasMore && aggregate.rounds < RD_SYNC_MAX_ROUNDS) {
         aggregate.rounds += 1;
@@ -803,13 +806,25 @@ export default function SettingsModule() {
       setRdResult(aggregate);
       setRdResumeCursor(hasMore ? cursor : null);
       if (hasMore) {
-        setRdError(
-          `A sincronização RD foi interrompida para segurança após ${aggregate.rounds} lotes. Clique novamente para continuar.`
-        );
+        if (dryRun) {
+          setRdError(
+            `Validação RD (modo teste) interrompida após ${aggregate.rounds} lotes. Clique novamente para continuar a validação. Nenhum dado foi gravado.`
+          );
+        } else {
+          setRdError(
+            `A sincronização RD foi interrompida para segurança após ${aggregate.rounds} lotes. Clique novamente para continuar.`
+          );
+        }
       } else {
-        setRdSuccess(
-          `Sincronização RD concluída em ${aggregate.rounds} lote(s). ${aggregate.processed} registro(s) processado(s).`
-        );
+        if (dryRun) {
+          setRdSuccess(
+            `Validação RD (modo teste) concluída em ${aggregate.rounds} lote(s). ${aggregate.processed} registro(s) processado(s). Nenhum dado foi gravado.`
+          );
+        } else {
+          setRdSuccess(
+            `Sincronização RD concluída em ${aggregate.rounds} lote(s). ${aggregate.processed} registro(s) processado(s).`
+          );
+        }
       }
       await loadRdHistory();
     } catch (err) {
@@ -1262,6 +1277,9 @@ export default function SettingsModule() {
             </article>
           </div>
         ) : null}
+        {rdResult && rdResultSummary.dry_run ? (
+          <p className="muted">Resultado em modo teste: os dados foram apenas validados e não foram gravados no CRM.</p>
+        ) : null}
 
         <h3 className="top-gap">Histórico de sincronizações RD</h3>
         <div className="table-wrap top-gap">
@@ -1279,11 +1297,14 @@ export default function SettingsModule() {
             <tbody>
               {rdHistory.map((job) => {
                 const result = asObject(job.result);
+                const payload = asObject(job.payload);
                 const processed = Number(result.processed || 0);
                 const companies = Number(result.companies_processed || 0);
                 const contacts = Number(result.contacts_processed || 0);
                 const opportunities = Number(result.opportunities_processed || 0);
                 const errorMessage = String(job.error_message || "").trim();
+                const dryRunFlag = Boolean(result.dry_run ?? payload.dry_run);
+                const details = errorMessage || (job.status === "success" ? "Concluído sem erro." : "-");
 
                 return (
                   <tr key={job.id}>
@@ -1294,7 +1315,7 @@ export default function SettingsModule() {
                     <td>
                       {companies} / {contacts} / {opportunities}
                     </td>
-                    <td>{errorMessage || (job.status === "success" ? "Concluído sem erro." : "-")}</td>
+                    <td>{dryRunFlag ? `[Modo teste] ${details}` : details}</td>
                   </tr>
                 );
               })}
