@@ -384,6 +384,173 @@ function pickFirstArray(source: AnyRecord, keys: string[]) {
   return [];
 }
 
+function extractScalarStrings(value: unknown, depth = 0): string[] {
+  if (depth > 4 || value === null || value === undefined) return [];
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    const normalized = safeString(value);
+    return normalized ? [normalized] : [];
+  }
+
+  if (Array.isArray(value)) {
+    const collected: string[] = [];
+    for (const item of value) {
+      collected.push(...extractScalarStrings(item, depth + 1));
+      if (collected.length >= 30) break;
+    }
+    return collected;
+  }
+
+  if (typeof value === "object") {
+    const collected: string[] = [];
+    for (const item of Object.values(asObject(value))) {
+      collected.push(...extractScalarStrings(item, depth + 1));
+      if (collected.length >= 30) break;
+    }
+    return collected;
+  }
+
+  return [];
+}
+
+function extractCnpjFromValue(value: unknown, depth = 0): string {
+  if (depth > 5 || value === null || value === undefined) return "";
+
+  const direct = normalizeCnpj(value);
+  if (direct) return direct;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = extractCnpjFromValue(item, depth + 1);
+      if (nested) return nested;
+    }
+    return "";
+  }
+
+  if (typeof value === "object") {
+    for (const item of Object.values(asObject(value))) {
+      const nested = extractCnpjFromValue(item, depth + 1);
+      if (nested) return nested;
+    }
+  }
+
+  return "";
+}
+
+function getCustomFieldCollections(source: AnyRecord) {
+  return [
+    source.custom_fields,
+    source.customFields,
+    source.organization_custom_fields,
+    source.organizationCustomFields,
+    source.fields,
+    source.extra_fields,
+    source.additional_fields,
+    source.metadata,
+    source.meta
+  ];
+}
+
+function normalizeHintToken(value: string) {
+  return normalizeText(value).replace(/\s+/g, "");
+}
+
+function extractCustomFieldValue(source: AnyRecord, hints: string[]) {
+  const normalizedHints = hints.map(normalizeHintToken).filter(Boolean);
+  if (!normalizedHints.length) return "";
+
+  const keyMatchesHint = (value: unknown) => {
+    const normalized = normalizeHintToken(safeString(value));
+    if (!normalized) return false;
+    return normalizedHints.some((hint) => normalized.includes(hint));
+  };
+
+  for (const collection of getCustomFieldCollections(source)) {
+    if (Array.isArray(collection)) {
+      for (const rawField of collection) {
+        const field = asObject(rawField);
+        const descriptors = [
+          field,
+          asObject(field.custom_field),
+          asObject(field.field),
+          asObject(field.definition),
+          asObject(field.meta)
+        ];
+
+        let matched = false;
+        for (const descriptor of descriptors) {
+          for (const nameKey of [
+            "name",
+            "label",
+            "key",
+            "slug",
+            "field_name",
+            "custom_field_name",
+            "identifier",
+            "title",
+            "tag"
+          ]) {
+            if (keyMatchesHint(descriptor[nameKey])) {
+              matched = true;
+              break;
+            }
+          }
+          if (matched) break;
+        }
+        if (!matched) continue;
+
+        for (const valueKey of [
+          "value",
+          "raw_value",
+          "value_text",
+          "field_value",
+          "content",
+          "text",
+          "valor"
+        ]) {
+          const values = extractScalarStrings(field[valueKey]);
+          if (values.length) return values[0];
+        }
+
+        const fallbackValues = extractScalarStrings(field);
+        if (fallbackValues.length) return fallbackValues[0];
+      }
+      continue;
+    }
+
+    const objectCollection = asObject(collection);
+    for (const [key, value] of Object.entries(objectCollection)) {
+      if (!keyMatchesHint(key)) continue;
+      const values = extractScalarStrings(value);
+      if (values.length) return values[0];
+    }
+  }
+
+  return "";
+}
+
+function extractAnyCnpjFromCustomFields(source: AnyRecord) {
+  for (const collection of getCustomFieldCollections(source)) {
+    const cnpj = extractCnpjFromValue(collection);
+    if (cnpj) return cnpj;
+  }
+  return "";
+}
+
+function extractOrganizationState(row: AnyRecord, address: AnyRecord) {
+  const directState =
+    pickFirstNonEmpty(address, ["state", "uf"]) ||
+    pickFirstNonEmpty(row, ["state", "uf", "address_state", "state_code"]) ||
+    extractCustomFieldValue(row, ["estado", "uf", "state"]);
+  const normalizedDirectState = normalizeUf(directState);
+  if (normalizedDirectState) return normalizedDirectState;
+
+  const addressText =
+    pickFirstNonEmpty(row, ["address_full", "full_address", "address"]) ||
+    pickFirstNonEmpty(address, ["full", "formatted", "address_line", "line1"]);
+  return normalizeUf(addressText);
+}
+
 function extractArrayByKeys(payload: AnyRecord, keys: string[]) {
   const root = asObject(payload);
   for (const key of keys) {
@@ -584,15 +751,35 @@ function parseOrganization(itemRaw: unknown) {
   const address = pickFirstObject(row, ["address", "endereco", "company_address"]);
 
   const externalId = pickFirstNonEmpty(row, ["id", "uuid", "organization_id", "organizationId", "code"]);
-  const legalName = pickFirstNonEmpty(row, ["legal_name", "razao_social", "name", "company_name"]);
-  const tradeName = pickFirstNonEmpty(row, ["name", "trade_name", "nome_fantasia", "nickname"]);
-  const cnpj = normalizeCnpj(
-    row.cnpj ??
-      row.tax_id ??
-      row.document ??
-      row.cpf_cnpj ??
-      row.cnpj_cpf
-  );
+  const legalName = pickFirstNonEmpty(row, [
+    "legal_name",
+    "razao_social",
+    "company_name",
+    "corporate_name",
+    "name",
+    "title"
+  ]);
+  const tradeName = pickFirstNonEmpty(row, [
+    "name",
+    "trade_name",
+    "nome_fantasia",
+    "fantasy_name",
+    "nickname",
+    "title"
+  ]);
+  const cnpj =
+    extractCnpjFromValue(row.cnpj) ||
+    extractCnpjFromValue(row.tax_id) ||
+    extractCnpjFromValue(row.taxId) ||
+    extractCnpjFromValue(row.document) ||
+    extractCnpjFromValue(row.document_number) ||
+    extractCnpjFromValue(row.documentNumber) ||
+    extractCnpjFromValue(row.cpf_cnpj) ||
+    extractCnpjFromValue(row.cnpj_cpf) ||
+    extractCnpjFromValue(address.cnpj) ||
+    extractCnpjFromValue(address.document) ||
+    extractCnpjFromValue(extractCustomFieldValue(row, ["cnpj", "cpf cnpj", "cpf_cnpj", "documento", "tax id"])) ||
+    extractAnyCnpjFromCustomFields(row);
   const email = pickFirstNonEmpty(row, ["email", "primary_email", "contact_email"]).toLowerCase();
 
   const phone = formatBrazilPhone(
@@ -600,8 +787,7 @@ function parseOrganization(itemRaw: unknown) {
   );
 
   const rawCity = pickFirstNonEmpty(address, ["city", "cidade"]) || pickFirstNonEmpty(row, ["city", "cidade"]);
-  const rawState = pickFirstNonEmpty(address, ["state", "uf"]) || pickFirstNonEmpty(row, ["state", "uf"]);
-  const state = normalizeUf(rawState);
+  const state = extractOrganizationState(row, address);
   const city = normalizeCity(rawCity, state).toUpperCase();
   const street = pickFirstNonEmpty(address, ["street", "logradouro"]) || pickFirstNonEmpty(row, ["street", "logradouro"]);
   const number = pickFirstNonEmpty(address, ["number", "numero"]) || pickFirstNonEmpty(row, ["number", "numero"]);
