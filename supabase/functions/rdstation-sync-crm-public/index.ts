@@ -3,7 +3,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 type AnyRecord = Record<string, unknown>;
 type ResourceName = "organizations" | "contacts" | "deals";
-type SyncScope = "customers_whatsapp_only" | "full";
+type SyncScope = "south_cnpj_only" | "customers_whatsapp_only" | "full";
 type RdAuthMode = "bearer" | "query_token";
 type RdAuthState = {
   mode: RdAuthMode;
@@ -23,6 +23,7 @@ const LEGACY_MAX_RECORDS_PER_PAGE = 50;
 const BEARER_REQUEST_TIMEOUT_MS = 20000;
 const LEGACY_REQUEST_TIMEOUT_MS = 35000;
 const MAX_ERRORS = 30;
+const DEFAULT_SOUTH_UF_FILTER = ["SC", "PR", "RS"] as const;
 const BRAZIL_UF_CODES = new Set([
   "AC",
   "AL",
@@ -158,6 +159,9 @@ function buildAuthState(authModeRaw: unknown, apiUrl: string): RdAuthState {
 
 function resolveSyncScope(value: unknown): SyncScope {
   const raw = safeString(value).toLowerCase();
+  if (["south_cnpj_only", "south_only", "cnpj_south", "south_cnpj"].includes(raw)) {
+    return "south_cnpj_only";
+  }
   if (["full", "crm_full", "all", "everything", "deals"].includes(raw)) {
     return "full";
   }
@@ -208,6 +212,30 @@ function normalizeUf(value: unknown) {
   if (byName) return byName;
 
   return "";
+}
+
+function parseUfFilter(value: unknown, fallback: readonly string[] = []) {
+  const rawTokens: string[] = [];
+  if (Array.isArray(value)) {
+    for (const item of value) rawTokens.push(safeString(item));
+  } else {
+    rawTokens.push(...safeString(value).split(/[,\s;|]+/));
+  }
+
+  const normalized = new Set<string>();
+  for (const token of rawTokens) {
+    const uf = normalizeUf(token);
+    if (uf) normalized.add(uf);
+  }
+
+  if (!normalized.size) {
+    for (const item of fallback) {
+      const uf = normalizeUf(item);
+      if (uf) normalized.add(uf);
+    }
+  }
+
+  return normalized;
 }
 
 function normalizeCity(value: unknown, stateUf: string) {
@@ -1000,16 +1028,20 @@ async function upsertCompanyFromOrganization({
   organization,
   dryRun,
   summary,
-  companyMap
+  companyMap,
+  allowedStates
 }: {
   supabase: ReturnType<typeof createClient>;
   organization: AnyRecord;
   dryRun: boolean;
   summary: AnyRecord;
   companyMap: Map<string, string>;
+  allowedStates: Set<string>;
 }) {
   const externalId = safeString(organization.externalId);
   const cnpj = normalizeCnpj(organization.cnpj);
+  const companyState = normalizeUf(organization.state);
+  const companyCity = normalizeCity(organization.city, companyState).toUpperCase();
   const legalName = safeString(organization.legalName) || safeString(organization.tradeName) || `EMPRESA RD ${externalId || cnpj || "SEM_ID"}`;
   const tradeName = safeString(organization.tradeName) || legalName;
 
@@ -1020,6 +1052,11 @@ async function upsertCompanyFromOrganization({
 
   if (!cnpj) {
     summary.skipped_without_cnpj = getResourceCount(summary, "skipped_without_cnpj") + 1;
+    return "";
+  }
+
+  if (allowedStates.size && !allowedStates.has(companyState)) {
+    summary.companies_skipped_by_state = getResourceCount(summary, "companies_skipped_by_state") + 1;
     return "";
   }
 
@@ -1072,8 +1109,8 @@ async function upsertCompanyFromOrganization({
     email: safeString(organization.email).toLowerCase() || null,
     phone: safeString(organization.phone) || null,
     address_full: safeString(organization.addressFull) || null,
-    city: safeString(organization.city) || null,
-    state: safeString(organization.state) || null,
+    city: companyCity || null,
+    state: companyState || null,
     segmento: "RD Station"
   };
 
@@ -1584,7 +1621,12 @@ Deno.serve(async (request: Request) => {
   const apiUrl = safeString(body.api_url || body.apiUrl || DEFAULT_RDSTATION_API_URL) || DEFAULT_RDSTATION_API_URL;
   const authState = buildAuthState(body.auth_mode ?? body.authMode, apiUrl);
   const syncScope = resolveSyncScope(body.sync_scope ?? body.syncScope);
+  const includeContacts = syncScope !== "south_cnpj_only";
   const includeDeals = syncScope === "full";
+  const allowedStates = parseUfFilter(
+    body.allowed_states ?? body.allowedStates,
+    syncScope === "south_cnpj_only" ? DEFAULT_SOUTH_UF_FILTER : []
+  );
   const dryRun = parseBoolean(body.dry_run ?? body.dryRun, false);
   const requestedRecordsPerPage = clampNumber(body.records_per_page ?? body.recordsPerPage, 1, 500, 100);
   const recordsPerPage = dryRun ? requestedRecordsPerPage : Math.min(requestedRecordsPerPage, LIVE_MAX_RECORDS_PER_PAGE);
@@ -1616,6 +1658,7 @@ Deno.serve(async (request: Request) => {
         api_url: apiUrl,
         auth_mode: authState.mode,
         sync_scope: syncScope,
+        allowed_states: Array.from(allowedStates),
         dry_run: dryRun,
         records_per_page: recordsPerPage,
         max_pages: requestedMaxPages,
@@ -1648,11 +1691,13 @@ Deno.serve(async (request: Request) => {
       companies_created: 0,
       companies_updated: 0,
       companies_skipped_existing: 0,
+      companies_skipped_by_state: 0,
       contacts_created: 0,
       contacts_updated: 0,
       contacts_skipped_without_company: 0,
       contacts_skipped_without_whatsapp: 0,
       contacts_skipped_existing_whatsapp: 0,
+      contacts_skipped_by_scope: 0,
       opportunities_created: 0,
       opportunities_updated: 0,
       opportunities_skipped_by_scope: 0,
@@ -1680,6 +1725,14 @@ Deno.serve(async (request: Request) => {
       }
 
       const resource = RESOURCE_ORDER[state.resource_index];
+      if (!includeContacts && resource === "contacts") {
+        state.resource_index = RESOURCE_ORDER.length;
+        summary.contacts_skipped_by_scope =
+          getResourceCount(summary, "contacts_skipped_by_scope") + 1;
+        summary.opportunities_skipped_by_scope =
+          getResourceCount(summary, "opportunities_skipped_by_scope") + 1;
+        break;
+      }
       if (!includeDeals && resource === "deals") {
         state.resource_index = RESOURCE_ORDER.length;
         summary.opportunities_skipped_by_scope =
@@ -1717,7 +1770,8 @@ Deno.serve(async (request: Request) => {
               organization: parsed,
               dryRun,
               summary,
-              companyMap
+              companyMap,
+              allowedStates
             });
             summary.processed = getResourceCount(summary, "processed") + 1;
             continue;
@@ -1779,6 +1833,7 @@ Deno.serve(async (request: Request) => {
     const resultPayload: AnyRecord = {
       ...summary,
       sync_scope: syncScope,
+      allowed_states: Array.from(allowedStates),
       api_url: apiUrl,
       api_url_used: authState.apiUrl,
       auth_mode_used: authState.mode,

@@ -27,6 +27,7 @@ const RD_SYNC_PAGE_CHUNK_DRY_RUN = 5;
 const RD_SYNC_PAGE_CHUNK_LIVE = 1;
 const RD_SYNC_LIVE_MAX_RECORDS_PER_PAGE = 100;
 const RD_SYNC_MAX_ROUNDS = 120;
+const RD_SYNC_SOUTH_STATES = ["SC", "PR", "RS"];
 
 const EMPTY_STAGE_FORM = {
   name: "",
@@ -48,6 +49,7 @@ const EMPTY_RD_FORM = {
   records_per_page: "100",
   max_pages: "200",
   dry_run: false,
+  south_cnpj_only: true,
   sync_customers_only: true
 };
 
@@ -174,6 +176,8 @@ function readRdFormStorage() {
       records_per_page: String(parsed.records_per_page || EMPTY_RD_FORM.records_per_page),
       max_pages: String(parsed.max_pages || EMPTY_RD_FORM.max_pages),
       dry_run: Boolean(parsed.dry_run),
+      south_cnpj_only:
+        parsed.south_cnpj_only === undefined ? Boolean(EMPTY_RD_FORM.south_cnpj_only) : Boolean(parsed.south_cnpj_only),
       sync_customers_only:
         parsed.sync_customers_only === undefined ? Boolean(EMPTY_RD_FORM.sync_customers_only) : Boolean(parsed.sync_customers_only)
     };
@@ -699,8 +703,9 @@ export default function SettingsModule() {
       ? requestedRecordsPerPage
       : Math.min(requestedRecordsPerPage, RD_SYNC_LIVE_MAX_RECORDS_PER_PAGE);
     const maxPages = clampInteger(rdForm.max_pages, 1, 500, 50);
-    const syncScope = rdForm.sync_customers_only ? "customers_whatsapp_only" : "full";
-    const estimatedResources = syncScope === "full" ? 3 : 2;
+    const southCnpjOnly = Boolean(rdForm.south_cnpj_only);
+    const syncScope = southCnpjOnly ? "south_cnpj_only" : rdForm.sync_customers_only ? "customers_whatsapp_only" : "full";
+    const estimatedResources = syncScope === "full" ? 3 : syncScope === "customers_whatsapp_only" ? 2 : 1;
     const maxRoundsBudget = Math.min(
       900,
       Math.max(RD_SYNC_MAX_ROUNDS, estimatedResources * maxPages + 12)
@@ -712,7 +717,8 @@ export default function SettingsModule() {
       max_pages: maxPages,
       page_chunk_size: dryRun ? RD_SYNC_PAGE_CHUNK_DRY_RUN : RD_SYNC_PAGE_CHUNK_LIVE,
       dry_run: dryRun,
-      sync_scope: syncScope
+      sync_scope: syncScope,
+      allowed_states: southCnpjOnly ? RD_SYNC_SOUTH_STATES : []
     };
 
     setRdSyncing(true);
@@ -727,11 +733,13 @@ export default function SettingsModule() {
         companies_created: 0,
         companies_updated: 0,
         companies_skipped_existing: 0,
+        companies_skipped_by_state: 0,
         contacts_created: 0,
         contacts_updated: 0,
         contacts_skipped_without_company: 0,
         contacts_skipped_without_whatsapp: 0,
         contacts_skipped_existing_whatsapp: 0,
+        contacts_skipped_by_scope: 0,
         opportunities_created: 0,
         opportunities_updated: 0,
         opportunities_skipped_by_scope: 0,
@@ -799,11 +807,13 @@ export default function SettingsModule() {
         aggregate.companies_created += Number(safeResult.companies_created || 0);
         aggregate.companies_updated += Number(safeResult.companies_updated || 0);
         aggregate.companies_skipped_existing += Number(safeResult.companies_skipped_existing || 0);
+        aggregate.companies_skipped_by_state += Number(safeResult.companies_skipped_by_state || 0);
         aggregate.contacts_created += Number(safeResult.contacts_created || 0);
         aggregate.contacts_updated += Number(safeResult.contacts_updated || 0);
         aggregate.contacts_skipped_without_company += Number(safeResult.contacts_skipped_without_company || 0);
         aggregate.contacts_skipped_without_whatsapp += Number(safeResult.contacts_skipped_without_whatsapp || 0);
         aggregate.contacts_skipped_existing_whatsapp += Number(safeResult.contacts_skipped_existing_whatsapp || 0);
+        aggregate.contacts_skipped_by_scope += Number(safeResult.contacts_skipped_by_scope || 0);
         aggregate.opportunities_created += Number(safeResult.opportunities_created || 0);
         aggregate.opportunities_updated += Number(safeResult.opportunities_updated || 0);
         aggregate.opportunities_skipped_by_scope += Number(safeResult.opportunities_skipped_by_scope || 0);
@@ -884,12 +894,16 @@ export default function SettingsModule() {
     setRdResumeCursor(null);
   }
 
+  const rdSouthOnlySelected = Boolean(rdForm.south_cnpj_only);
   const rdCustomersOnlySelected = Boolean(rdForm.sync_customers_only);
-  const rdScopeCustomersOnly = String(rdResultSummary.sync_scope || "").trim().toLowerCase() !== "full";
+  const rdScopeValue = String(rdResultSummary.sync_scope || "").trim().toLowerCase();
+  const rdScopeSouthOnly = rdScopeValue === "south_cnpj_only";
+  const rdScopeCustomersOnly = rdScopeValue === "customers_whatsapp_only";
   const rdIgnoredContactsTotal =
     Number(rdResultSummary.contacts_skipped_without_company || 0) +
     Number(rdResultSummary.contacts_skipped_without_whatsapp || 0) +
     Number(rdResultSummary.contacts_skipped_existing_whatsapp || 0);
+  const rdSkippedOutsideSouthTotal = Number(rdResultSummary.companies_skipped_by_state || 0);
 
   return (
     <section className="module">
@@ -1225,8 +1239,8 @@ export default function SettingsModule() {
       <article className="panel top-gap">
         <h2>Integração RD Station CRM</h2>
         <p className="muted">
-          Por padrão, sincroniza apenas empresas com CNPJ válido e contatos com WhatsApp vinculado a empresa, evitando duplicidade.
-          Você pode habilitar a importação completa incluindo oportunidades. O Access Token fica salvo apenas neste navegador.
+          Por padrão, migra apenas empresas com CNPJ novo dos estados SC, PR e RS. Também é possível sincronizar com contatos
+          (WhatsApp) ou fazer importação completa com oportunidades. O Access Token fica salvo apenas neste navegador.
         </p>
         {rdError ? <p className="error-text">{rdError}</p> : null}
         {rdSuccess ? <p className="success-text">{rdSuccess}</p> : null}
@@ -1288,12 +1302,26 @@ export default function SettingsModule() {
           <label className="checkbox-inline">
             <input
               type="checkbox"
+              checked={rdSouthOnlySelected}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setRdForm((prev) => ({ ...prev, south_cnpj_only: checked }));
+                setRdResumeCursor(null);
+              }}
+            />
+            Migrar apenas CNPJ novos de SC/PR/RS (somente empresas)
+          </label>
+
+          <label className="checkbox-inline">
+            <input
+              type="checkbox"
               checked={rdCustomersOnlySelected}
               onChange={(event) => {
                 const checked = event.target.checked;
                 setRdForm((prev) => ({ ...prev, sync_customers_only: checked }));
                 setRdResumeCursor(null);
               }}
+              disabled={rdSouthOnlySelected}
             />
             Sincronizar apenas clientes por CNPJ + contatos com WhatsApp vinculado (ignora duplicados)
           </label>
@@ -1326,9 +1354,15 @@ export default function SettingsModule() {
               <strong className="kpi-value">{Number(rdResultSummary.contacts_processed || 0)}</strong>
             </article>
             <article className="kpi-card">
-              <span className="kpi-label">{rdScopeCustomersOnly ? "Contatos ignorados" : "Oportunidades"}</span>
+              <span className="kpi-label">
+                {rdScopeSouthOnly ? "Fora SC/PR/RS" : rdScopeCustomersOnly ? "Contatos ignorados" : "Oportunidades"}
+              </span>
               <strong className="kpi-value">
-                {rdScopeCustomersOnly ? rdIgnoredContactsTotal : Number(rdResultSummary.opportunities_processed || 0)}
+                {rdScopeSouthOnly
+                  ? rdSkippedOutsideSouthTotal
+                  : rdScopeCustomersOnly
+                    ? rdIgnoredContactsTotal
+                    : Number(rdResultSummary.opportunities_processed || 0)}
               </strong>
             </article>
             <article className="kpi-card">
@@ -1364,10 +1398,13 @@ export default function SettingsModule() {
                 const opportunities = Number(result.opportunities_processed || 0);
                 const errorMessage = String(job.error_message || "").trim();
                 const dryRunFlag = Boolean(result.dry_run ?? payload.dry_run);
+                const syncScopeValue = String(result.sync_scope || payload.sync_scope || "").trim().toLowerCase();
                 const syncScopeLabel =
-                  String(result.sync_scope || payload.sync_scope || "").trim().toLowerCase() === "full"
+                  syncScopeValue === "full"
                     ? "Importação completa"
-                    : "Clientes + WhatsApp";
+                    : syncScopeValue === "south_cnpj_only"
+                      ? "CNPJ novos SC/PR/RS"
+                      : "Clientes + WhatsApp";
                 const details = errorMessage || (job.status === "success" ? "Concluído sem erro." : "-");
 
                 return (
