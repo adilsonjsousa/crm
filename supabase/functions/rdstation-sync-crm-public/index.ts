@@ -14,10 +14,13 @@ type RdAuthState = {
 const RESOURCE_ORDER: ResourceName[] = ["organizations", "contacts", "deals"];
 const DEFAULT_RDSTATION_API_URL = "https://api.rd.services/crm/v2";
 const LEGACY_RDSTATION_API_URL = "https://crm.rdstation.com/api/v1";
-const DEFAULT_EXECUTION_GUARD_MS = 110000;
+const DEFAULT_EXECUTION_GUARD_MS = 90000;
 const DEFAULT_PAGE_CHUNK_SIZE = 4;
-const LIVE_MAX_RECORDS_PER_PAGE = 200;
-const LIVE_MAX_PAGE_CHUNK_SIZE = 2;
+const LIVE_MAX_RECORDS_PER_PAGE = 100;
+const LIVE_MAX_PAGE_CHUNK_SIZE = 1;
+const LEGACY_MAX_RECORDS_PER_PAGE = 50;
+const BEARER_REQUEST_TIMEOUT_MS = 20000;
+const LEGACY_REQUEST_TIMEOUT_MS = 35000;
 const MAX_ERRORS = 30;
 
 const corsHeaders = {
@@ -536,6 +539,19 @@ function isRetriableHttpStatus(status: number) {
   return [408, 425, 429, 500, 502, 503, 504].includes(status);
 }
 
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchResourcePage({
   accessToken,
   resource,
@@ -554,6 +570,10 @@ async function fetchResourcePage({
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const base = authState.apiUrl.replace(/\/$/, "");
     const defaultUrl = new URL(`${base}/${resource}`);
+    const effectiveRecordsPerPage =
+      authState.mode === "query_token"
+        ? Math.min(recordsPerPage, LEGACY_MAX_RECORDS_PER_PAGE)
+        : recordsPerPage;
     const nextUrlCandidate = safeString(nextCursor);
     let requestUrl = defaultUrl;
 
@@ -566,8 +586,8 @@ async function fetchResourcePage({
       }
     } else {
       defaultUrl.searchParams.set("page", String(page));
-      defaultUrl.searchParams.set("limit", String(recordsPerPage));
-      defaultUrl.searchParams.set("per_page", String(recordsPerPage));
+      defaultUrl.searchParams.set("limit", String(effectiveRecordsPerPage));
+      defaultUrl.searchParams.set("per_page", String(effectiveRecordsPerPage));
       if (nextUrlCandidate) {
         defaultUrl.searchParams.set("cursor", nextUrlCandidate);
         defaultUrl.searchParams.set("next_page", nextUrlCandidate);
@@ -585,10 +605,28 @@ async function fetchResourcePage({
       headers.Authorization = `Bearer ${accessToken}`;
     }
 
-    const response = await fetch(requestUrl.toString(), {
-      method: "GET",
-      headers
-    });
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        requestUrl.toString(),
+        {
+          method: "GET",
+          headers
+        },
+        authState.mode === "query_token" ? LEGACY_REQUEST_TIMEOUT_MS : BEARER_REQUEST_TIMEOUT_MS
+      );
+    } catch (fetchError) {
+      const message = safeString(fetchError instanceof Error ? fetchError.message : fetchError).toLowerCase();
+      const timeoutLike = message.includes("abort") || message.includes("timed out") || message.includes("timeout");
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
+        continue;
+      }
+      if (timeoutLike) {
+        throw new Error("rd_http_504:timeout_rdstation_api");
+      }
+      throw new Error("rd_http_500:Falha de rede ao consultar RD Station.");
+    }
 
     const responseText = await response.text();
     let payload: AnyRecord = {};
@@ -631,7 +669,7 @@ async function fetchResourcePage({
     const pagination = detectHasNextPage({
       payload,
       page,
-      recordsPerPage,
+      recordsPerPage: effectiveRecordsPerPage,
       receivedItems: items.length,
       response
     });
@@ -1297,7 +1335,7 @@ Deno.serve(async (request: Request) => {
   const executionGuardMs = clampNumber(
     body.execution_guard_ms ?? body.executionGuardMs,
     20000,
-    130000,
+    110000,
     DEFAULT_EXECUTION_GUARD_MS
   );
   const startedAt = new Date().toISOString();
