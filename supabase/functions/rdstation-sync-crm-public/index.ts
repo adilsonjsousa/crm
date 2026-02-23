@@ -493,6 +493,37 @@ function extractCnpjFromValue(value: unknown, depth = 0): string {
   return "";
 }
 
+function extractValidCnpjFromValue(value: unknown, depth = 0): string {
+  if (depth > 5 || value === null || value === undefined) return "";
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    const textCandidates = extractCnpjCandidatesFromText(value);
+    const validTextCandidate = textCandidates.find((candidate) => isValidCnpj(candidate));
+    if (validTextCandidate) return validTextCandidate;
+
+    const direct = normalizeCnpj(value);
+    if (direct && isValidCnpj(direct)) return direct;
+    return "";
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = extractValidCnpjFromValue(item, depth + 1);
+      if (nested) return nested;
+    }
+    return "";
+  }
+
+  if (typeof value === "object") {
+    for (const item of Object.values(asObject(value))) {
+      const nested = extractValidCnpjFromValue(item, depth + 1);
+      if (nested) return nested;
+    }
+  }
+
+  return "";
+}
+
 function getCustomFieldCollections(source: AnyRecord) {
   return [
     source.custom_fields,
@@ -828,6 +859,7 @@ async function fetchCompanyByCnpjFromBrasilApi({
 }) {
   const normalizedCnpj = normalizeCnpj(cnpj);
   if (!normalizedCnpj) return null;
+  if (!isValidCnpj(normalizedCnpj)) return null;
 
   if (cache.has(normalizedCnpj)) {
     return cache.get(normalizedCnpj) || null;
@@ -941,9 +973,13 @@ async function enrichCompanyFromCnpjIfNeeded({
   if (!shouldAttemptCompanyCnpjEnrichment(company)) return;
 
   const cnpj =
-    normalizeCnpj(company.cnpj) ||
-    normalizeCnpj(fallbackCnpj);
-  if (!cnpj) return;
+    extractValidCnpjFromValue(company.cnpj) ||
+    extractValidCnpjFromValue(fallbackCnpj);
+  if (!cnpj) {
+    summary.companies_enrichment_skipped_invalid_cnpj =
+      getResourceCount(summary, "companies_enrichment_skipped_invalid_cnpj") + 1;
+    return;
+  }
 
   summary.companies_enrichment_attempted = getResourceCount(summary, "companies_enrichment_attempted") + 1;
 
@@ -993,32 +1029,57 @@ async function enrichMissingRdCompaniesBatch({
   supabase,
   dryRun,
   summary,
-  cache
+  cache,
+  scanLimit,
+  batchLimit
 }: {
   supabase: ReturnType<typeof createClient>;
   dryRun: boolean;
   summary: AnyRecord;
   cache: Map<string, AnyRecord | null>;
+  scanLimit?: number;
+  batchLimit?: number;
 }) {
+  const effectiveScanLimit = clampNumber(
+    scanLimit,
+    1,
+    5000,
+    RD_COMPANY_ENRICHMENT_SCAN_LIMIT
+  );
+  const effectiveBatchLimit = clampNumber(
+    batchLimit,
+    1,
+    effectiveScanLimit,
+    RD_COMPANY_ENRICHMENT_BATCH_LIMIT
+  );
   const { data, error } = await supabase
     .from("companies")
     .select("id,cnpj,legal_name,trade_name,address_full,city,state,segmento")
     .eq("segmento", "RD Station")
     .order("updated_at", { ascending: true })
-    .limit(RD_COMPANY_ENRICHMENT_SCAN_LIMIT);
+    .limit(effectiveScanLimit);
   if (error) {
     appendError(summary, `enrich_batch_scan:${error.message || "Falha ao listar empresas RD para enriquecimento."}`);
     return;
   }
 
   const rows = Array.isArray(data) ? data.map((row) => asObject(row)) : [];
-  const candidates = rows.filter((row) => {
+  const candidates = rows
+    .map((row) => {
+      const normalizedRow = asObject(row);
+      const validCnpj = extractValidCnpjFromValue(normalizedRow.cnpj);
+      return {
+        ...normalizedRow,
+        _enrichment_cnpj: validCnpj
+      };
+    })
+    .filter((row) => {
     if (!shouldAttemptCompanyCnpjEnrichment(row)) return false;
-    return normalizeCnpj(row.cnpj).length === 14;
+    return safeString(row._enrichment_cnpj).length === 14;
   });
   if (!candidates.length) return;
 
-  const batchCandidates = candidates.slice(0, RD_COMPANY_ENRICHMENT_BATCH_LIMIT);
+  const batchCandidates = candidates.slice(0, effectiveBatchLimit);
   summary.companies_enrichment_batch_scanned =
     getResourceCount(summary, "companies_enrichment_batch_scanned") + batchCandidates.length;
 
@@ -1026,7 +1087,7 @@ async function enrichMissingRdCompaniesBatch({
     await enrichCompanyFromCnpjIfNeeded({
       supabase,
       companyId: safeString(row.id),
-      fallbackCnpj: safeString(row.cnpj),
+      fallbackCnpj: safeString(row._enrichment_cnpj) || safeString(row.cnpj),
       currentCompany: row,
       dryRun,
       summary,
@@ -2141,13 +2202,28 @@ Deno.serve(async (request: Request) => {
     });
   }
 
-  const accessToken = sanitizeRdAccessToken(body.access_token || body.accessToken || body.token);
-  if (!accessToken) {
-    return jsonResponse(400, {
-      error: "missing_rdstation_credentials",
-      message: "Informe o Access Token do RD Station CRM."
-    });
-  }
+  const enrichmentOnly = parseBoolean(
+    body.enrich_missing_companies_only ??
+      body.enrichMissingCompaniesOnly ??
+      body.enrich_missing_rd_companies_only ??
+      body.enrichMissingRdCompaniesOnly ??
+      body.backfill_rd_companies ??
+      body.backfillRdCompanies,
+    false
+  );
+  const dryRun = parseBoolean(body.dry_run ?? body.dryRun, false);
+  const enrichmentScanLimit = clampNumber(
+    body.enrichment_scan_limit ?? body.enrichmentScanLimit,
+    1,
+    5000,
+    RD_COMPANY_ENRICHMENT_SCAN_LIMIT
+  );
+  const enrichmentBatchLimit = clampNumber(
+    body.enrichment_batch_limit ?? body.enrichmentBatchLimit,
+    1,
+    enrichmentScanLimit,
+    RD_COMPANY_ENRICHMENT_BATCH_LIMIT
+  );
 
   const apiUrl = safeString(body.api_url || body.apiUrl || DEFAULT_RDSTATION_API_URL) || DEFAULT_RDSTATION_API_URL;
   const authState = buildAuthState(body.auth_mode ?? body.authMode, apiUrl);
@@ -2158,7 +2234,6 @@ Deno.serve(async (request: Request) => {
     body.allowed_states ?? body.allowedStates,
     syncScope === "south_cnpj_only" ? DEFAULT_SOUTH_UF_FILTER : []
   );
-  const dryRun = parseBoolean(body.dry_run ?? body.dryRun, false);
   const requestedRecordsPerPage = clampNumber(body.records_per_page ?? body.recordsPerPage, 1, 500, 100);
   const recordsPerPage = dryRun ? requestedRecordsPerPage : Math.min(requestedRecordsPerPage, LIVE_MAX_RECORDS_PER_PAGE);
   const requestedMaxPages = clampNumber(body.max_pages ?? body.maxPages, 1, 500, 50);
@@ -2176,29 +2251,39 @@ Deno.serve(async (request: Request) => {
     DEFAULT_EXECUTION_GUARD_MS
   );
   const startedAt = new Date().toISOString();
-
   const cursorState = parseCursorState(body.cursor, requestedMaxPages);
+  const accessToken = sanitizeRdAccessToken(body.access_token || body.accessToken || body.token);
+
+  if (!enrichmentOnly && !accessToken) {
+    return jsonResponse(400, {
+      error: "missing_rdstation_credentials",
+      message: "Informe o Access Token do RD Station CRM."
+    });
+  }
 
   const { data: syncJob, error: syncJobError } = await supabase
     .from("sync_jobs")
     .insert({
       provider: "rdstation",
-      resource: "crm_full",
-      status: "running",
-      payload: {
-        api_url: apiUrl,
-        auth_mode: authState.mode,
-        sync_scope: syncScope,
-        allowed_states: Array.from(allowedStates),
-        dry_run: dryRun,
+        resource: enrichmentOnly ? "company_cnpj_enrichment" : "crm_full",
+        status: "running",
+        payload: {
+          operation: enrichmentOnly ? "enrich_missing_companies_only" : "sync_rdstation",
+          api_url: apiUrl,
+          auth_mode: authState.mode,
+          sync_scope: syncScope,
+          allowed_states: Array.from(allowedStates),
+          dry_run: dryRun,
         records_per_page: recordsPerPage,
         max_pages: requestedMaxPages,
         page_chunk_size: pageChunkSize,
-        execution_guard_ms: executionGuardMs,
-        cursor: cursorState
-      },
-      started_at: startedAt
-    })
+          execution_guard_ms: executionGuardMs,
+          cursor: cursorState,
+          enrichment_scan_limit: enrichmentScanLimit,
+          enrichment_batch_limit: enrichmentBatchLimit
+        },
+        started_at: startedAt
+      })
     .select("id")
     .single();
 
@@ -2241,14 +2326,55 @@ Deno.serve(async (request: Request) => {
       companies_enriched_from_cnpj: 0,
       companies_enrichment_not_found: 0,
       companies_enrichment_errors: 0,
+      companies_enrichment_skipped_invalid_cnpj: 0,
       sample_skipped_without_cnpj: [],
       sample_skipped_by_state: [],
       errors: []
     };
 
+    const cnpjProfileCache = new Map<string, AnyRecord | null>();
+    if (enrichmentOnly) {
+      await enrichMissingRdCompaniesBatch({
+        supabase,
+        dryRun,
+        summary,
+        cache: cnpjProfileCache,
+        scanLimit: enrichmentScanLimit,
+        batchLimit: enrichmentBatchLimit
+      });
+
+      const resultPayload: AnyRecord = {
+        ...summary,
+        operation: "enrich_missing_companies_only",
+        sync_scope: syncScope,
+        allowed_states: Array.from(allowedStates),
+        api_url: apiUrl,
+        api_url_used: null,
+        auth_mode_used: null,
+        dry_run: dryRun,
+        records_per_page: 0,
+        max_pages: 0,
+        page_chunk_size: 0,
+        execution_guard_ms: executionGuardMs,
+        has_more: false,
+        next_cursor: null,
+        next_resource: null,
+        stop_reason: "completed",
+        enrichment_scan_limit: enrichmentScanLimit,
+        enrichment_batch_limit: enrichmentBatchLimit,
+        started_at: startedAt,
+        finished_at: new Date().toISOString()
+      };
+
+      await updateSyncJob(supabase, syncJobId, "success", resultPayload);
+      return jsonResponse(200, {
+        sync_job_id: syncJobId,
+        ...resultPayload
+      });
+    }
+
     const state = parseCursorState(cursorState, requestedMaxPages);
     const companyMap = new Map<string, string>();
-    const cnpjProfileCache = new Map<string, AnyRecord | null>();
     const deadline = Date.now() + executionGuardMs;
     let pagesProcessedInRun = 0;
     let stopReason = "completed";
@@ -2362,7 +2488,9 @@ Deno.serve(async (request: Request) => {
       supabase,
       dryRun,
       summary,
-      cache: cnpjProfileCache
+      cache: cnpjProfileCache,
+      scanLimit: enrichmentScanLimit,
+      batchLimit: enrichmentBatchLimit
     });
 
     const hasMore = state.resource_index < RESOURCE_ORDER.length;
