@@ -24,6 +24,7 @@ const CUSTOMER_MODAL_TABS = [
   { id: "history", label: "Historico" },
   { id: "opportunities", label: "Propostas" },
   { id: "omie_purchases", label: "Compras OMIE" },
+  { id: "omie_products", label: "Produtos OMIE" },
   { id: "omie_receivables", label: "Contas a Receber" },
   { id: "tasks", label: "Agenda" },
   { id: "assets", label: "Raio-X do Parque" },
@@ -84,6 +85,16 @@ function formatBirthDate(value) {
 
 function brl(value) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
+}
+
+function formatUnits(value) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) return "0";
+  const integerPart = Math.round(parsed);
+  if (Math.abs(parsed - integerPart) < 0.000001) {
+    return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(integerPart);
+  }
+  return new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(parsed);
 }
 
 function taskStatusLabel(value) {
@@ -318,7 +329,8 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
   }, [companyId, open]);
 
   useEffect(() => {
-    if (!open || selectedTab !== "omie_purchases" || omiePurchasesFetched) return;
+    const shouldLoadOmiePurchases = selectedTab === "omie_purchases" || selectedTab === "omie_products";
+    if (!open || !shouldLoadOmiePurchases || omiePurchasesFetched) return;
 
     const cnpjDigits = String(companyProfile?.cnpj || "").replace(/\D/g, "");
     if (cnpjDigits.length !== 14) {
@@ -440,6 +452,55 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
   const omieOrders = useMemo(
     () => (Array.isArray(omiePurchases.orders) ? omiePurchases.orders : []),
     [omiePurchases.orders]
+  );
+  const omieProductRows = useMemo(() => {
+    const grouped = new Map();
+
+    for (const order of omieOrders) {
+      const orderDateIso = order?.data_pedido_iso || order?.data_faturamento_iso || order?.data_emissao_iso || null;
+      const orderItems = Array.isArray(order?.itens) ? order.itens : Array.isArray(order?.items) ? order.items : [];
+
+      for (const itemRaw of orderItems) {
+        const item = itemRaw && typeof itemRaw === "object" && !Array.isArray(itemRaw) ? itemRaw : {};
+        const code = String(item.codigo_produto || item.codigo || item.codigo_produto_omie || "").trim();
+        const description = String(item.descricao || item.descricao_produto || item.nome || "").trim();
+        const quantity = Number(parseOptionalNumber(item.quantidade ?? item.qtde ?? item.qtd ?? 0) || 0);
+
+        if (!(quantity > 0) && !code && !description) continue;
+
+        const normalizedCode = normalizeText(code || "-");
+        const normalizedDescription = normalizeText(description || "produto sem descricao");
+        const key = `${normalizedCode}|${normalizedDescription}`;
+        const current = grouped.get(key) || {
+          codigo: code || "-",
+          descricao: description || "Produto sem descricao",
+          total_units: 0,
+          last_purchase_at: null
+        };
+
+        current.total_units += quantity > 0 ? quantity : 0;
+
+        const nextTime = orderDateIso ? new Date(orderDateIso).getTime() : Number.NaN;
+        const prevTime = current.last_purchase_at ? new Date(current.last_purchase_at).getTime() : Number.NaN;
+        if (Number.isFinite(nextTime) && (!Number.isFinite(prevTime) || nextTime > prevTime)) {
+          current.last_purchase_at = orderDateIso;
+        }
+
+        if ((!current.codigo || current.codigo === "-") && code) current.codigo = code;
+        if ((!current.descricao || current.descricao === "Produto sem descricao") && description) current.descricao = description;
+        grouped.set(key, current);
+      }
+    }
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      const byUnits = Number(b.total_units || 0) - Number(a.total_units || 0);
+      if (byUnits !== 0) return byUnits;
+      return String(a.descricao || "").localeCompare(String(b.descricao || ""), "pt-BR");
+    });
+  }, [omieOrders]);
+  const omieProductsTotalUnits = useMemo(
+    () => omieProductRows.reduce((acc, row) => acc + Number(row.total_units || 0), 0),
+    [omieProductRows]
   );
   const omieReceivablesSummary = useMemo(
     () => omiePurchases.receivables_summary || {},
@@ -1084,6 +1145,79 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                         <tr>
                           <td colSpan={6} className="muted">
                             Nenhuma compra retornada pelo OMIE para este cliente.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!loading && selectedTab === "omie_products" ? (
+          <div className="customer-popup-opportunities">
+            {omiePurchasesError ? <p className="error-text top-gap">{omiePurchasesError}</p> : null}
+            {omiePurchasesLoading ? <p className="muted top-gap">Consultando itens de produtos no OMIE...</p> : null}
+
+            {!omiePurchasesLoading && !omiePurchasesError ? (
+              <>
+                <article className="customer-popup-card top-gap">
+                  <h4>Produtos adquiridos no OMIE</h4>
+                  <div className="customer-popup-kpis">
+                    <div>
+                      <span>Produtos distintos</span>
+                      <strong>{Number(omieProductRows.length || 0)}</strong>
+                      <small>Agrupados por codigo + descricao</small>
+                    </div>
+                    <div>
+                      <span>Unidades totais</span>
+                      <strong>{formatUnits(omieProductsTotalUnits)}</strong>
+                      <small>Somatorio das quantidades compradas</small>
+                    </div>
+                    <div>
+                      <span>Pedidos analisados</span>
+                      <strong>{Number(omieOrders.length || 0)}</strong>
+                      <small>Base de compras OMIE</small>
+                    </div>
+                  </div>
+                </article>
+
+                {omiePurchaseWarnings.length ? (
+                  <article className="customer-popup-card top-gap">
+                    <h4>Avisos da consulta</h4>
+                    <ul>
+                      {omiePurchaseWarnings.map((warning, index) => (
+                        <li key={`omie-products-warning-${index}`}>{warning}</li>
+                      ))}
+                    </ul>
+                  </article>
+                ) : null}
+
+                <div className="table-wrap top-gap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Codigo</th>
+                        <th>Descricao</th>
+                        <th>Total de unidades</th>
+                        <th>Ultima compra</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {omieProductRows.map((item, index) => (
+                        <tr key={`${item.codigo || "sem-codigo"}-${index}`}>
+                          <td>{item.codigo || "-"}</td>
+                          <td>{item.descricao || "Produto sem descricao"}</td>
+                          <td>{formatUnits(item.total_units)}</td>
+                          <td>{formatDateFromIso(item.last_purchase_at)}</td>
+                        </tr>
+                      ))}
+                      {!omieProductRows.length ? (
+                        <tr>
+                          <td colSpan={4} className="muted">
+                            Nenhum item de produto retornado pelo OMIE para este cliente.
                           </td>
                         </tr>
                       ) : null}

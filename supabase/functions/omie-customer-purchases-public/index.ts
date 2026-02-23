@@ -173,9 +173,15 @@ function normalizeOmieOrder(rawOrder: unknown) {
   const orderDateIso = buildOrderDate(row);
 
   const detailsRows = extractArrayByKeys(row, ["det", "itens", "itens_pedido", "lista_itens", "produtos", "pedido_item"]);
+  const items: AnyRecord[] = [];
   const detailsProductsAmount = detailsRows.reduce((acc, detailRaw) => {
     const detail = asObject(detailRaw);
     const product = asObject(detail.produto ?? detail.item ?? detail);
+
+    const quantity = parseOmieMoney(product.quantidade ?? product.qtde ?? detail.quantidade ?? detail.qtde ?? 0);
+    const unitPrice = parseOmieMoney(
+      product.valor_unitario ?? product.valor ?? detail.valor_unitario ?? detail.valor
+    );
 
     let lineTotal = parseOmieMoney(
       product.valor_total_item ??
@@ -186,15 +192,39 @@ function normalizeOmieOrder(rawOrder: unknown) {
     );
 
     if (!(lineTotal > 0)) {
-      const quantity = Number(
-        product.quantidade ?? product.qtde ?? detail.quantidade ?? detail.qtde ?? 0
-      );
-      const unitPrice = parseOmieMoney(
-        product.valor_unitario ?? product.valor ?? detail.valor_unitario ?? detail.valor
-      );
       if (Number.isFinite(quantity) && quantity > 0 && unitPrice > 0) {
         lineTotal = quantity * unitPrice;
       }
+    }
+
+    const itemCode =
+      pickFirstNonEmpty(product, [
+        "codigo_produto",
+        "codigo",
+        "codigo_produto_omie",
+        "codigo_produto_integracao",
+        "codigo_item"
+      ]) ||
+      pickFirstNonEmpty(detail, [
+        "codigo_produto",
+        "codigo",
+        "codigo_produto_omie",
+        "codigo_produto_integracao",
+        "codigo_item"
+      ]);
+
+    const itemDescription =
+      pickFirstNonEmpty(product, ["descricao", "descricao_produto", "nome", "produto"]) ||
+      pickFirstNonEmpty(detail, ["descricao", "descricao_produto", "nome", "produto"]);
+
+    if (itemCode || itemDescription || quantity > 0 || lineTotal > 0) {
+      items.push({
+        codigo_produto: itemCode || null,
+        descricao: itemDescription || null,
+        quantidade: Number.isFinite(quantity) ? quantity : 0,
+        valor_unitario: unitPrice,
+        valor_total: lineTotal
+      });
     }
 
     return acc + (lineTotal > 0 ? lineTotal : 0);
@@ -264,7 +294,9 @@ function normalizeOmieOrder(rawOrder: unknown) {
     valor_mercadorias: productsAmount,
     valor_desconto: discountAmount,
     valor_frete: freightAmount,
-    codigo_cliente: pickFirstNonEmpty(row, ["codigo_cliente"]) || pickFirstNonEmpty(header, ["codigo_cliente"]) || null
+    codigo_cliente: pickFirstNonEmpty(row, ["codigo_cliente"]) || pickFirstNonEmpty(header, ["codigo_cliente"]) || null,
+    itens: items,
+    items
   };
 }
 
