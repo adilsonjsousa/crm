@@ -33,6 +33,7 @@ export default function ReportsModule() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [cityFilter, setCityFilter] = useState("");
   const [stageFilter, setStageFilter] = useState("all");
 
   async function load() {
@@ -65,10 +66,16 @@ export default function ReportsModule() {
 
   const filteredRows = useMemo(() => {
     const normalizedSearch = normalizeText(search);
+    const normalizedCityFilter = normalizeText(cityFilter);
     return rows.filter((row) => {
       if (stageFilter !== "all") {
         const stageName = String(row?.lifecycle_stage?.name || "").trim() || "Sem fase";
         if (stageName !== stageFilter) return false;
+      }
+
+      if (normalizedCityFilter) {
+        const normalizedCity = normalizeText(row.city);
+        if (normalizedCity !== normalizedCityFilter) return false;
       }
 
       if (!normalizedSearch) return true;
@@ -79,8 +86,6 @@ export default function ReportsModule() {
         row.cnpj,
         row.email,
         row.phone,
-        row.city,
-        row.state,
         row.country,
         row.address_full,
         row.segmento,
@@ -89,7 +94,7 @@ export default function ReportsModule() {
 
       return haystack.includes(normalizedSearch);
     });
-  }, [rows, search, stageFilter]);
+  }, [rows, search, cityFilter, stageFilter]);
 
   async function handleExportExcel() {
     if (!filteredRows.length) {
@@ -147,7 +152,12 @@ export default function ReportsModule() {
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar por nome, CNPJ, e-mail, telefone, cidade ou UF..."
+            placeholder="Buscar por nome, CNPJ, e-mail, telefone..."
+          />
+          <input
+            value={cityFilter}
+            onChange={(event) => setCityFilter(event.target.value)}
+            placeholder="Cidade (filtro exato)"
           />
           <select
             value={stageFilter}
