@@ -22,6 +22,9 @@ const LIVE_MAX_PAGE_CHUNK_SIZE = 1;
 const LEGACY_MAX_RECORDS_PER_PAGE = 50;
 const BEARER_REQUEST_TIMEOUT_MS = 20000;
 const LEGACY_REQUEST_TIMEOUT_MS = 35000;
+const BRASILAPI_REQUEST_TIMEOUT_MS = 12000;
+const RD_COMPANY_ENRICHMENT_BATCH_LIMIT = 24;
+const RD_COMPANY_ENRICHMENT_SCAN_LIMIT = 300;
 const MAX_ERRORS = 30;
 const DEFAULT_SOUTH_UF_FILTER = ["SC", "PR", "RS"] as const;
 const BRAZIL_UF_CODES = new Set([
@@ -793,6 +796,245 @@ function buildSyntheticDocument(prefix: string, value: unknown) {
   return `${prefix}-${normalized}`.toUpperCase();
 }
 
+function mapBrasilApiCompanyProfile(payloadRaw: unknown) {
+  const payload = asObject(payloadRaw);
+  const state = normalizeUf(payload.uf);
+  const city = normalizeCity(payload.municipio ?? payload.cidade ?? payload.city, state).toUpperCase();
+  const addressFull = buildCompanyAddressFull({
+    street: safeString(payload.logradouro).toUpperCase(),
+    number: safeString(payload.numero).toUpperCase(),
+    complement: safeString(payload.complemento).toUpperCase(),
+    district: safeString(payload.bairro).toUpperCase(),
+    city,
+    state,
+    cep: formatCep(payload.cep)
+  });
+
+  return {
+    legal_name: safeString(payload.razao_social),
+    trade_name: safeString(payload.nome_fantasia) || safeString(payload.razao_social),
+    city,
+    state,
+    address_full: addressFull
+  };
+}
+
+async function fetchCompanyByCnpjFromBrasilApi({
+  cnpj,
+  cache
+}: {
+  cnpj: string;
+  cache: Map<string, AnyRecord | null>;
+}) {
+  const normalizedCnpj = normalizeCnpj(cnpj);
+  if (!normalizedCnpj) return null;
+
+  if (cache.has(normalizedCnpj)) {
+    return cache.get(normalizedCnpj) || null;
+  }
+
+  const url = `https://brasilapi.com.br/api/cnpj/v1/${normalizedCnpj}`;
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json"
+      }
+    },
+    BRASILAPI_REQUEST_TIMEOUT_MS
+  );
+
+  if (response.status === 404) {
+    cache.set(normalizedCnpj, null);
+    return null;
+  }
+
+  if (!response.ok) {
+    const rawText = await response.text();
+    const detail = safeString(rawText).slice(0, 220);
+    throw new Error(detail ? `brasilapi_http_${response.status}:${detail}` : `brasilapi_http_${response.status}`);
+  }
+
+  const payload = asObject(await response.json());
+  const mapped = mapBrasilApiCompanyProfile(payload);
+  cache.set(normalizedCnpj, mapped);
+  return mapped;
+}
+
+function shouldAttemptCompanyCnpjEnrichment(company: AnyRecord) {
+  return (
+    !safeString(company.city) ||
+    !safeString(company.state) ||
+    !safeString(company.address_full) ||
+    !safeString(company.legal_name) ||
+    !safeString(company.trade_name)
+  );
+}
+
+function buildCompanyEnrichmentPatch({
+  existingCompany,
+  cnpjProfile
+}: {
+  existingCompany: AnyRecord;
+  cnpjProfile: AnyRecord;
+}) {
+  const patch: AnyRecord = {};
+
+  const legalName = safeString(cnpjProfile.legal_name);
+  const tradeName = safeString(cnpjProfile.trade_name);
+  const city = normalizeCity(cnpjProfile.city, cnpjProfile.state).toUpperCase();
+  const state = normalizeUf(cnpjProfile.state);
+  const addressFull = safeString(cnpjProfile.address_full);
+
+  if (!safeString(existingCompany.legal_name) && legalName) patch.legal_name = legalName;
+  if (!safeString(existingCompany.trade_name) && tradeName) patch.trade_name = tradeName;
+  if (!safeString(existingCompany.city) && city) patch.city = city;
+  if (!safeString(existingCompany.state) && state) patch.state = state;
+  if (!safeString(existingCompany.address_full) && addressFull) patch.address_full = addressFull;
+
+  return patch;
+}
+
+async function loadCompanySnapshotById({
+  supabase,
+  companyId
+}: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+}) {
+  const normalizedCompanyId = safeString(companyId);
+  if (!normalizedCompanyId) return null;
+
+  const { data, error } = await supabase
+    .from("companies")
+    .select("id,cnpj,legal_name,trade_name,address_full,city,state,segmento")
+    .eq("id", normalizedCompanyId)
+    .maybeSingle();
+  if (error) throw new Error(error.message || "Falha ao carregar empresa para enriquecimento.");
+  return data ? asObject(data) : null;
+}
+
+async function enrichCompanyFromCnpjIfNeeded({
+  supabase,
+  companyId,
+  fallbackCnpj,
+  currentCompany,
+  dryRun,
+  summary,
+  cache
+}: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  fallbackCnpj: string;
+  currentCompany: AnyRecord | null;
+  dryRun: boolean;
+  summary: AnyRecord;
+  cache: Map<string, AnyRecord | null>;
+}) {
+  const normalizedCompanyId = safeString(companyId);
+  if (!normalizedCompanyId) return;
+
+  const company = currentCompany || (await loadCompanySnapshotById({ supabase, companyId: normalizedCompanyId }));
+  if (!company) return;
+
+  if (!shouldAttemptCompanyCnpjEnrichment(company)) return;
+
+  const cnpj =
+    normalizeCnpj(company.cnpj) ||
+    normalizeCnpj(fallbackCnpj);
+  if (!cnpj) return;
+
+  summary.companies_enrichment_attempted = getResourceCount(summary, "companies_enrichment_attempted") + 1;
+
+  let cnpjProfile: AnyRecord | null = null;
+  try {
+    cnpjProfile = await fetchCompanyByCnpjFromBrasilApi({
+      cnpj,
+      cache
+    });
+  } catch (error) {
+    summary.companies_enrichment_errors = getResourceCount(summary, "companies_enrichment_errors") + 1;
+    const message = error instanceof Error ? error.message : "Falha ao consultar BrasilAPI para enriquecimento.";
+    appendError(summary, `enrich_cnpj:${message}`);
+    return;
+  }
+
+  if (!cnpjProfile) {
+    summary.companies_enrichment_not_found = getResourceCount(summary, "companies_enrichment_not_found") + 1;
+    return;
+  }
+
+  const patch = buildCompanyEnrichmentPatch({
+    existingCompany: company,
+    cnpjProfile
+  });
+  if (!Object.keys(patch).length) return;
+
+  if (dryRun) {
+    summary.companies_enriched_from_cnpj = getResourceCount(summary, "companies_enriched_from_cnpj") + 1;
+    return;
+  }
+
+  const { error } = await supabase
+    .from("companies")
+    .update(patch)
+    .eq("id", normalizedCompanyId);
+  if (error) {
+    summary.companies_enrichment_errors = getResourceCount(summary, "companies_enrichment_errors") + 1;
+    appendError(summary, `enrich_update:${error.message || "Falha ao atualizar empresa com dados de CNPJ."}`);
+    return;
+  }
+
+  summary.companies_enriched_from_cnpj = getResourceCount(summary, "companies_enriched_from_cnpj") + 1;
+}
+
+async function enrichMissingRdCompaniesBatch({
+  supabase,
+  dryRun,
+  summary,
+  cache
+}: {
+  supabase: ReturnType<typeof createClient>;
+  dryRun: boolean;
+  summary: AnyRecord;
+  cache: Map<string, AnyRecord | null>;
+}) {
+  const { data, error } = await supabase
+    .from("companies")
+    .select("id,cnpj,legal_name,trade_name,address_full,city,state,segmento")
+    .eq("segmento", "RD Station")
+    .order("updated_at", { ascending: true })
+    .limit(RD_COMPANY_ENRICHMENT_SCAN_LIMIT);
+  if (error) {
+    appendError(summary, `enrich_batch_scan:${error.message || "Falha ao listar empresas RD para enriquecimento."}`);
+    return;
+  }
+
+  const rows = Array.isArray(data) ? data.map((row) => asObject(row)) : [];
+  const candidates = rows.filter((row) => {
+    if (!shouldAttemptCompanyCnpjEnrichment(row)) return false;
+    return normalizeCnpj(row.cnpj).length === 14;
+  });
+  if (!candidates.length) return;
+
+  const batchCandidates = candidates.slice(0, RD_COMPANY_ENRICHMENT_BATCH_LIMIT);
+  summary.companies_enrichment_batch_scanned =
+    getResourceCount(summary, "companies_enrichment_batch_scanned") + batchCandidates.length;
+
+  for (const row of batchCandidates) {
+    await enrichCompanyFromCnpjIfNeeded({
+      supabase,
+      companyId: safeString(row.id),
+      fallbackCnpj: safeString(row.cnpj),
+      currentCompany: row,
+      dryRun,
+      summary,
+      cache
+    });
+  }
+}
+
 function appendError(summary: AnyRecord, message: string) {
   const current = Array.isArray(summary.errors) ? summary.errors : [];
   current.push(message);
@@ -1276,7 +1518,8 @@ async function upsertCompanyFromOrganization({
   dryRun,
   summary,
   companyMap,
-  allowedStates
+  allowedStates,
+  cnpjProfileCache
 }: {
   supabase: ReturnType<typeof createClient>;
   organization: AnyRecord;
@@ -1284,6 +1527,7 @@ async function upsertCompanyFromOrganization({
   summary: AnyRecord;
   companyMap: Map<string, string>;
   allowedStates: Set<string>;
+  cnpjProfileCache: Map<string, AnyRecord | null>;
 }) {
   const externalId = safeString(organization.externalId);
   const cnpj = normalizeCnpj(organization.cnpj);
@@ -1352,6 +1596,15 @@ async function upsertCompanyFromOrganization({
     if (externalId) {
       companyMap.set(externalId, companyId);
     }
+    await enrichCompanyFromCnpjIfNeeded({
+      supabase,
+      companyId,
+      fallbackCnpj: cnpj,
+      currentCompany: null,
+      dryRun,
+      summary,
+      cache: cnpjProfileCache
+    });
     summary.companies_skipped_existing = getResourceCount(summary, "companies_skipped_existing") + 1;
     summary.companies_processed = getResourceCount(summary, "companies_processed") + 1;
     return companyId;
@@ -1377,7 +1630,7 @@ async function upsertCompanyFromOrganization({
   const { data, error } = await supabase
     .from("companies")
     .insert(payload)
-    .select("id")
+    .select("id,cnpj,legal_name,trade_name,address_full,city,state,segmento")
     .single();
 
   if (error) {
@@ -1400,6 +1653,15 @@ async function upsertCompanyFromOrganization({
           summary.links_updated = getResourceCount(summary, "links_updated") + 1;
         }
         if (externalId) companyMap.set(externalId, existingCompanyId);
+        await enrichCompanyFromCnpjIfNeeded({
+          supabase,
+          companyId: existingCompanyId,
+          fallbackCnpj: cnpj,
+          currentCompany: null,
+          dryRun,
+          summary,
+          cache: cnpjProfileCache
+        });
         summary.companies_skipped_existing = getResourceCount(summary, "companies_skipped_existing") + 1;
         summary.companies_processed = getResourceCount(summary, "companies_processed") + 1;
         return existingCompanyId;
@@ -1424,6 +1686,15 @@ async function upsertCompanyFromOrganization({
     companyMap.set(externalId, companyId);
   }
 
+  await enrichCompanyFromCnpjIfNeeded({
+    supabase,
+    companyId,
+    fallbackCnpj: cnpj,
+    currentCompany: asObject(data),
+    dryRun,
+    summary,
+    cache: cnpjProfileCache
+  });
   summary.companies_processed = getResourceCount(summary, "companies_processed") + 1;
   return companyId;
 }
@@ -1965,6 +2236,11 @@ Deno.serve(async (request: Request) => {
       skipped_without_identifier: 0,
       skipped_without_cnpj: 0,
       skipped_invalid_payload: 0,
+      companies_enrichment_batch_scanned: 0,
+      companies_enrichment_attempted: 0,
+      companies_enriched_from_cnpj: 0,
+      companies_enrichment_not_found: 0,
+      companies_enrichment_errors: 0,
       sample_skipped_without_cnpj: [],
       sample_skipped_by_state: [],
       errors: []
@@ -1972,6 +2248,7 @@ Deno.serve(async (request: Request) => {
 
     const state = parseCursorState(cursorState, requestedMaxPages);
     const companyMap = new Map<string, string>();
+    const cnpjProfileCache = new Map<string, AnyRecord | null>();
     const deadline = Date.now() + executionGuardMs;
     let pagesProcessedInRun = 0;
     let stopReason = "completed";
@@ -2033,7 +2310,8 @@ Deno.serve(async (request: Request) => {
               dryRun,
               summary,
               companyMap,
-              allowedStates
+              allowedStates,
+              cnpjProfileCache
             });
             summary.processed = getResourceCount(summary, "processed") + 1;
             continue;
@@ -2079,6 +2357,13 @@ Deno.serve(async (request: Request) => {
         state.next_by_resource[resource] = "";
       }
     }
+
+    await enrichMissingRdCompaniesBatch({
+      supabase,
+      dryRun,
+      summary,
+      cache: cnpjProfileCache
+    });
 
     const hasMore = state.resource_index < RESOURCE_ORDER.length;
     const nextCursor = hasMore
