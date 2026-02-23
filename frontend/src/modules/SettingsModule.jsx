@@ -26,7 +26,7 @@ const OMIE_SYNC_MAX_ROUNDS = 80;
 const RD_SYNC_PAGE_CHUNK_DRY_RUN = 5;
 const RD_SYNC_PAGE_CHUNK_LIVE = 1;
 const RD_SYNC_LIVE_MAX_RECORDS_PER_PAGE = 100;
-const RD_SYNC_MAX_ROUNDS = 80;
+const RD_SYNC_MAX_ROUNDS = 120;
 
 const EMPTY_STAGE_FORM = {
   name: "",
@@ -700,6 +700,11 @@ export default function SettingsModule() {
       : Math.min(requestedRecordsPerPage, RD_SYNC_LIVE_MAX_RECORDS_PER_PAGE);
     const maxPages = clampInteger(rdForm.max_pages, 1, 500, 50);
     const syncScope = rdForm.sync_customers_only ? "customers_whatsapp_only" : "full";
+    const estimatedResources = syncScope === "full" ? 3 : 2;
+    const maxRoundsBudget = Math.min(
+      900,
+      Math.max(RD_SYNC_MAX_ROUNDS, estimatedResources * maxPages + 12)
+    );
     const payload = {
       access_token: accessToken,
       api_url: String(rdForm.api_url || "").trim() || DEFAULT_RDSTATION_URL,
@@ -739,6 +744,7 @@ export default function SettingsModule() {
         has_more: false,
         next_cursor: null,
         max_pages: payload.max_pages,
+        max_rounds_budget: maxRoundsBudget,
         records_per_page: payload.records_per_page,
         dry_run: payload.dry_run,
         sync_scope: payload.sync_scope
@@ -757,7 +763,7 @@ export default function SettingsModule() {
           ? rdResumeCursor
           : null;
 
-      while (hasMore && aggregate.rounds < RD_SYNC_MAX_ROUNDS) {
+      while (hasMore && aggregate.rounds < maxRoundsBudget) {
         aggregate.rounds += 1;
         const resourceLabel = cursor?.resource_index === 1 ? "contatos" : cursor?.resource_index === 2 ? "negócios" : "organizações";
         setRdSuccess(`Sincronizando RD lote ${aggregate.rounds} (${resourceLabel})...`);
@@ -836,11 +842,11 @@ export default function SettingsModule() {
       if (hasMore) {
         if (dryRun) {
           setRdError(
-            `Validação RD (modo teste) interrompida após ${aggregate.rounds} lotes. Clique novamente para continuar a validação. Nenhum dado foi gravado.`
+            `Validação RD (modo teste) interrompida por segurança após ${aggregate.rounds} lotes. Clique novamente para continuar a validação. Nenhum dado foi gravado.`
           );
         } else {
           setRdError(
-            `A sincronização RD foi interrompida para segurança após ${aggregate.rounds} lotes. Clique novamente para continuar.`
+            `A sincronização RD foi interrompida por segurança após ${aggregate.rounds} lotes. Clique novamente para continuar.`
           );
         }
       } else {
