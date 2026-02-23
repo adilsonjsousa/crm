@@ -47,7 +47,8 @@ const EMPTY_RD_FORM = {
   api_url: DEFAULT_RDSTATION_URL,
   records_per_page: "100",
   max_pages: "50",
-  dry_run: false
+  dry_run: false,
+  sync_customers_only: true
 };
 
 const USER_ROLE_OPTIONS = [
@@ -172,7 +173,9 @@ function readRdFormStorage() {
       api_url: String(parsed.api_url || EMPTY_RD_FORM.api_url),
       records_per_page: String(parsed.records_per_page || EMPTY_RD_FORM.records_per_page),
       max_pages: String(parsed.max_pages || EMPTY_RD_FORM.max_pages),
-      dry_run: Boolean(parsed.dry_run)
+      dry_run: Boolean(parsed.dry_run),
+      sync_customers_only:
+        parsed.sync_customers_only === undefined ? Boolean(EMPTY_RD_FORM.sync_customers_only) : Boolean(parsed.sync_customers_only)
     };
   } catch {
     return EMPTY_RD_FORM;
@@ -696,13 +699,15 @@ export default function SettingsModule() {
       ? requestedRecordsPerPage
       : Math.min(requestedRecordsPerPage, RD_SYNC_LIVE_MAX_RECORDS_PER_PAGE);
     const maxPages = clampInteger(rdForm.max_pages, 1, 500, 50);
+    const syncScope = rdForm.sync_customers_only ? "customers_whatsapp_only" : "full";
     const payload = {
       access_token: accessToken,
       api_url: String(rdForm.api_url || "").trim() || DEFAULT_RDSTATION_URL,
       records_per_page: safeRecordsPerPage,
       max_pages: maxPages,
       page_chunk_size: dryRun ? RD_SYNC_PAGE_CHUNK_DRY_RUN : RD_SYNC_PAGE_CHUNK_LIVE,
-      dry_run: dryRun
+      dry_run: dryRun,
+      sync_scope: syncScope
     };
 
     setRdSyncing(true);
@@ -716,12 +721,18 @@ export default function SettingsModule() {
         opportunities_processed: 0,
         companies_created: 0,
         companies_updated: 0,
+        companies_skipped_existing: 0,
         contacts_created: 0,
         contacts_updated: 0,
+        contacts_skipped_without_company: 0,
+        contacts_skipped_without_whatsapp: 0,
+        contacts_skipped_existing_whatsapp: 0,
         opportunities_created: 0,
         opportunities_updated: 0,
+        opportunities_skipped_by_scope: 0,
         links_updated: 0,
         skipped_without_identifier: 0,
+        skipped_without_cnpj: 0,
         skipped_invalid_payload: 0,
         errors: [],
         rounds: 0,
@@ -729,14 +740,22 @@ export default function SettingsModule() {
         next_cursor: null,
         max_pages: payload.max_pages,
         records_per_page: payload.records_per_page,
-        dry_run: payload.dry_run
+        dry_run: payload.dry_run,
+        sync_scope: payload.sync_scope
       };
 
       let hasMore = true;
       const previousResult = asObject(rdResult);
       const previousWasDryRun = Boolean(previousResult.dry_run);
+      const previousScope = String(previousResult.sync_scope || "").trim().toLowerCase();
       let cursor =
-        !dryRun && !previousWasDryRun && rdResumeCursor && typeof rdResumeCursor === "object" ? rdResumeCursor : null;
+        !dryRun &&
+        !previousWasDryRun &&
+        previousScope === syncScope &&
+        rdResumeCursor &&
+        typeof rdResumeCursor === "object"
+          ? rdResumeCursor
+          : null;
 
       while (hasMore && aggregate.rounds < RD_SYNC_MAX_ROUNDS) {
         aggregate.rounds += 1;
@@ -773,13 +792,22 @@ export default function SettingsModule() {
         aggregate.opportunities_processed += Number(safeResult.opportunities_processed || 0);
         aggregate.companies_created += Number(safeResult.companies_created || 0);
         aggregate.companies_updated += Number(safeResult.companies_updated || 0);
+        aggregate.companies_skipped_existing += Number(safeResult.companies_skipped_existing || 0);
         aggregate.contacts_created += Number(safeResult.contacts_created || 0);
         aggregate.contacts_updated += Number(safeResult.contacts_updated || 0);
+        aggregate.contacts_skipped_without_company += Number(safeResult.contacts_skipped_without_company || 0);
+        aggregate.contacts_skipped_without_whatsapp += Number(safeResult.contacts_skipped_without_whatsapp || 0);
+        aggregate.contacts_skipped_existing_whatsapp += Number(safeResult.contacts_skipped_existing_whatsapp || 0);
         aggregate.opportunities_created += Number(safeResult.opportunities_created || 0);
         aggregate.opportunities_updated += Number(safeResult.opportunities_updated || 0);
+        aggregate.opportunities_skipped_by_scope += Number(safeResult.opportunities_skipped_by_scope || 0);
         aggregate.links_updated += Number(safeResult.links_updated || 0);
         aggregate.skipped_without_identifier += Number(safeResult.skipped_without_identifier || 0);
+        aggregate.skipped_without_cnpj += Number(safeResult.skipped_without_cnpj || 0);
         aggregate.skipped_invalid_payload += Number(safeResult.skipped_invalid_payload || 0);
+        if (safeResult.sync_scope) {
+          aggregate.sync_scope = String(safeResult.sync_scope || aggregate.sync_scope);
+        }
 
         const resultErrors = Array.isArray(safeResult.errors)
           ? safeResult.errors.map((item) => String(item || "").trim()).filter(Boolean)
@@ -849,6 +877,13 @@ export default function SettingsModule() {
     }));
     setRdResumeCursor(null);
   }
+
+  const rdCustomersOnlySelected = Boolean(rdForm.sync_customers_only);
+  const rdScopeCustomersOnly = String(rdResultSummary.sync_scope || "").trim().toLowerCase() !== "full";
+  const rdIgnoredContactsTotal =
+    Number(rdResultSummary.contacts_skipped_without_company || 0) +
+    Number(rdResultSummary.contacts_skipped_without_whatsapp || 0) +
+    Number(rdResultSummary.contacts_skipped_existing_whatsapp || 0);
 
   return (
     <section className="module">
@@ -1182,10 +1217,10 @@ export default function SettingsModule() {
       </div>
 
       <article className="panel top-gap">
-        <h2>Integração RD Station CRM - Importação completa</h2>
+        <h2>Integração RD Station CRM</h2>
         <p className="muted">
-          Importe organizações (empresas), contatos e negócios (oportunidades) do RD Station CRM para este CRM.
-          O Access Token fica salvo apenas neste navegador. Use token do RD Station CRM (não App Key/App Secret do RD Marketing).
+          Por padrão, sincroniza apenas empresas com CNPJ válido e contatos com WhatsApp vinculado a empresa, evitando duplicidade.
+          Você pode habilitar a importação completa incluindo oportunidades. O Access Token fica salvo apenas neste navegador.
         </p>
         {rdError ? <p className="error-text">{rdError}</p> : null}
         {rdSuccess ? <p className="success-text">{rdSuccess}</p> : null}
@@ -1244,6 +1279,19 @@ export default function SettingsModule() {
             Modo teste (não grava dados, apenas valida e contabiliza)
           </label>
 
+          <label className="checkbox-inline">
+            <input
+              type="checkbox"
+              checked={rdCustomersOnlySelected}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setRdForm((prev) => ({ ...prev, sync_customers_only: checked }));
+                setRdResumeCursor(null);
+              }}
+            />
+            Sincronizar apenas clientes por CNPJ + contatos com WhatsApp vinculado (ignora duplicados)
+          </label>
+
           <div className="inline-actions">
             <button type="submit" className="btn-primary" disabled={rdSyncing}>
               {rdSyncing ? "Sincronizando..." : "Sincronizar RD Station CRM"}
@@ -1272,8 +1320,14 @@ export default function SettingsModule() {
               <strong className="kpi-value">{Number(rdResultSummary.contacts_processed || 0)}</strong>
             </article>
             <article className="kpi-card">
-              <span className="kpi-label">Oportunidades</span>
-              <strong className="kpi-value">{Number(rdResultSummary.opportunities_processed || 0)}</strong>
+              <span className="kpi-label">{rdScopeCustomersOnly ? "Contatos ignorados" : "Oportunidades"}</span>
+              <strong className="kpi-value">
+                {rdScopeCustomersOnly ? rdIgnoredContactsTotal : Number(rdResultSummary.opportunities_processed || 0)}
+              </strong>
+            </article>
+            <article className="kpi-card">
+              <span className="kpi-label">Empresas já existentes</span>
+              <strong className="kpi-value">{Number(rdResultSummary.companies_skipped_existing || 0)}</strong>
             </article>
           </div>
         ) : null}
@@ -1304,6 +1358,10 @@ export default function SettingsModule() {
                 const opportunities = Number(result.opportunities_processed || 0);
                 const errorMessage = String(job.error_message || "").trim();
                 const dryRunFlag = Boolean(result.dry_run ?? payload.dry_run);
+                const syncScopeLabel =
+                  String(result.sync_scope || payload.sync_scope || "").trim().toLowerCase() === "full"
+                    ? "Importação completa"
+                    : "Clientes + WhatsApp";
                 const details = errorMessage || (job.status === "success" ? "Concluído sem erro." : "-");
 
                 return (
@@ -1315,7 +1373,10 @@ export default function SettingsModule() {
                     <td>
                       {companies} / {contacts} / {opportunities}
                     </td>
-                    <td>{dryRunFlag ? `[Modo teste] ${details}` : details}</td>
+                    <td>
+                      {dryRunFlag ? "[Modo teste] " : ""}
+                      [{syncScopeLabel}] {details}
+                    </td>
                   </tr>
                 );
               })}

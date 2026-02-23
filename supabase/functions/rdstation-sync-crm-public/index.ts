@@ -3,6 +3,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 type AnyRecord = Record<string, unknown>;
 type ResourceName = "organizations" | "contacts" | "deals";
+type SyncScope = "customers_whatsapp_only" | "full";
 type RdAuthMode = "bearer" | "query_token";
 type RdAuthState = {
   mode: RdAuthMode;
@@ -97,6 +98,14 @@ function buildAuthState(authModeRaw: unknown, apiUrl: string): RdAuthState {
   };
 }
 
+function resolveSyncScope(value: unknown): SyncScope {
+  const raw = safeString(value).toLowerCase();
+  if (["full", "crm_full", "all", "everything", "deals"].includes(raw)) {
+    return "full";
+  }
+  return "customers_whatsapp_only";
+}
+
 function digitsOnly(value: unknown) {
   return safeString(value).replace(/\D/g, "");
 }
@@ -104,6 +113,12 @@ function digitsOnly(value: unknown) {
 function normalizeCnpj(value: unknown) {
   const digits = digitsOnly(value);
   return digits.length === 14 ? digits : "";
+}
+
+function formatCnpj(value: unknown) {
+  const digits = normalizeCnpj(value);
+  if (!digits) return "";
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
 }
 
 function normalizeText(value: unknown) {
@@ -359,6 +374,26 @@ function formatBrazilPhone(value: unknown) {
   return `(${ddd}) ${local.slice(0, 5)}-${local.slice(5)}`;
 }
 
+function phoneLookupCandidates(value: unknown) {
+  const raw = safeString(value);
+  const formatted = formatBrazilPhone(raw);
+  const allDigits = digitsOnly(raw);
+  let brazilDigits = allDigits;
+  if ((brazilDigits.length === 12 || brazilDigits.length === 13) && brazilDigits.startsWith("55")) {
+    brazilDigits = brazilDigits.slice(2);
+  }
+  if (brazilDigits.length > 11) {
+    brazilDigits = brazilDigits.slice(brazilDigits.length - 11);
+  }
+
+  const unique = new Set<string>();
+  for (const candidate of [raw, formatted || "", allDigits, brazilDigits]) {
+    const normalized = safeString(candidate);
+    if (normalized) unique.add(normalized);
+  }
+  return Array.from(unique);
+}
+
 function formatCep(value: unknown) {
   const digits = digitsOnly(value);
   if (digits.length !== 8) return "";
@@ -435,6 +470,14 @@ function parseContact(itemRaw: unknown) {
   const organizationExternalId =
     pickFirstNonEmpty(row, ["organization_id", "organizationId", "company_id", "account_id"]) ||
     pickFirstNonEmpty(organization, ["id", "uuid", "organization_id"]);
+  const organizationCnpj = normalizeCnpj(
+    row.organization_cnpj ??
+      row.company_cnpj ??
+      organization.cnpj ??
+      organization.tax_id ??
+      organization.document ??
+      organization.cpf_cnpj
+  );
 
   return {
     externalId,
@@ -442,7 +485,8 @@ function parseContact(itemRaw: unknown) {
     email,
     phone,
     roleTitle,
-    organizationExternalId
+    organizationExternalId,
+    organizationCnpj
   };
 }
 
@@ -781,6 +825,30 @@ async function findLocalEntityIdByExternal({
   return safeString(data?.local_entity_id);
 }
 
+async function findCompanyByCnpj({
+  supabase,
+  cnpj
+}: {
+  supabase: ReturnType<typeof createClient>;
+  cnpj: string;
+}) {
+  const normalized = normalizeCnpj(cnpj);
+  if (!normalized) return "";
+
+  const cnpjFormatted = formatCnpj(normalized);
+  const candidates = Array.from(new Set([normalized, cnpjFormatted].filter(Boolean)));
+  if (!candidates.length) return "";
+
+  const { data, error } = await supabase
+    .from("companies")
+    .select("id")
+    .in("cnpj", candidates)
+    .limit(1);
+  if (error) throw new Error(error.message || "Falha ao buscar empresa por CNPJ.");
+  const row = Array.isArray(data) ? data[0] : null;
+  return safeString(row?.id);
+}
+
 async function upsertCompanyFromOrganization({
   supabase,
   organization,
@@ -795,7 +863,7 @@ async function upsertCompanyFromOrganization({
   companyMap: Map<string, string>;
 }) {
   const externalId = safeString(organization.externalId);
-  const cnpj = safeString(organization.cnpj);
+  const cnpj = normalizeCnpj(organization.cnpj);
   const legalName = safeString(organization.legalName) || safeString(organization.tradeName) || `EMPRESA RD ${externalId || cnpj || "SEM_ID"}`;
   const tradeName = safeString(organization.tradeName) || legalName;
 
@@ -804,8 +872,8 @@ async function upsertCompanyFromOrganization({
     return "";
   }
 
-  if (dryRun) {
-    summary.companies_processed = getResourceCount(summary, "companies_processed") + 1;
+  if (!cnpj) {
+    summary.skipped_without_cnpj = getResourceCount(summary, "skipped_without_cnpj") + 1;
     return "";
   }
 
@@ -819,40 +887,42 @@ async function upsertCompanyFromOrganization({
     });
   }
 
-  let existingCompany: AnyRecord | null = null;
+  if (!companyId) {
+    companyId = await findCompanyByCnpj({
+      supabase,
+      cnpj
+    });
+  }
+
   if (companyId) {
-    const { data, error } = await supabase
-      .from("companies")
-      .select("id,cnpj,legal_name,trade_name,email,phone,address_full,city,state,segmento")
-      .eq("id", companyId)
-      .maybeSingle();
-    if (error) throw new Error(error.message || "Falha ao buscar empresa vinculada.");
-    if (data) existingCompany = data;
-  }
-
-  if (!existingCompany && cnpj) {
-    const { data, error } = await supabase
-      .from("companies")
-      .select("id,cnpj,legal_name,trade_name,email,phone,address_full,city,state,segmento")
-      .eq("cnpj", cnpj)
-      .maybeSingle();
-    if (error) throw new Error(error.message || "Falha ao buscar empresa por CNPJ.");
-    if (data) {
-      existingCompany = data;
-      companyId = safeString(data.id);
+    if (!dryRun && externalId) {
+      await upsertIntegrationLink({
+        supabase,
+        provider: "rdstation",
+        localEntityType: "company",
+        localEntityId: companyId,
+        externalId,
+        syncedAt: new Date().toISOString()
+      });
+      summary.links_updated = getResourceCount(summary, "links_updated") + 1;
     }
+    if (externalId) {
+      companyMap.set(externalId, companyId);
+    }
+    summary.companies_skipped_existing = getResourceCount(summary, "companies_skipped_existing") + 1;
+    summary.companies_processed = getResourceCount(summary, "companies_processed") + 1;
+    return companyId;
   }
 
-  const syntheticCnpj = cnpj || buildSyntheticDocument("RDORG", externalId);
-  if (!syntheticCnpj) {
-    summary.skipped_without_identifier = getResourceCount(summary, "skipped_without_identifier") + 1;
+  if (dryRun) {
+    summary.companies_processed = getResourceCount(summary, "companies_processed") + 1;
     return "";
   }
 
   const payload = {
     legal_name: legalName,
     trade_name: tradeName,
-    cnpj: syntheticCnpj,
+    cnpj: formatCnpj(cnpj) || cnpj,
     email: safeString(organization.email).toLowerCase() || null,
     phone: safeString(organization.phone) || null,
     address_full: safeString(organization.addressFull) || null,
@@ -861,31 +931,14 @@ async function upsertCompanyFromOrganization({
     segmento: "RD Station"
   };
 
-  if (!existingCompany) {
-    const { data, error } = await supabase
-      .from("companies")
-      .insert(payload)
-      .select("id")
-      .single();
-    if (error) throw new Error(error.message || "Falha ao inserir empresa.");
-    companyId = safeString(data?.id);
-    summary.companies_created = getResourceCount(summary, "companies_created") + 1;
-  } else {
-    companyId = safeString(existingCompany.id);
-    const patch = {
-      legal_name: payload.legal_name || safeString(existingCompany.legal_name),
-      trade_name: payload.trade_name || safeString(existingCompany.trade_name),
-      email: payload.email || existingCompany.email || null,
-      phone: payload.phone || existingCompany.phone || null,
-      address_full: payload.address_full || existingCompany.address_full || null,
-      city: payload.city || existingCompany.city || null,
-      state: payload.state || existingCompany.state || null,
-      segmento: existingCompany.segmento || "RD Station"
-    };
-    const { error } = await supabase.from("companies").update(patch).eq("id", companyId);
-    if (error) throw new Error(error.message || "Falha ao atualizar empresa.");
-    summary.companies_updated = getResourceCount(summary, "companies_updated") + 1;
-  }
+  const { data, error } = await supabase
+    .from("companies")
+    .insert(payload)
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message || "Falha ao inserir empresa.");
+  companyId = safeString(data?.id);
+  summary.companies_created = getResourceCount(summary, "companies_created") + 1;
 
   if (companyId && externalId) {
     await upsertIntegrationLink({
@@ -990,33 +1043,60 @@ async function upsertContactFromRd({
   const externalId = safeString(contact.externalId);
   const fullName = safeString(contact.fullName) || `Contato RD ${externalId || "sem-id"}`;
   const email = safeString(contact.email).toLowerCase();
+  const phone = safeString(contact.phone);
+  const organizationExternalId = safeString(contact.organizationExternalId);
+  const organizationCnpj = normalizeCnpj(contact.organizationCnpj);
 
-  if (!externalId && !email) {
+  if (!externalId && !email && !phone) {
     summary.skipped_without_identifier = getResourceCount(summary, "skipped_without_identifier") + 1;
     return "";
   }
 
-  if (dryRun) {
-    summary.contacts_processed = getResourceCount(summary, "contacts_processed") + 1;
+  if (!organizationExternalId && !organizationCnpj) {
+    summary.contacts_skipped_without_company =
+      getResourceCount(summary, "contacts_skipped_without_company") + 1;
+    return "";
+  }
+
+  if (!phone) {
+    summary.contacts_skipped_without_whatsapp =
+      getResourceCount(summary, "contacts_skipped_without_whatsapp") + 1;
     return "";
   }
 
   let companyId = "";
-  const organizationExternalId = safeString(contact.organizationExternalId);
   if (organizationExternalId) {
     companyId = companyMap.get(organizationExternalId) || "";
-    if (!companyId) {
-      companyId = await findOrCreateCompanyByExternal({
-        supabase,
-        externalId: organizationExternalId,
-        fallbackName: `Empresa RD ${organizationExternalId}`,
-        summary
-      });
-      if (companyId) companyMap.set(organizationExternalId, companyId);
+  }
+
+  if (!companyId && organizationExternalId) {
+    companyId = await findLocalEntityIdByExternal({
+      supabase,
+      provider: "rdstation",
+      localEntityType: "company",
+      externalId: organizationExternalId
+    });
+    if (companyId) {
+      companyMap.set(organizationExternalId, companyId);
     }
   }
 
+  if (!companyId && organizationCnpj) {
+    companyId = await findCompanyByCnpj({
+      supabase,
+      cnpj: organizationCnpj
+    });
+  }
+
+  if (!companyId) {
+    summary.contacts_skipped_without_company =
+      getResourceCount(summary, "contacts_skipped_without_company") + 1;
+    return "";
+  }
+
   let contactId = "";
+  let existingContact: AnyRecord | null = null;
+
   if (externalId) {
     contactId = await findLocalEntityIdByExternal({
       supabase,
@@ -1024,62 +1104,70 @@ async function upsertContactFromRd({
       localEntityType: "contact",
       externalId
     });
-  }
-
-  let existingContact: AnyRecord | null = null;
-  if (contactId) {
-    const { data, error } = await supabase
-      .from("contacts")
-      .select("id,company_id,full_name,email,phone,role_title")
-      .eq("id", contactId)
-      .maybeSingle();
-    if (error) throw new Error(error.message || "Falha ao buscar contato por vínculo.");
-    if (data) existingContact = data;
-  }
-
-  if (!existingContact && email) {
-    const query = supabase
-      .from("contacts")
-      .select("id,company_id,full_name,email,phone,role_title")
-      .eq("email", email);
-    const { data, error } = companyId ? await query.eq("company_id", companyId).maybeSingle() : await query.maybeSingle();
-    if (error) throw new Error(error.message || "Falha ao buscar contato por e-mail.");
-    if (data) {
-      existingContact = data;
-      contactId = safeString(data.id);
+    if (contactId) {
+      existingContact = { id: contactId };
     }
   }
 
+  if (!existingContact && phone) {
+    const phoneCandidates = phoneLookupCandidates(phone);
+    if (!phoneCandidates.length) {
+      summary.contacts_skipped_without_whatsapp =
+        getResourceCount(summary, "contacts_skipped_without_whatsapp") + 1;
+      return "";
+    }
+    const { data, error } = await supabase
+      .from("contacts")
+      .select("id")
+      .in("phone", phoneCandidates)
+      .limit(1);
+    if (error) throw new Error(error.message || "Falha ao buscar contato por WhatsApp.");
+    const row = Array.isArray(data) ? data[0] : null;
+    if (row?.id) {
+      existingContact = row;
+      contactId = safeString(row.id);
+    }
+  }
+
+  if (existingContact) {
+    if (!dryRun && contactId && externalId) {
+      await upsertIntegrationLink({
+        supabase,
+        provider: "rdstation",
+        localEntityType: "contact",
+        localEntityId: contactId,
+        externalId,
+        syncedAt: new Date().toISOString()
+      });
+      summary.links_updated = getResourceCount(summary, "links_updated") + 1;
+    }
+    summary.contacts_skipped_existing_whatsapp =
+      getResourceCount(summary, "contacts_skipped_existing_whatsapp") + 1;
+    summary.contacts_processed = getResourceCount(summary, "contacts_processed") + 1;
+    return contactId;
+  }
+
+  if (dryRun) {
+    summary.contacts_processed = getResourceCount(summary, "contacts_processed") + 1;
+    return "";
+  }
+
   const payload = {
-    company_id: companyId || null,
+    company_id: companyId,
     full_name: fullName,
     email: email || null,
-    phone: safeString(contact.phone) || null,
+    phone,
     role_title: safeString(contact.roleTitle) || null
   };
 
-  if (!existingContact) {
-    const { data, error } = await supabase
-      .from("contacts")
-      .insert(payload)
-      .select("id")
-      .single();
-    if (error) throw new Error(error.message || "Falha ao inserir contato.");
-    contactId = safeString(data?.id);
-    summary.contacts_created = getResourceCount(summary, "contacts_created") + 1;
-  } else {
-    contactId = safeString(existingContact.id);
-    const patch = {
-      company_id: payload.company_id || existingContact.company_id || null,
-      full_name: payload.full_name || safeString(existingContact.full_name),
-      email: payload.email || existingContact.email || null,
-      phone: payload.phone || existingContact.phone || null,
-      role_title: payload.role_title || existingContact.role_title || null
-    };
-    const { error } = await supabase.from("contacts").update(patch).eq("id", contactId);
-    if (error) throw new Error(error.message || "Falha ao atualizar contato.");
-    summary.contacts_updated = getResourceCount(summary, "contacts_updated") + 1;
-  }
+  const { data, error } = await supabase
+    .from("contacts")
+    .insert(payload)
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message || "Falha ao inserir contato.");
+  contactId = safeString(data?.id);
+  summary.contacts_created = getResourceCount(summary, "contacts_created") + 1;
 
   if (contactId && externalId) {
     await upsertIntegrationLink({
@@ -1321,6 +1409,8 @@ Deno.serve(async (request: Request) => {
 
   const apiUrl = safeString(body.api_url || body.apiUrl || DEFAULT_RDSTATION_API_URL) || DEFAULT_RDSTATION_API_URL;
   const authState = buildAuthState(body.auth_mode ?? body.authMode, apiUrl);
+  const syncScope = resolveSyncScope(body.sync_scope ?? body.syncScope);
+  const includeDeals = syncScope === "full";
   const dryRun = parseBoolean(body.dry_run ?? body.dryRun, false);
   const requestedRecordsPerPage = clampNumber(body.records_per_page ?? body.recordsPerPage, 1, 500, 100);
   const recordsPerPage = dryRun ? requestedRecordsPerPage : Math.min(requestedRecordsPerPage, LIVE_MAX_RECORDS_PER_PAGE);
@@ -1351,6 +1441,7 @@ Deno.serve(async (request: Request) => {
       payload: {
         api_url: apiUrl,
         auth_mode: authState.mode,
+        sync_scope: syncScope,
         dry_run: dryRun,
         records_per_page: recordsPerPage,
         max_pages: requestedMaxPages,
@@ -1382,12 +1473,18 @@ Deno.serve(async (request: Request) => {
       opportunities_processed: 0,
       companies_created: 0,
       companies_updated: 0,
+      companies_skipped_existing: 0,
       contacts_created: 0,
       contacts_updated: 0,
+      contacts_skipped_without_company: 0,
+      contacts_skipped_without_whatsapp: 0,
+      contacts_skipped_existing_whatsapp: 0,
       opportunities_created: 0,
       opportunities_updated: 0,
+      opportunities_skipped_by_scope: 0,
       links_updated: 0,
       skipped_without_identifier: 0,
+      skipped_without_cnpj: 0,
       skipped_invalid_payload: 0,
       errors: []
     };
@@ -1409,6 +1506,12 @@ Deno.serve(async (request: Request) => {
       }
 
       const resource = RESOURCE_ORDER[state.resource_index];
+      if (!includeDeals && resource === "deals") {
+        state.resource_index = RESOURCE_ORDER.length;
+        summary.opportunities_skipped_by_scope =
+          getResourceCount(summary, "opportunities_skipped_by_scope") + 1;
+        break;
+      }
       const page = state.page_by_resource[resource];
       const nextCursor = state.next_by_resource[resource];
 
@@ -1501,6 +1604,7 @@ Deno.serve(async (request: Request) => {
 
     const resultPayload: AnyRecord = {
       ...summary,
+      sync_scope: syncScope,
       api_url: apiUrl,
       api_url_used: authState.apiUrl,
       auth_mode_used: authState.mode,
