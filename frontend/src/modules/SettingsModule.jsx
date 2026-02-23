@@ -56,6 +56,7 @@ const EMPTY_USER_FORM = {
 
 const EMPTY_EDIT_USER_FORM = {
   full_name: "",
+  email: "",
   whatsapp: "",
   role: "sales",
   status: "active"
@@ -280,6 +281,7 @@ export default function SettingsModule() {
     setEditingUserId(userId);
     setEditUserForm({
       full_name: String(user.full_name || ""),
+      email: String(user.email || ""),
       whatsapp: String(user.whatsapp || ""),
       role: String(user.role || "sales"),
       status: String(user.status || "active")
@@ -767,6 +769,13 @@ export default function SettingsModule() {
               placeholder="Nome completo"
               value={editUserForm.full_name}
               onChange={(event) => setEditUserForm((prev) => ({ ...prev, full_name: event.target.value }))}
+            />
+            <input
+              required
+              type="email"
+              placeholder="email@empresa.com"
+              value={editUserForm.email}
+              onChange={(event) => setEditUserForm((prev) => ({ ...prev, email: event.target.value }))}
             />
             <input
               placeholder="WhatsApp (DDD) 12345-1234"

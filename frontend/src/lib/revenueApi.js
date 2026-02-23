@@ -1816,6 +1816,7 @@ export async function updateSystemUser(userId, payload) {
 
   const role = normalizeUserRole(payload?.role);
   const status = normalizeUserStatus(payload?.status);
+  const hasEmail = Object.prototype.hasOwnProperty.call(payload || {}, "email");
   const hasWhatsApp = Object.prototype.hasOwnProperty.call(payload || {}, "whatsapp");
   const updatePayload = {
     user_id: normalizedUserId,
@@ -1827,6 +1828,13 @@ export async function updateSystemUser(userId, payload) {
 
   if (hasWhatsApp) {
     updatePayload.whatsapp = normalizeUserWhatsApp(payload?.whatsapp);
+  }
+
+  if (hasEmail) {
+    const normalizedEmail = normalizeUserEmail(payload?.email);
+    if (!normalizedEmail) throw new Error("Informe o e-mail de login do usuário.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error("Informe um e-mail válido.");
+    updatePayload.email = normalizedEmail;
   }
 
   if (!updatePayload.full_name) throw new Error("Informe o nome completo do usuário.");
