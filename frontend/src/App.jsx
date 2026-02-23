@@ -832,7 +832,7 @@ export default function App() {
           </form>
           <div className="crm-topbar-actions">
             <button type="button" className="btn-ghost" onClick={openPipelineQuickAction}>
-              + Novo Negócio
+              Novo Negócio
             </button>
             <button type="button" className="btn-ghost" onClick={openTasksQuickAction}>
               + Nova Tarefa
