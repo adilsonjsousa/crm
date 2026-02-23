@@ -38,6 +38,11 @@ function safeString(value: unknown) {
   return String(value ?? "").trim();
 }
 
+function sanitizeRdAccessToken(value: unknown) {
+  const raw = safeString(value).replace(/^['"]+|['"]+$/g, "");
+  return raw.replace(/^bearer\s+/i, "").trim();
+}
+
 function digitsOnly(value: unknown) {
   return safeString(value).replace(/\D/g, "");
 }
@@ -533,6 +538,11 @@ async function fetchResourcePage({
       const detail =
         pickFirstNonEmpty(payload, ["message", "error", "error_description"]) ||
         safeString(responseText).slice(0, 220);
+      if (response.status === 401) {
+        throw new Error(
+          "rd_http_401:invalid_token. Use o Access Token do RD Station CRM e informe apenas o token (sem prefixo Bearer)."
+        );
+      }
       if (isRetriableHttpStatus(response.status) && attempt < 3) {
         await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
         continue;
@@ -1186,7 +1196,7 @@ Deno.serve(async (request: Request) => {
     });
   }
 
-  const accessToken = safeString(body.access_token || body.accessToken || body.token);
+  const accessToken = sanitizeRdAccessToken(body.access_token || body.accessToken || body.token);
   if (!accessToken) {
     return jsonResponse(400, {
       error: "missing_rdstation_credentials",
@@ -1395,6 +1405,13 @@ Deno.serve(async (request: Request) => {
     await updateSyncJob(supabase, syncJobId, "error", {
       error_message: message
     });
+    if (/^rd_http_(400|401|403)\b/i.test(message)) {
+      return jsonResponse(200, {
+        error: "rdstation_sync_failed",
+        message,
+        sync_job_id: syncJobId
+      });
+    }
     return jsonResponse(500, {
       error: "rdstation_sync_failed",
       message,

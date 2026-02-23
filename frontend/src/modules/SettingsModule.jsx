@@ -89,6 +89,14 @@ function clampInteger(value, min, max, fallback) {
   return Math.min(max, Math.max(min, Math.floor(parsed)));
 }
 
+function sanitizeRdAccessToken(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^['"]+|['"]+$/g, "")
+    .replace(/^bearer\s+/i, "")
+    .trim();
+}
+
 function formatDateTime(value) {
   if (!value) return "-";
   const date = new Date(value);
@@ -676,7 +684,7 @@ export default function SettingsModule() {
     setRdSuccess("");
     setRdResult(null);
 
-    const accessToken = String(rdForm.access_token || "").trim();
+    const accessToken = sanitizeRdAccessToken(rdForm.access_token);
     if (!accessToken) {
       setRdError("Informe o Access Token do RD Station CRM.");
       return;
@@ -1162,7 +1170,7 @@ export default function SettingsModule() {
         <h2>Integração RD Station CRM - Importação completa</h2>
         <p className="muted">
           Importe organizações (empresas), contatos e negócios (oportunidades) do RD Station CRM para este CRM.
-          O Access Token fica salvo apenas neste navegador.
+          O Access Token fica salvo apenas neste navegador. Use token do RD Station CRM (não App Key/App Secret do RD Marketing).
         </p>
         {rdError ? <p className="error-text">{rdError}</p> : null}
         {rdSuccess ? <p className="success-text">{rdSuccess}</p> : null}
@@ -1176,7 +1184,7 @@ export default function SettingsModule() {
                 type="password"
                 value={rdForm.access_token}
                 onChange={(event) => setRdForm((prev) => ({ ...prev, access_token: event.target.value }))}
-                placeholder="Bearer token do RD Station CRM"
+                placeholder="Token do RD Station CRM (sem Bearer)"
               />
             </label>
 
