@@ -23,6 +23,64 @@ const LEGACY_MAX_RECORDS_PER_PAGE = 50;
 const BEARER_REQUEST_TIMEOUT_MS = 20000;
 const LEGACY_REQUEST_TIMEOUT_MS = 35000;
 const MAX_ERRORS = 30;
+const BRAZIL_UF_CODES = new Set([
+  "AC",
+  "AL",
+  "AP",
+  "AM",
+  "BA",
+  "CE",
+  "DF",
+  "ES",
+  "GO",
+  "MA",
+  "MT",
+  "MS",
+  "MG",
+  "PA",
+  "PB",
+  "PR",
+  "PE",
+  "PI",
+  "RJ",
+  "RN",
+  "RS",
+  "RO",
+  "RR",
+  "SC",
+  "SP",
+  "SE",
+  "TO"
+]);
+const BRAZIL_UF_BY_NAME: Record<string, string> = {
+  acre: "AC",
+  alagoas: "AL",
+  amapa: "AP",
+  amazonas: "AM",
+  bahia: "BA",
+  ceara: "CE",
+  "distrito federal": "DF",
+  "espirito santo": "ES",
+  goias: "GO",
+  maranhao: "MA",
+  "mato grosso": "MT",
+  "mato grosso do sul": "MS",
+  "minas gerais": "MG",
+  para: "PA",
+  paraiba: "PB",
+  parana: "PR",
+  pernambuco: "PE",
+  piaui: "PI",
+  "rio de janeiro": "RJ",
+  "rio grande do norte": "RN",
+  "rio grande do sul": "RS",
+  rondonia: "RO",
+  roraima: "RR",
+  "santa catarina": "SC",
+  "sao paulo": "SP",
+  sergipe: "SE",
+  tocantins: "TO"
+};
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -126,6 +184,87 @@ function normalizeText(value: unknown) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+function normalizeAddressToken(value: unknown) {
+  return safeString(value).replace(/\s+/g, " ").trim();
+}
+
+function normalizeUf(value: unknown) {
+  const raw = safeString(value).toUpperCase();
+  if (!raw) return "";
+
+  const directToken = raw.match(/\b([A-Z]{2})\b/);
+  if (directToken && BRAZIL_UF_CODES.has(directToken[1])) {
+    return directToken[1];
+  }
+
+  const onlyLetters = raw.replace(/[^A-Z]/g, "");
+  if (onlyLetters.length === 2 && BRAZIL_UF_CODES.has(onlyLetters)) {
+    return onlyLetters;
+  }
+
+  const byName = BRAZIL_UF_BY_NAME[normalizeText(raw).replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim()];
+  if (byName) return byName;
+
+  return "";
+}
+
+function normalizeCity(value: unknown, stateUf: string) {
+  let city = normalizeAddressToken(value);
+  if (!city) return "";
+
+  city = city
+    .replace(/\s*\([A-Za-z]{2}\)\s*$/g, "")
+    .replace(/\s*[-/]\s*[A-Za-z]{2}\s*$/g, "")
+    .replace(/\s*,\s*[A-Za-z]{2}\s*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (stateUf) {
+    const trailingUfPattern = new RegExp(`\\s+${stateUf}$`, "i");
+    city = city.replace(trailingUfPattern, "").trim();
+  }
+
+  return city;
+}
+
+function buildCompanyAddressFull({
+  street,
+  number,
+  complement,
+  district,
+  city,
+  state,
+  cep
+}: {
+  street: string;
+  number: string;
+  complement: string;
+  district: string;
+  city: string;
+  state: string;
+  cep: string;
+}) {
+  const normalizedState = normalizeUf(state);
+  const normalizedCity = normalizeCity(city, normalizedState).toUpperCase();
+  const cityState = normalizedCity
+    ? normalizedState
+      ? `${normalizedCity} (${normalizedState})`
+      : normalizedCity
+    : "";
+
+  const parts = [
+    normalizeAddressToken(street).toUpperCase(),
+    normalizeAddressToken(number).toUpperCase(),
+    normalizeAddressToken(complement).toUpperCase(),
+    normalizeAddressToken(district).toUpperCase(),
+    cityState,
+    normalizedState,
+    cep ? `CEP ${cep}` : ""
+  ].filter(Boolean);
+
+  return parts.join(", ");
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number) {
@@ -432,18 +571,25 @@ function parseOrganization(itemRaw: unknown) {
     pickFirstNonEmpty(row, ["phone", "mobile_phone", "whatsapp", "telephone"])
   );
 
-  const city = pickFirstNonEmpty(address, ["city", "cidade"]) || pickFirstNonEmpty(row, ["city", "cidade"]);
-  const state = pickFirstNonEmpty(address, ["state", "uf"]) || pickFirstNonEmpty(row, ["state", "uf"]);
+  const rawCity = pickFirstNonEmpty(address, ["city", "cidade"]) || pickFirstNonEmpty(row, ["city", "cidade"]);
+  const rawState = pickFirstNonEmpty(address, ["state", "uf"]) || pickFirstNonEmpty(row, ["state", "uf"]);
+  const state = normalizeUf(rawState);
+  const city = normalizeCity(rawCity, state).toUpperCase();
   const street = pickFirstNonEmpty(address, ["street", "logradouro"]) || pickFirstNonEmpty(row, ["street", "logradouro"]);
   const number = pickFirstNonEmpty(address, ["number", "numero"]) || pickFirstNonEmpty(row, ["number", "numero"]);
   const district = pickFirstNonEmpty(address, ["district", "bairro"]) || pickFirstNonEmpty(row, ["district", "bairro"]);
   const complement = pickFirstNonEmpty(address, ["complement", "complemento"]) || pickFirstNonEmpty(row, ["complement", "complemento"]);
   const cepRaw = pickFirstNonEmpty(address, ["zip_code", "cep"]) || pickFirstNonEmpty(row, ["zip_code", "cep"]);
   const cep = formatCep(cepRaw);
-  const addressFull = [street, number, complement, district, city, state, cep ? `CEP ${cep}` : ""]
-    .map((value) => safeString(value))
-    .filter(Boolean)
-    .join(", ");
+  const addressFull = buildCompanyAddressFull({
+    street,
+    number,
+    complement,
+    district,
+    city,
+    state,
+    cep
+  });
 
   return {
     externalId,
@@ -936,7 +1082,35 @@ async function upsertCompanyFromOrganization({
     .insert(payload)
     .select("id")
     .single();
-  if (error) throw new Error(error.message || "Falha ao inserir empresa.");
+
+  if (error) {
+    const normalizedErrorMessage = normalizeText(error.message || "");
+    if (normalizedErrorMessage.includes("companies_cnpj_key") || normalizedErrorMessage.includes("duplicate key value")) {
+      const existingCompanyId = await findCompanyByCnpj({
+        supabase,
+        cnpj
+      });
+      if (existingCompanyId) {
+        if (!dryRun && externalId) {
+          await upsertIntegrationLink({
+            supabase,
+            provider: "rdstation",
+            localEntityType: "company",
+            localEntityId: existingCompanyId,
+            externalId,
+            syncedAt: new Date().toISOString()
+          });
+          summary.links_updated = getResourceCount(summary, "links_updated") + 1;
+        }
+        if (externalId) companyMap.set(externalId, existingCompanyId);
+        summary.companies_skipped_existing = getResourceCount(summary, "companies_skipped_existing") + 1;
+        summary.companies_processed = getResourceCount(summary, "companies_processed") + 1;
+        return existingCompanyId;
+      }
+    }
+    throw new Error(error.message || "Falha ao inserir empresa.");
+  }
+
   companyId = safeString(data?.id);
   summary.companies_created = getResourceCount(summary, "companies_created") + 1;
 

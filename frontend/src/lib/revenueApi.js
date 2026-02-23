@@ -17,6 +17,12 @@ function formatCep(value) {
   return `${cep.slice(0, 5)}-${cep.slice(5)}`;
 }
 
+function formatCnpj(value) {
+  const digits = cleanDigits(value);
+  if (digits.length !== 14) return digits;
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+}
+
 function joinAddress(parts) {
   return parts.filter(Boolean).join(", ");
 }
@@ -351,15 +357,19 @@ export async function getCompanyById(companyId) {
 }
 
 export async function findCompanyByCnpj(cnpj) {
+  const normalized = cleanDigits(cnpj);
+  if (normalized.length !== 14) return null;
+  const masked = formatCnpj(normalized);
+  const cnpjCandidates = Array.from(new Set([normalized, masked].filter(Boolean)));
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("companies")
     .select("id,trade_name,cnpj")
-    .eq("cnpj", cnpj)
-    .maybeSingle();
+    .in("cnpj", cnpjCandidates)
+    .limit(1);
 
   if (error) throw new Error(normalizeError(error, "Falha ao validar CNPJ na base."));
-  return data;
+  return Array.isArray(data) ? data[0] || null : null;
 }
 
 export async function lookupCompanyDataByCnpj(cnpj) {
@@ -371,13 +381,27 @@ export async function lookupCompanyDataByCnpj(cnpj) {
   if (!response.ok) throw new Error("Falha ao consultar dados públicos do CNPJ.");
 
   const payload = await response.json();
+  const uf = String(payload.uf || "")
+    .trim()
+    .toUpperCase();
+  const city = String(payload.municipio || "")
+    .trim()
+    .toUpperCase();
   const address = joinAddress([
-    payload.logradouro,
-    payload.numero,
-    payload.complemento,
-    payload.bairro,
-    payload.municipio,
-    payload.uf,
+    String(payload.logradouro || "")
+      .trim()
+      .toUpperCase(),
+    String(payload.numero || "")
+      .trim()
+      .toUpperCase(),
+    String(payload.complemento || "")
+      .trim()
+      .toUpperCase(),
+    String(payload.bairro || "")
+      .trim()
+      .toUpperCase(),
+    city ? `${city}${uf ? ` (${uf})` : ""}` : "",
+    uf,
     payload.cep ? `CEP ${formatCep(payload.cep)}` : ""
   ]);
 
