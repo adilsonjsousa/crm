@@ -1471,13 +1471,28 @@ export default function SettingsModule() {
                 const syncScopeValue = String(result.sync_scope || payload.sync_scope || "").trim().toLowerCase();
                 const allowedStatesValue = sanitizeAllowedStates(result.allowed_states ?? payload.allowed_states);
                 const allowedStatesLabel = formatAllowedStatesLabel(allowedStatesValue);
+                const hasMoreFlag = parseBoolean(result.has_more ?? payload.has_more, false);
+                const stopReason = String(result.stop_reason || payload.stop_reason || "").trim();
+                const nextResource = String(result.next_resource || payload.next_resource || "").trim().toLowerCase();
+                const nextResourceLabel =
+                  nextResource === "organizations"
+                    ? "organizações"
+                    : nextResource === "contacts"
+                      ? "contatos"
+                      : nextResource === "deals"
+                        ? "negócios"
+                        : "";
                 const syncScopeLabel =
                   syncScopeValue === "full"
                     ? "Importação completa"
                     : syncScopeValue === "south_cnpj_only"
                       ? `CNPJ novos ${allowedStatesLabel}`
                       : "Clientes + WhatsApp";
-                const details = errorMessage || (job.status === "success" ? "Concluído sem erro." : "-");
+                const partialDetails =
+                  hasMoreFlag && !errorMessage
+                    ? `Lote parcial (${stopReason || "page_chunk_limit"}). Continue para seguir em ${nextResourceLabel || "próxima etapa"}.`
+                    : "";
+                const details = errorMessage || partialDetails || (job.status === "success" ? "Concluído sem erro." : "-");
 
                 return (
                   <tr key={job.id}>
