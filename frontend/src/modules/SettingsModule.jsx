@@ -46,7 +46,7 @@ const EMPTY_RD_FORM = {
   access_token: "",
   api_url: DEFAULT_RDSTATION_URL,
   records_per_page: "100",
-  max_pages: "50",
+  max_pages: "200",
   dry_run: false,
   sync_customers_only: true
 };
@@ -1259,7 +1259,7 @@ export default function SettingsModule() {
             </label>
 
             <label className="settings-field">
-              <span>Máximo de páginas por recurso (1-500)</span>
+              <span>Máximo de páginas por recurso (1-500, recomendado 200+)</span>
               <input
                 type="number"
                 min={1}
