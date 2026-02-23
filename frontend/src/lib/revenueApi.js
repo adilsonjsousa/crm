@@ -1523,6 +1523,29 @@ export async function syncOmieCustomers(payload) {
   return data || {};
 }
 
+export async function syncRdStationCrm(payload) {
+  const supabase = ensureSupabase();
+  const body = asObject(payload);
+
+  const { data, error } = await supabase.functions.invoke("rdstation-sync-crm-public", {
+    body
+  });
+
+  if (error) {
+    const message = String(error?.message || "");
+    if (message.toLowerCase().includes("non-2xx")) {
+      throw new Error(
+        "A sincronização RD Station excedeu o tempo limite deste lote. O sistema fará nova tentativa em lotes menores."
+      );
+    }
+    throw new Error(normalizeError(error, "Falha ao iniciar sincronização RD Station."));
+  }
+  if (data?.error) {
+    throw new Error(String(data.message || data.error || "Falha na sincronização RD Station."));
+  }
+  return data || {};
+}
+
 function readOmieCredentialsFromLocalStorage() {
   if (typeof window === "undefined") {
     return { appKey: "", appSecret: "" };
@@ -1740,6 +1763,22 @@ export async function listOmieCustomerSyncJobs(limit = 12) {
     .limit(safeLimit);
 
   if (error) throw new Error(normalizeError(error, "Falha ao listar histórico de sincronização OMIE."));
+  return data || [];
+}
+
+export async function listRdStationSyncJobs(limit = 12) {
+  const supabase = ensureSupabase();
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(50, Math.floor(limit))) : 12;
+
+  const { data, error } = await supabase
+    .from("sync_jobs")
+    .select("id,status,started_at,finished_at,error_message,result,created_at")
+    .eq("provider", "rdstation")
+    .eq("resource", "crm_full")
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) throw new Error(normalizeError(error, "Falha ao listar histórico de sincronização RD Station."));
   return data || [];
 }
 

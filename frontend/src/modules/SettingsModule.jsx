@@ -5,20 +5,28 @@ import {
   deleteCompanyLifecycleStage,
   listCompanyLifecycleStages,
   listOmieCustomerSyncJobs,
+  listRdStationSyncJobs,
   listSystemUsers,
   saveCompanyLifecycleStageOrder,
   sendSystemUserPasswordReset,
+  syncRdStationCrm,
   syncOmieCustomers,
   updateCompanyLifecycleStage,
   updateSystemUser
 } from "../lib/revenueApi";
 
 const OMIE_STORAGE_KEY = "crm.settings.omie.customers.v1";
+const RDSTATION_STORAGE_KEY = "crm.settings.rdstation.crm.v1";
 const DEFAULT_OMIE_URL = "https://app.omie.com.br/api/v1/geral/clientes/";
+const DEFAULT_RDSTATION_URL = "https://api.rd.services/crm/v2";
 const OMIE_SYNC_PAGE_CHUNK_DRY_RUN = 3;
 const OMIE_SYNC_PAGE_CHUNK_LIVE = 1;
 const OMIE_SYNC_LIVE_MAX_RECORDS_PER_PAGE = 20;
 const OMIE_SYNC_MAX_ROUNDS = 80;
+const RD_SYNC_PAGE_CHUNK_DRY_RUN = 5;
+const RD_SYNC_PAGE_CHUNK_LIVE = 2;
+const RD_SYNC_LIVE_MAX_RECORDS_PER_PAGE = 200;
+const RD_SYNC_MAX_ROUNDS = 80;
 
 const EMPTY_STAGE_FORM = {
   name: "",
@@ -31,6 +39,14 @@ const EMPTY_OMIE_FORM = {
   records_per_page: "100",
   max_pages: "20",
   omie_api_url: DEFAULT_OMIE_URL,
+  dry_run: false
+};
+
+const EMPTY_RD_FORM = {
+  access_token: "",
+  api_url: DEFAULT_RDSTATION_URL,
+  records_per_page: "100",
+  max_pages: "50",
   dry_run: false
 };
 
@@ -136,6 +152,25 @@ function readOmieFormStorage() {
   }
 }
 
+function readRdFormStorage() {
+  if (typeof window === "undefined") return EMPTY_RD_FORM;
+
+  try {
+    const raw = window.localStorage.getItem(RDSTATION_STORAGE_KEY);
+    if (!raw) return EMPTY_RD_FORM;
+    const parsed = asObject(JSON.parse(raw));
+    return {
+      access_token: String(parsed.access_token || ""),
+      api_url: String(parsed.api_url || EMPTY_RD_FORM.api_url),
+      records_per_page: String(parsed.records_per_page || EMPTY_RD_FORM.records_per_page),
+      max_pages: String(parsed.max_pages || EMPTY_RD_FORM.max_pages),
+      dry_run: Boolean(parsed.dry_run)
+    };
+  } catch {
+    return EMPTY_RD_FORM;
+  }
+}
+
 export default function SettingsModule() {
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
@@ -168,8 +203,18 @@ export default function SettingsModule() {
   const [omieHistoryLoading, setOmieHistoryLoading] = useState(false);
   const [omieResult, setOmieResult] = useState(null);
 
+  const [rdForm, setRdForm] = useState(() => readRdFormStorage());
+  const [rdError, setRdError] = useState("");
+  const [rdSuccess, setRdSuccess] = useState("");
+  const [rdSyncing, setRdSyncing] = useState(false);
+  const [rdHistory, setRdHistory] = useState([]);
+  const [rdHistoryLoading, setRdHistoryLoading] = useState(false);
+  const [rdResult, setRdResult] = useState(null);
+  const [rdResumeCursor, setRdResumeCursor] = useState(null);
+
   const activeCount = useMemo(() => stages.filter((item) => item.is_active).length, [stages]);
   const omieResultSummary = useMemo(() => asObject(omieResult), [omieResult]);
+  const rdResultSummary = useMemo(() => asObject(rdResult), [rdResult]);
   const activeUsersCount = useMemo(() => users.filter((item) => item.status === "active").length, [users]);
 
   async function loadUsers() {
@@ -219,16 +264,34 @@ export default function SettingsModule() {
     }
   }
 
+  async function loadRdHistory() {
+    setRdHistoryLoading(true);
+    try {
+      const rows = await listRdStationSyncJobs(12);
+      setRdHistory(rows);
+    } catch (err) {
+      setRdError(err.message);
+    } finally {
+      setRdHistoryLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadUsers();
     loadStages();
     loadOmieHistory();
+    loadRdHistory();
   }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(OMIE_STORAGE_KEY, JSON.stringify(omieForm));
   }, [omieForm]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(RDSTATION_STORAGE_KEY, JSON.stringify(rdForm));
+  }, [rdForm]);
 
   async function handleCreateStage(event) {
     event.preventDefault();
@@ -607,12 +670,161 @@ export default function SettingsModule() {
     }
   }
 
+  async function handleRdSync(event) {
+    event.preventDefault();
+    setRdError("");
+    setRdSuccess("");
+    setRdResult(null);
+
+    const accessToken = String(rdForm.access_token || "").trim();
+    if (!accessToken) {
+      setRdError("Informe o Access Token do RD Station CRM.");
+      return;
+    }
+
+    const dryRun = Boolean(rdForm.dry_run);
+    const requestedRecordsPerPage = clampInteger(rdForm.records_per_page, 1, 500, 100);
+    const safeRecordsPerPage = dryRun
+      ? requestedRecordsPerPage
+      : Math.min(requestedRecordsPerPage, RD_SYNC_LIVE_MAX_RECORDS_PER_PAGE);
+    const maxPages = clampInteger(rdForm.max_pages, 1, 500, 50);
+    const payload = {
+      access_token: accessToken,
+      api_url: String(rdForm.api_url || "").trim() || DEFAULT_RDSTATION_URL,
+      records_per_page: safeRecordsPerPage,
+      max_pages: maxPages,
+      page_chunk_size: dryRun ? RD_SYNC_PAGE_CHUNK_DRY_RUN : RD_SYNC_PAGE_CHUNK_LIVE,
+      dry_run: dryRun
+    };
+
+    setRdSyncing(true);
+    try {
+      const aggregate = {
+        pages_processed: 0,
+        records_received: 0,
+        processed: 0,
+        companies_processed: 0,
+        contacts_processed: 0,
+        opportunities_processed: 0,
+        companies_created: 0,
+        companies_updated: 0,
+        contacts_created: 0,
+        contacts_updated: 0,
+        opportunities_created: 0,
+        opportunities_updated: 0,
+        links_updated: 0,
+        skipped_without_identifier: 0,
+        skipped_invalid_payload: 0,
+        errors: [],
+        rounds: 0,
+        has_more: false,
+        next_cursor: null,
+        max_pages: payload.max_pages,
+        records_per_page: payload.records_per_page,
+        dry_run: payload.dry_run
+      };
+
+      let hasMore = true;
+      let cursor = rdResumeCursor && typeof rdResumeCursor === "object" ? rdResumeCursor : null;
+
+      while (hasMore && aggregate.rounds < RD_SYNC_MAX_ROUNDS) {
+        aggregate.rounds += 1;
+        const resourceLabel = cursor?.resource_index === 1 ? "contatos" : cursor?.resource_index === 2 ? "negócios" : "organizações";
+        setRdSuccess(`Sincronizando RD lote ${aggregate.rounds} (${resourceLabel})...`);
+
+        let result = null;
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          try {
+            result = await syncRdStationCrm({
+              ...payload,
+              cursor
+            });
+            break;
+          } catch (error) {
+            const message = String(error?.message || "").toLowerCase();
+            const transientFailure =
+              message.includes("failed to send a request") || message.includes("non-2xx");
+            if (attempt < 2 && transientFailure) {
+              setRdSuccess(`Reenviando lote RD ${aggregate.rounds} (tentativa ${attempt + 1}/2)...`);
+              await new Promise((resolve) => setTimeout(resolve, 1200));
+              continue;
+            }
+            throw error;
+          }
+        }
+
+        const safeResult = asObject(result);
+        aggregate.pages_processed += Number(safeResult.pages_processed || 0);
+        aggregate.records_received += Number(safeResult.records_received || 0);
+        aggregate.processed += Number(safeResult.processed || 0);
+        aggregate.companies_processed += Number(safeResult.companies_processed || 0);
+        aggregate.contacts_processed += Number(safeResult.contacts_processed || 0);
+        aggregate.opportunities_processed += Number(safeResult.opportunities_processed || 0);
+        aggregate.companies_created += Number(safeResult.companies_created || 0);
+        aggregate.companies_updated += Number(safeResult.companies_updated || 0);
+        aggregate.contacts_created += Number(safeResult.contacts_created || 0);
+        aggregate.contacts_updated += Number(safeResult.contacts_updated || 0);
+        aggregate.opportunities_created += Number(safeResult.opportunities_created || 0);
+        aggregate.opportunities_updated += Number(safeResult.opportunities_updated || 0);
+        aggregate.links_updated += Number(safeResult.links_updated || 0);
+        aggregate.skipped_without_identifier += Number(safeResult.skipped_without_identifier || 0);
+        aggregate.skipped_invalid_payload += Number(safeResult.skipped_invalid_payload || 0);
+
+        const resultErrors = Array.isArray(safeResult.errors)
+          ? safeResult.errors.map((item) => String(item || "").trim()).filter(Boolean)
+          : [];
+        if (resultErrors.length) {
+          aggregate.errors = [...aggregate.errors, ...resultErrors].slice(0, 30);
+        }
+
+        hasMore = Boolean(safeResult.has_more);
+        const candidateCursor = asObject(safeResult.next_cursor);
+        const cursorResourceIndex = Number(candidateCursor.resource_index);
+
+        if (hasMore && Number.isFinite(cursorResourceIndex)) {
+          cursor = candidateCursor;
+        } else if (hasMore) {
+          hasMore = false;
+          aggregate.errors = [...aggregate.errors, "Continuação RD Station inválida. Execute novamente para reiniciar."].slice(0, 30);
+        }
+      }
+
+      aggregate.has_more = hasMore;
+      aggregate.next_cursor = hasMore ? cursor : null;
+
+      setRdResult(aggregate);
+      setRdResumeCursor(hasMore ? cursor : null);
+      if (hasMore) {
+        setRdError(
+          `A sincronização RD foi interrompida para segurança após ${aggregate.rounds} lotes. Clique novamente para continuar.`
+        );
+      } else {
+        setRdSuccess(
+          `Sincronização RD concluída em ${aggregate.rounds} lote(s). ${aggregate.processed} registro(s) processado(s).`
+        );
+      }
+      await loadRdHistory();
+    } catch (err) {
+      setRdError(err.message);
+    } finally {
+      setRdSyncing(false);
+    }
+  }
+
   function clearOmieCredentials() {
     setOmieForm((prev) => ({
       ...prev,
       app_key: "",
       app_secret: ""
     }));
+  }
+
+  function clearRdCredentials() {
+    setRdForm((prev) => ({
+      ...prev,
+      access_token: ""
+    }));
+    setRdResumeCursor(null);
   }
 
   return (
@@ -945,6 +1157,150 @@ export default function SettingsModule() {
           </div>
         </article>
       </div>
+
+      <article className="panel top-gap">
+        <h2>Integração RD Station CRM - Importação completa</h2>
+        <p className="muted">
+          Importe organizações (empresas), contatos e negócios (oportunidades) do RD Station CRM para este CRM.
+          O Access Token fica salvo apenas neste navegador.
+        </p>
+        {rdError ? <p className="error-text">{rdError}</p> : null}
+        {rdSuccess ? <p className="success-text">{rdSuccess}</p> : null}
+
+        <form className="form-grid top-gap" onSubmit={handleRdSync}>
+          <div className="settings-omie-grid">
+            <label className="settings-field">
+              <span>Access Token RD Station</span>
+              <input
+                required
+                type="password"
+                value={rdForm.access_token}
+                onChange={(event) => setRdForm((prev) => ({ ...prev, access_token: event.target.value }))}
+                placeholder="Bearer token do RD Station CRM"
+              />
+            </label>
+
+            <label className="settings-field settings-field-wide">
+              <span>URL da API RD Station CRM</span>
+              <input
+                value={rdForm.api_url}
+                onChange={(event) => setRdForm((prev) => ({ ...prev, api_url: event.target.value }))}
+                placeholder={DEFAULT_RDSTATION_URL}
+              />
+            </label>
+
+            <label className="settings-field">
+              <span>Registros por página (1-500)</span>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={rdForm.records_per_page}
+                onChange={(event) => setRdForm((prev) => ({ ...prev, records_per_page: event.target.value }))}
+              />
+            </label>
+
+            <label className="settings-field">
+              <span>Máximo de páginas por recurso (1-500)</span>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={rdForm.max_pages}
+                onChange={(event) => setRdForm((prev) => ({ ...prev, max_pages: event.target.value }))}
+              />
+            </label>
+          </div>
+
+          <label className="checkbox-inline">
+            <input
+              type="checkbox"
+              checked={Boolean(rdForm.dry_run)}
+              onChange={(event) => setRdForm((prev) => ({ ...prev, dry_run: event.target.checked }))}
+            />
+            Modo teste (não grava dados, apenas valida e contabiliza)
+          </label>
+
+          <div className="inline-actions">
+            <button type="submit" className="btn-primary" disabled={rdSyncing}>
+              {rdSyncing ? "Sincronizando..." : "Sincronizar RD Station CRM"}
+            </button>
+            <button type="button" className="btn-ghost" onClick={loadRdHistory} disabled={rdHistoryLoading || rdSyncing}>
+              {rdHistoryLoading ? "Atualizando histórico..." : "Atualizar histórico"}
+            </button>
+            <button type="button" className="btn-ghost" onClick={clearRdCredentials} disabled={rdSyncing}>
+              Limpar token
+            </button>
+          </div>
+        </form>
+
+        {rdResult ? (
+          <div className="kpi-grid top-gap">
+            <article className="kpi-card">
+              <span className="kpi-label">Processados</span>
+              <strong className="kpi-value">{Number(rdResultSummary.processed || 0)}</strong>
+            </article>
+            <article className="kpi-card">
+              <span className="kpi-label">Empresas</span>
+              <strong className="kpi-value">{Number(rdResultSummary.companies_processed || 0)}</strong>
+            </article>
+            <article className="kpi-card">
+              <span className="kpi-label">Contatos</span>
+              <strong className="kpi-value">{Number(rdResultSummary.contacts_processed || 0)}</strong>
+            </article>
+            <article className="kpi-card">
+              <span className="kpi-label">Oportunidades</span>
+              <strong className="kpi-value">{Number(rdResultSummary.opportunities_processed || 0)}</strong>
+            </article>
+          </div>
+        ) : null}
+
+        <h3 className="top-gap">Histórico de sincronizações RD</h3>
+        <div className="table-wrap top-gap">
+          <table>
+            <thead>
+              <tr>
+                <th>Início</th>
+                <th>Fim</th>
+                <th>Status</th>
+                <th>Processados</th>
+                <th>Empresas / Contatos / Oportunidades</th>
+                <th>Detalhes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rdHistory.map((job) => {
+                const result = asObject(job.result);
+                const processed = Number(result.processed || 0);
+                const companies = Number(result.companies_processed || 0);
+                const contacts = Number(result.contacts_processed || 0);
+                const opportunities = Number(result.opportunities_processed || 0);
+                const errorMessage = String(job.error_message || "").trim();
+
+                return (
+                  <tr key={job.id}>
+                    <td>{formatDateTime(job.started_at || job.created_at)}</td>
+                    <td>{formatDateTime(job.finished_at)}</td>
+                    <td>{syncStatusLabel(job.status)}</td>
+                    <td>{processed}</td>
+                    <td>
+                      {companies} / {contacts} / {opportunities}
+                    </td>
+                    <td>{errorMessage || (job.status === "success" ? "Concluído sem erro." : "-")}</td>
+                  </tr>
+                );
+              })}
+              {!rdHistory.length ? (
+                <tr>
+                  <td colSpan={6} className="muted">
+                    Nenhuma sincronização RD registrada ainda.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </article>
 
       <article className="panel top-gap">
         <h2>Integração OMIE - Cadastro de clientes</h2>
