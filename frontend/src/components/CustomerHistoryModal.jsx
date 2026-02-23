@@ -462,7 +462,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
 
       for (const itemRaw of orderItems) {
         const item = itemRaw && typeof itemRaw === "object" && !Array.isArray(itemRaw) ? itemRaw : {};
-        const code = String(item.codigo_produto || item.codigo || item.codigo_produto_omie || "").trim();
+        const code = String(item.codigo_produto || item.codigo_produto_omie || item.codigo_produto_integracao || "").trim();
         const description = String(item.descricao || item.descricao_produto || item.nome || "").trim();
         const quantity = Number(parseOptionalNumber(item.quantidade ?? item.qtde ?? item.qtd ?? 0) || 0);
 
@@ -1199,7 +1199,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                   <table>
                     <thead>
                       <tr>
-                        <th>Codigo</th>
+                        <th>Código do Produto</th>
                         <th>Descricao</th>
                         <th>Total de unidades</th>
                         <th>Ultima compra</th>

@@ -198,20 +198,8 @@ function normalizeOmieOrder(rawOrder: unknown) {
     }
 
     const itemCode =
-      pickFirstNonEmpty(product, [
-        "codigo_produto",
-        "codigo",
-        "codigo_produto_omie",
-        "codigo_produto_integracao",
-        "codigo_item"
-      ]) ||
-      pickFirstNonEmpty(detail, [
-        "codigo_produto",
-        "codigo",
-        "codigo_produto_omie",
-        "codigo_produto_integracao",
-        "codigo_item"
-      ]);
+      pickFirstNonEmpty(product, ["codigo_produto", "codigo_produto_omie", "codigo_produto_integracao"]) ||
+      pickFirstNonEmpty(detail, ["codigo_produto", "codigo_produto_omie", "codigo_produto_integracao"]);
 
     const itemDescription =
       pickFirstNonEmpty(product, ["descricao", "descricao_produto", "nome", "produto"]) ||
