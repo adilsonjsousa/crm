@@ -9,6 +9,64 @@ function normalizeText(value) {
     .trim();
 }
 
+function normalizeCityKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeCityFilterValue(value) {
+  const normalized = normalizeCityKey(value);
+  if (!normalized) return "";
+  const parts = normalized.split(" ");
+  if (parts.length > 1) {
+    const maybeState = parts[parts.length - 1];
+    if (/^[a-z]{2}$/i.test(maybeState)) parts.pop();
+  }
+  return parts.join(" ");
+}
+
+function extractCityStateFromAddress(addressFull) {
+  const raw = String(addressFull || "").trim();
+  if (!raw) return { city: "", state: "" };
+
+  const compact = raw.replace(/\s+/g, " ");
+  const patterns = [
+    /,\s*([^,()]+?)\s*\(([a-z]{2})\)(?:\s*,|$)/gi,
+    /,\s*([^,()]+?)\s*[-/]\s*([a-z]{2})(?:\s*,|$)/gi,
+    /,\s*([^,()]+?)\s*,\s*([a-z]{2})(?:\s*,|$)/gi
+  ];
+
+  for (const pattern of patterns) {
+    const matches = Array.from(compact.matchAll(pattern));
+    if (!matches.length) continue;
+    const last = matches[matches.length - 1];
+    const city = String(last[1] || "").replace(/\s+/g, " ").trim();
+    const state = String(last[2] || "").trim().toUpperCase();
+    if (city) {
+      return { city, state };
+    }
+  }
+
+  return { city: "", state: "" };
+}
+
+function resolveCompanyCity(row) {
+  const explicitCity = String(row?.city || "").trim();
+  if (explicitCity) return explicitCity;
+  return extractCityStateFromAddress(row?.address_full).city;
+}
+
+function resolveCompanyState(row) {
+  const explicitState = String(row?.state || "").trim();
+  if (explicitState) return explicitState;
+  return extractCityStateFromAddress(row?.address_full).state;
+}
+
 function formatCnpj(value) {
   const digits = String(value || "").replace(/\D/g, "");
   if (digits.length !== 14) return String(value || "");
@@ -66,7 +124,7 @@ export default function ReportsModule() {
 
   const filteredRows = useMemo(() => {
     const normalizedSearch = normalizeText(search);
-    const normalizedCityFilter = normalizeText(cityFilter);
+    const normalizedCityFilter = normalizeCityFilterValue(cityFilter);
     return rows.filter((row) => {
       if (stageFilter !== "all") {
         const stageName = String(row?.lifecycle_stage?.name || "").trim() || "Sem fase";
@@ -74,7 +132,7 @@ export default function ReportsModule() {
       }
 
       if (normalizedCityFilter) {
-        const normalizedCity = normalizeText(row.city);
+        const normalizedCity = normalizeCityFilterValue(resolveCompanyCity(row));
         if (normalizedCity !== normalizedCityFilter) return false;
       }
 
@@ -110,8 +168,8 @@ export default function ReportsModule() {
       Segmento: row.segmento || "",
       Email: row.email || "",
       Telefone: row.phone || "",
-      Cidade: row.city || "",
-      Estado: row.state || "",
+      Cidade: resolveCompanyCity(row) || "",
+      Estado: resolveCompanyState(row) || "",
       País: row.country || "",
       Endereço: row.address_full || "",
       "Cadastro em": formatDateTime(row.created_at)
@@ -207,7 +265,7 @@ export default function ReportsModule() {
                   <td>{row?.lifecycle_stage?.name || "Sem fase"}</td>
                   <td>{row.phone || "-"}</td>
                   <td>{row.email || "-"}</td>
-                  <td>{[row.city, row.state].filter(Boolean).join("/") || "-"}</td>
+                  <td>{[resolveCompanyCity(row), resolveCompanyState(row)].filter(Boolean).join("/") || "-"}</td>
                   <td>{formatDateTime(row.created_at)}</td>
                 </tr>
               ))}
