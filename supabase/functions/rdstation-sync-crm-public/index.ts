@@ -799,6 +799,13 @@ function appendError(summary: AnyRecord, message: string) {
   summary.errors = current.slice(0, MAX_ERRORS);
 }
 
+function appendSample(summary: AnyRecord, key: string, value: AnyRecord, limit = 12) {
+  const current = Array.isArray(summary[key]) ? (summary[key] as unknown[]) : [];
+  if (current.length >= limit) return;
+  current.push(value);
+  summary[key] = current;
+}
+
 function parseOrganization(itemRaw: unknown) {
   const row = asObject(itemRaw);
   const address = pickFirstObject(row, ["address", "endereco", "company_address"]);
@@ -1292,11 +1299,24 @@ async function upsertCompanyFromOrganization({
 
   if (!cnpj) {
     summary.skipped_without_cnpj = getResourceCount(summary, "skipped_without_cnpj") + 1;
+    appendSample(summary, "sample_skipped_without_cnpj", {
+      external_id: externalId || null,
+      legal_name: legalName || null,
+      trade_name: tradeName || null,
+      state: companyState || null
+    });
     return "";
   }
 
   if (allowedStates.size && !allowedStates.has(companyState)) {
     summary.companies_skipped_by_state = getResourceCount(summary, "companies_skipped_by_state") + 1;
+    appendSample(summary, "sample_skipped_by_state", {
+      external_id: externalId || null,
+      legal_name: legalName || null,
+      trade_name: tradeName || null,
+      cnpj: formatCnpj(cnpj) || cnpj || null,
+      state: companyState || null
+    });
     return "";
   }
 
@@ -1945,6 +1965,8 @@ Deno.serve(async (request: Request) => {
       skipped_without_identifier: 0,
       skipped_without_cnpj: 0,
       skipped_invalid_payload: 0,
+      sample_skipped_without_cnpj: [],
+      sample_skipped_by_state: [],
       errors: []
     };
 
