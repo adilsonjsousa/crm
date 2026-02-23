@@ -206,31 +206,8 @@ function meetingSummary(task) {
 }
 
 function isReceivableOverdue(receivable) {
-  const openAmount = Number(receivable?.valor_aberto || 0);
-  if (!(openAmount > 0)) return false;
-
   const normalizedStatus = normalizeText(receivable?.status || "");
-  if (normalizedStatus.includes("atras") || normalizedStatus.includes("vencid")) return true;
-  if (
-    normalizedStatus.includes("pago") ||
-    normalizedStatus.includes("quitad") ||
-    normalizedStatus.includes("baixad") ||
-    normalizedStatus.includes("liquid") ||
-    normalizedStatus.includes("vencer") ||
-    normalizedStatus.includes("vencendo")
-  ) {
-    return false;
-  }
-
-  const dueDateRaw = receivable?.data_vencimento_iso || receivable?.data_emissao_iso;
-  if (!dueDateRaw) return false;
-  const dueDate = new Date(dueDateRaw);
-  if (Number.isNaN(dueDate.getTime())) return false;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  dueDate.setHours(0, 0, 0, 0);
-  return dueDate.getTime() < today.getTime();
+  return normalizedStatus.includes("atras");
 }
 
 export default function CustomerHistoryModal({ open, companyId, companyName, onClose, onRequestEditCompany = null }) {
