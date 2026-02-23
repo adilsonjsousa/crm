@@ -3,9 +3,17 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 type AnyRecord = Record<string, unknown>;
 type ResourceName = "organizations" | "contacts" | "deals";
+type RdAuthMode = "bearer" | "query_token";
+type RdAuthState = {
+  mode: RdAuthMode;
+  apiUrl: string;
+  allowLegacyFallback: boolean;
+  fallbackActivated: boolean;
+};
 
 const RESOURCE_ORDER: ResourceName[] = ["organizations", "contacts", "deals"];
 const DEFAULT_RDSTATION_API_URL = "https://api.rd.services/crm/v2";
+const LEGACY_RDSTATION_API_URL = "https://crm.rdstation.com/api/v1";
 const DEFAULT_EXECUTION_GUARD_MS = 110000;
 const DEFAULT_PAGE_CHUNK_SIZE = 4;
 const LIVE_MAX_RECORDS_PER_PAGE = 200;
@@ -40,7 +48,50 @@ function safeString(value: unknown) {
 
 function sanitizeRdAccessToken(value: unknown) {
   const raw = safeString(value).replace(/^['"]+|['"]+$/g, "");
-  return raw.replace(/^bearer\s+/i, "").trim();
+  return raw.replace(/^bearer\s+/i, "").replace(/\s+/g, "").trim();
+}
+
+function resolveLegacyRdApiUrl(apiUrl: string) {
+  const normalized = safeString(apiUrl).replace(/\/$/, "");
+  if (!normalized) return LEGACY_RDSTATION_API_URL;
+  if (/\/api\/v1$/i.test(normalized)) return normalized;
+
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.hostname === "api.rd.services") {
+      return LEGACY_RDSTATION_API_URL;
+    }
+  } catch {
+    return LEGACY_RDSTATION_API_URL;
+  }
+
+  return normalized.replace(/\/crm\/v2$/i, "/api/v1");
+}
+
+function buildAuthState(authModeRaw: unknown, apiUrl: string): RdAuthState {
+  const mode = safeString(authModeRaw).toLowerCase();
+  if (["query_token", "querytoken", "legacy", "token_query"].includes(mode)) {
+    return {
+      mode: "query_token",
+      apiUrl: resolveLegacyRdApiUrl(apiUrl),
+      allowLegacyFallback: false,
+      fallbackActivated: false
+    };
+  }
+  if (mode === "bearer") {
+    return {
+      mode: "bearer",
+      apiUrl,
+      allowLegacyFallback: false,
+      fallbackActivated: false
+    };
+  }
+  return {
+    mode: "bearer",
+    apiUrl,
+    allowLegacyFallback: true,
+    fallbackActivated: false
+  };
 }
 
 function digitsOnly(value: unknown) {
@@ -486,44 +537,57 @@ function isRetriableHttpStatus(status: number) {
 }
 
 async function fetchResourcePage({
-  apiUrl,
   accessToken,
   resource,
   page,
   recordsPerPage,
-  nextCursor
+  nextCursor,
+  authState
 }: {
-  apiUrl: string;
   accessToken: string;
   resource: ResourceName;
   page: number;
   recordsPerPage: number;
   nextCursor: string;
+  authState: RdAuthState;
 }) {
-  const base = apiUrl.replace(/\/$/, "");
-  const defaultUrl = new URL(`${base}/${resource}`);
-
-  const nextUrlCandidate = safeString(nextCursor);
-  let requestUrl = defaultUrl;
-  if (nextUrlCandidate && /^https?:\/\//i.test(nextUrlCandidate)) {
-    requestUrl = new URL(nextUrlCandidate);
-  } else {
-    defaultUrl.searchParams.set("page", String(page));
-    defaultUrl.searchParams.set("limit", String(recordsPerPage));
-    defaultUrl.searchParams.set("per_page", String(recordsPerPage));
-    if (nextUrlCandidate) {
-      defaultUrl.searchParams.set("cursor", nextUrlCandidate);
-      defaultUrl.searchParams.set("next_page", nextUrlCandidate);
-    }
-  }
-
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const base = authState.apiUrl.replace(/\/$/, "");
+    const defaultUrl = new URL(`${base}/${resource}`);
+    const nextUrlCandidate = safeString(nextCursor);
+    let requestUrl = defaultUrl;
+
+    if (nextUrlCandidate && /^https?:\/\//i.test(nextUrlCandidate)) {
+      const candidate = new URL(nextUrlCandidate);
+      if (authState.mode === "query_token" && /api\.rd\.services/i.test(candidate.hostname)) {
+        requestUrl = defaultUrl;
+      } else {
+        requestUrl = candidate;
+      }
+    } else {
+      defaultUrl.searchParams.set("page", String(page));
+      defaultUrl.searchParams.set("limit", String(recordsPerPage));
+      defaultUrl.searchParams.set("per_page", String(recordsPerPage));
+      if (nextUrlCandidate) {
+        defaultUrl.searchParams.set("cursor", nextUrlCandidate);
+        defaultUrl.searchParams.set("next_page", nextUrlCandidate);
+      }
+    }
+
+    if (authState.mode === "query_token") {
+      requestUrl.searchParams.set("token", accessToken);
+    }
+
+    const headers: Record<string, string> = {
+      Accept: "application/json"
+    };
+    if (authState.mode === "bearer") {
+      headers.Authorization = `Bearer ${accessToken}`;
+    }
+
     const response = await fetch(requestUrl.toString(), {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json"
-      }
+      headers
     });
 
     const responseText = await response.text();
@@ -539,6 +603,19 @@ async function fetchResourcePage({
         pickFirstNonEmpty(payload, ["message", "error", "error_description"]) ||
         safeString(responseText).slice(0, 220);
       if (response.status === 401) {
+        if (authState.mode === "bearer" && authState.allowLegacyFallback) {
+          authState.mode = "query_token";
+          authState.apiUrl = resolveLegacyRdApiUrl(authState.apiUrl);
+          authState.fallbackActivated = true;
+          continue;
+        }
+
+        if (authState.mode === "query_token") {
+          throw new Error(
+            "rd_http_401:invalid_token. Falha também no modo legado do RD CRM. Valide o token no Perfil da conta (API v1) ou use um Access Token OAuth válido."
+          );
+        }
+
         throw new Error(
           "rd_http_401:invalid_token. Use o Access Token do RD Station CRM e informe apenas o token (sem prefixo Bearer)."
         );
@@ -1205,6 +1282,7 @@ Deno.serve(async (request: Request) => {
   }
 
   const apiUrl = safeString(body.api_url || body.apiUrl || DEFAULT_RDSTATION_API_URL) || DEFAULT_RDSTATION_API_URL;
+  const authState = buildAuthState(body.auth_mode ?? body.authMode, apiUrl);
   const dryRun = parseBoolean(body.dry_run ?? body.dryRun, false);
   const requestedRecordsPerPage = clampNumber(body.records_per_page ?? body.recordsPerPage, 1, 500, 100);
   const recordsPerPage = dryRun ? requestedRecordsPerPage : Math.min(requestedRecordsPerPage, LIVE_MAX_RECORDS_PER_PAGE);
@@ -1234,6 +1312,7 @@ Deno.serve(async (request: Request) => {
       status: "running",
       payload: {
         api_url: apiUrl,
+        auth_mode: authState.mode,
         dry_run: dryRun,
         records_per_page: recordsPerPage,
         max_pages: requestedMaxPages,
@@ -1302,12 +1381,12 @@ Deno.serve(async (request: Request) => {
       }
 
       const pageResult = await fetchResourcePage({
-        apiUrl,
         accessToken,
         resource,
         page,
         recordsPerPage,
-        nextCursor
+        nextCursor,
+        authState
       });
 
       pagesProcessedInRun += 1;
@@ -1378,10 +1457,15 @@ Deno.serve(async (request: Request) => {
           next_by_resource: state.next_by_resource
         }
       : null;
+    if (authState.fallbackActivated) {
+      appendError(summary, "Autenticação alternada automaticamente para modo legado do RD CRM (token por query).");
+    }
 
     const resultPayload: AnyRecord = {
       ...summary,
       api_url: apiUrl,
+      api_url_used: authState.apiUrl,
+      auth_mode_used: authState.mode,
       dry_run: dryRun,
       records_per_page: recordsPerPage,
       max_pages: requestedMaxPages,
