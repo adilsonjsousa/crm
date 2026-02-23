@@ -197,9 +197,13 @@ function normalizeOmieOrder(rawOrder: unknown) {
       }
     }
 
-    const itemCode =
-      pickFirstNonEmpty(product, ["codigo_produto", "codigo_produto_omie", "codigo_produto_integracao"]) ||
-      pickFirstNonEmpty(detail, ["codigo_produto", "codigo_produto_omie", "codigo_produto_integracao"]);
+    const itemBusinessCode =
+      pickFirstNonEmpty(product, ["codigo", "codigo_produto_integracao"]) ||
+      pickFirstNonEmpty(detail, ["codigo", "codigo_produto_integracao"]);
+    const itemOmieCode =
+      pickFirstNonEmpty(product, ["codigo_produto", "codigo_produto_omie"]) ||
+      pickFirstNonEmpty(detail, ["codigo_produto", "codigo_produto_omie"]);
+    const itemCode = itemBusinessCode || itemOmieCode;
 
     const itemDescription =
       pickFirstNonEmpty(product, ["descricao", "descricao_produto", "nome", "produto"]) ||
@@ -208,6 +212,8 @@ function normalizeOmieOrder(rawOrder: unknown) {
     if (itemCode || itemDescription || quantity > 0 || lineTotal > 0) {
       items.push({
         codigo_produto: itemCode || null,
+        codigo_produto_comercial: itemBusinessCode || null,
+        codigo_produto_omie: itemOmieCode || null,
         descricao: itemDescription || null,
         quantidade: Number.isFinite(quantity) ? quantity : 0,
         valor_unitario: unitPrice,
