@@ -28,6 +28,12 @@ const RD_SYNC_PAGE_CHUNK_LIVE = 1;
 const RD_SYNC_LIVE_MAX_RECORDS_PER_PAGE = 100;
 const RD_SYNC_MAX_ROUNDS = 120;
 const RD_SYNC_SOUTH_STATES = ["SC", "PR", "RS"];
+const RD_SOUTH_STATE_SCOPE_OPTIONS = [
+  { value: "SC_PR_RS", label: "SC + PR + RS", states: RD_SYNC_SOUTH_STATES },
+  { value: "SC", label: "Apenas SC", states: ["SC"] },
+  { value: "PR", label: "Apenas PR", states: ["PR"] },
+  { value: "RS", label: "Apenas RS", states: ["RS"] }
+];
 
 const EMPTY_STAGE_FORM = {
   name: "",
@@ -50,6 +56,7 @@ const EMPTY_RD_FORM = {
   max_pages: "200",
   dry_run: false,
   south_cnpj_only: true,
+  south_state_scope: "SC_PR_RS",
   sync_customers_only: true
 };
 
@@ -98,6 +105,36 @@ function sanitizeRdAccessToken(value) {
     .replace(/^['"]+|['"]+$/g, "")
     .replace(/^bearer\s+/i, "")
     .trim();
+}
+
+function normalizeUfCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function resolveSouthStates(scopeValue) {
+  const selected = RD_SOUTH_STATE_SCOPE_OPTIONS.find((item) => item.value === scopeValue);
+  if (!selected) return RD_SYNC_SOUTH_STATES;
+  return selected.states;
+}
+
+function sanitizeAllowedStates(value) {
+  if (!Array.isArray(value)) return [];
+  const allowedSouthSet = new Set(RD_SYNC_SOUTH_STATES);
+  const uniqueStates = [];
+  for (const raw of value) {
+    const uf = normalizeUfCode(raw);
+    if (!uf || !allowedSouthSet.has(uf) || uniqueStates.includes(uf)) continue;
+    uniqueStates.push(uf);
+  }
+  return uniqueStates;
+}
+
+function formatAllowedStatesLabel(value) {
+  const states = sanitizeAllowedStates(value);
+  if (!states.length) return "SC/PR/RS";
+  return states.join("/");
 }
 
 function formatDateTime(value) {
@@ -170,6 +207,8 @@ function readRdFormStorage() {
     const raw = window.localStorage.getItem(RDSTATION_STORAGE_KEY);
     if (!raw) return EMPTY_RD_FORM;
     const parsed = asObject(JSON.parse(raw));
+    const southStateScopeRaw = String(parsed.south_state_scope || EMPTY_RD_FORM.south_state_scope);
+    const southStateScopeValid = RD_SOUTH_STATE_SCOPE_OPTIONS.some((item) => item.value === southStateScopeRaw);
     return {
       access_token: String(parsed.access_token || ""),
       api_url: String(parsed.api_url || EMPTY_RD_FORM.api_url),
@@ -178,6 +217,7 @@ function readRdFormStorage() {
       dry_run: Boolean(parsed.dry_run),
       south_cnpj_only:
         parsed.south_cnpj_only === undefined ? Boolean(EMPTY_RD_FORM.south_cnpj_only) : Boolean(parsed.south_cnpj_only),
+      south_state_scope: southStateScopeValid ? southStateScopeRaw : EMPTY_RD_FORM.south_state_scope,
       sync_customers_only:
         parsed.sync_customers_only === undefined ? Boolean(EMPTY_RD_FORM.sync_customers_only) : Boolean(parsed.sync_customers_only)
     };
@@ -704,6 +744,8 @@ export default function SettingsModule() {
       : Math.min(requestedRecordsPerPage, RD_SYNC_LIVE_MAX_RECORDS_PER_PAGE);
     const maxPages = clampInteger(rdForm.max_pages, 1, 500, 50);
     const southCnpjOnly = Boolean(rdForm.south_cnpj_only);
+    const southStateScope = String(rdForm.south_state_scope || EMPTY_RD_FORM.south_state_scope);
+    const selectedSouthStates = southCnpjOnly ? resolveSouthStates(southStateScope) : [];
     const syncScope = southCnpjOnly ? "south_cnpj_only" : rdForm.sync_customers_only ? "customers_whatsapp_only" : "full";
     const estimatedResources = syncScope === "full" ? 3 : syncScope === "customers_whatsapp_only" ? 2 : 1;
     const maxRoundsBudget = Math.min(
@@ -718,7 +760,7 @@ export default function SettingsModule() {
       page_chunk_size: dryRun ? RD_SYNC_PAGE_CHUNK_DRY_RUN : RD_SYNC_PAGE_CHUNK_LIVE,
       dry_run: dryRun,
       sync_scope: syncScope,
-      allowed_states: southCnpjOnly ? RD_SYNC_SOUTH_STATES : []
+      allowed_states: selectedSouthStates
     };
 
     setRdSyncing(true);
@@ -755,7 +797,8 @@ export default function SettingsModule() {
         max_rounds_budget: maxRoundsBudget,
         records_per_page: payload.records_per_page,
         dry_run: payload.dry_run,
-        sync_scope: payload.sync_scope
+        sync_scope: payload.sync_scope,
+        allowed_states: payload.allowed_states
       };
 
       let hasMore = true;
@@ -823,6 +866,10 @@ export default function SettingsModule() {
         aggregate.skipped_invalid_payload += Number(safeResult.skipped_invalid_payload || 0);
         if (safeResult.sync_scope) {
           aggregate.sync_scope = String(safeResult.sync_scope || aggregate.sync_scope);
+        }
+        const resultAllowedStates = sanitizeAllowedStates(safeResult.allowed_states);
+        if (resultAllowedStates.length) {
+          aggregate.allowed_states = resultAllowedStates;
         }
 
         const resultErrors = Array.isArray(safeResult.errors)
@@ -904,6 +951,9 @@ export default function SettingsModule() {
     Number(rdResultSummary.contacts_skipped_without_whatsapp || 0) +
     Number(rdResultSummary.contacts_skipped_existing_whatsapp || 0);
   const rdSkippedOutsideSouthTotal = Number(rdResultSummary.companies_skipped_by_state || 0);
+  const rdResultAllowedStates = sanitizeAllowedStates(rdResultSummary.allowed_states);
+  const rdCurrentAllowedStates = rdSouthOnlySelected ? resolveSouthStates(rdForm.south_state_scope) : [];
+  const rdScopeSouthLabel = formatAllowedStatesLabel(rdResultAllowedStates.length ? rdResultAllowedStates : rdCurrentAllowedStates);
 
   return (
     <section className="module">
@@ -1312,6 +1362,26 @@ export default function SettingsModule() {
             Migrar apenas CNPJ novos de SC/PR/RS (somente empresas)
           </label>
 
+          {rdSouthOnlySelected ? (
+            <label className="settings-field">
+              <span>Estados para sincronizar</span>
+              <select
+                value={String(rdForm.south_state_scope || EMPTY_RD_FORM.south_state_scope)}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setRdForm((prev) => ({ ...prev, south_state_scope: value }));
+                  setRdResumeCursor(null);
+                }}
+              >
+                {RD_SOUTH_STATE_SCOPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
           <label className="checkbox-inline">
             <input
               type="checkbox"
@@ -1355,7 +1425,7 @@ export default function SettingsModule() {
             </article>
             <article className="kpi-card">
               <span className="kpi-label">
-                {rdScopeSouthOnly ? "Fora SC/PR/RS" : rdScopeCustomersOnly ? "Contatos ignorados" : "Oportunidades"}
+                {rdScopeSouthOnly ? `Fora ${rdScopeSouthLabel}` : rdScopeCustomersOnly ? "Contatos ignorados" : "Oportunidades"}
               </span>
               <strong className="kpi-value">
                 {rdScopeSouthOnly
@@ -1399,11 +1469,13 @@ export default function SettingsModule() {
                 const errorMessage = String(job.error_message || "").trim();
                 const dryRunFlag = Boolean(result.dry_run ?? payload.dry_run);
                 const syncScopeValue = String(result.sync_scope || payload.sync_scope || "").trim().toLowerCase();
+                const allowedStatesValue = sanitizeAllowedStates(result.allowed_states ?? payload.allowed_states);
+                const allowedStatesLabel = formatAllowedStatesLabel(allowedStatesValue);
                 const syncScopeLabel =
                   syncScopeValue === "full"
                     ? "Importação completa"
                     : syncScopeValue === "south_cnpj_only"
-                      ? "CNPJ novos SC/PR/RS"
+                      ? `CNPJ novos ${allowedStatesLabel}`
                       : "Clientes + WhatsApp";
                 const details = errorMessage || (job.status === "success" ? "Concluído sem erro." : "-");
 
