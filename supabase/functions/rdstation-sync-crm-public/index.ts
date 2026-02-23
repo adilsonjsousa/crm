@@ -177,6 +177,49 @@ function normalizeCnpj(value: unknown) {
   return digits.length === 14 ? digits : "";
 }
 
+function isValidCnpj(digits: string) {
+  if (!/^\d{14}$/.test(digits)) return false;
+  if (/^(\d)\1{13}$/.test(digits)) return false;
+
+  const calcDigit = (base: string, weights: number[]) => {
+    const sum = base
+      .split("")
+      .reduce((acc, digit, index) => acc + Number(digit) * weights[index], 0);
+    const remainder = sum % 11;
+    return remainder < 2 ? 0 : 11 - remainder;
+  };
+
+  const base12 = digits.slice(0, 12);
+  const d1 = calcDigit(base12, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  if (d1 !== Number(digits[12])) return false;
+
+  const base13 = `${base12}${d1}`;
+  const d2 = calcDigit(base13, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  return d2 === Number(digits[13]);
+}
+
+function extractCnpjCandidatesFromText(value: unknown) {
+  const text = safeString(value);
+  if (!text) return [];
+
+  const candidates = new Set<string>();
+  const pushCandidate = (rawCandidate: string) => {
+    const normalized = normalizeCnpj(rawCandidate);
+    if (normalized) candidates.add(normalized);
+  };
+
+  const strictFormatted = /\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g;
+  const plainDigits = /(?<!\d)\d{14}(?!\d)/g;
+  const relaxedFormatted = /\d{2}[.\s-]?\d{3}[.\s-]?\d{3}[\/\s-]?\d{4}[-\s]?\d{2}/g;
+
+  for (const pattern of [strictFormatted, plainDigits, relaxedFormatted]) {
+    const matches = text.match(pattern) || [];
+    for (const match of matches) pushCandidate(match);
+  }
+
+  return Array.from(candidates);
+}
+
 function formatCnpj(value: unknown) {
   const digits = normalizeCnpj(value);
   if (!digits) return "";
@@ -416,8 +459,18 @@ function extractScalarStrings(value: unknown, depth = 0): string[] {
 function extractCnpjFromValue(value: unknown, depth = 0): string {
   if (depth > 5 || value === null || value === undefined) return "";
 
-  const direct = normalizeCnpj(value);
-  if (direct) return direct;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    const direct = normalizeCnpj(value);
+    if (direct && isValidCnpj(direct)) return direct;
+
+    const textCandidates = extractCnpjCandidatesFromText(value);
+    const validTextCandidate = textCandidates.find((candidate) => isValidCnpj(candidate));
+    if (validTextCandidate) return validTextCandidate;
+
+    if (direct) return direct;
+    if (textCandidates.length) return textCandidates[0];
+    return "";
+  }
 
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -779,7 +832,8 @@ function parseOrganization(itemRaw: unknown) {
     extractCnpjFromValue(address.cnpj) ||
     extractCnpjFromValue(address.document) ||
     extractCnpjFromValue(extractCustomFieldValue(row, ["cnpj", "cpf cnpj", "cpf_cnpj", "documento", "tax id"])) ||
-    extractAnyCnpjFromCustomFields(row);
+    extractAnyCnpjFromCustomFields(row) ||
+    extractCnpjFromValue(row);
   const email = pickFirstNonEmpty(row, ["email", "primary_email", "contact_email"]).toLowerCase();
 
   const phone = formatBrazilPhone(
