@@ -134,11 +134,6 @@ export default function App() {
     if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
-  const searchShortcutLabel = useMemo(
-    () => (typeof navigator !== "undefined" && /mac|iphone|ipad/i.test(navigator.platform) ? "⌘K" : "Ctrl+K"),
-    []
-  );
-
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -771,7 +766,6 @@ export default function App() {
           <form className="crm-search" onSubmit={handleSearchSubmit}>
             <div className="crm-search-meta">
               <span>Busca Global</span>
-              <kbd className="crm-search-shortcut">{searchShortcutLabel}</kbd>
             </div>
             <div className="crm-search-row">
               <input
@@ -832,7 +826,7 @@ export default function App() {
           </form>
           <div className="crm-topbar-actions">
             <button type="button" className="btn-ghost" onClick={openPipelineQuickAction}>
-              Novo Negócio
+              + Novo Negócio
             </button>
             <button type="button" className="btn-ghost" onClick={openTasksQuickAction}>
               + Nova Tarefa
