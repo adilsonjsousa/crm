@@ -59,6 +59,15 @@ function pickFirstNonEmpty(source: AnyRecord, keys: string[]) {
   return "";
 }
 
+function pickPreferredProductCode(candidates: unknown[]) {
+  const normalized = candidates
+    .map((item) => safeString(item))
+    .filter((item) => item.length > 0);
+  if (!normalized.length) return "";
+  const withLetters = normalized.find((item) => /[a-zA-Z]/.test(item));
+  return withLetters || normalized[0];
+}
+
 function extractArrayByKeys(payload: AnyRecord, keys: string[]) {
   for (const key of keys) {
     const candidate = payload[key];
@@ -197,13 +206,13 @@ function normalizeOmieOrder(rawOrder: unknown) {
       }
     }
 
-    const itemOmieProductCode =
-      pickFirstNonEmpty(product, ["codigo_produto", "codigo_produto_omie"]) ||
-      pickFirstNonEmpty(detail, ["codigo_produto", "codigo_produto_omie"]);
     const itemBusinessCode =
       pickFirstNonEmpty(product, ["codigo", "codigo_produto_integracao"]) ||
       pickFirstNonEmpty(detail, ["codigo", "codigo_produto_integracao"]);
-    const itemCode = itemOmieProductCode || itemBusinessCode;
+    const itemOmieProductCode =
+      pickFirstNonEmpty(product, ["codigo_produto", "codigo_produto_omie"]) ||
+      pickFirstNonEmpty(detail, ["codigo_produto", "codigo_produto_omie"]);
+    const itemCode = pickPreferredProductCode([itemBusinessCode, itemOmieProductCode]);
 
     const itemDescription =
       pickFirstNonEmpty(product, ["descricao", "descricao_produto", "nome", "produto"]) ||
@@ -211,7 +220,7 @@ function normalizeOmieOrder(rawOrder: unknown) {
 
     if (itemCode || itemDescription || quantity > 0 || lineTotal > 0) {
       items.push({
-        codigo_produto: itemOmieProductCode || itemCode || null,
+        codigo_produto: itemCode || null,
         codigo_produto_comercial: itemBusinessCode || null,
         codigo_produto_omie: itemOmieProductCode || null,
         descricao: itemDescription || null,

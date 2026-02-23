@@ -163,6 +163,21 @@ function normalizeText(value) {
     .toLowerCase();
 }
 
+function pickPreferredOmieProductCode(item) {
+  const source = item && typeof item === "object" ? item : {};
+  const candidates = [
+    source.codigo_produto_comercial,
+    source.codigo,
+    source.codigo_produto,
+    source.codigo_produto_omie
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  if (!candidates.length) return "";
+  const withLetters = candidates.find((value) => /[a-zA-Z]/.test(value));
+  return withLetters || candidates[0];
+}
+
 function isVisitTask(task) {
   const haystack = `${task?.task_type || ""} ${task?.title || ""}`;
   const normalized = normalizeText(haystack);
@@ -462,9 +477,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
 
       for (const itemRaw of orderItems) {
         const item = itemRaw && typeof itemRaw === "object" && !Array.isArray(itemRaw) ? itemRaw : {};
-        const code = String(
-          item.codigo_produto || item.codigo_produto_omie || item.codigo_produto_comercial || item.codigo || ""
-        ).trim();
+        const code = pickPreferredOmieProductCode(item);
         const description = String(item.descricao || item.descricao_produto || item.nome || "").trim();
         const quantity = Number(parseOptionalNumber(item.quantidade ?? item.qtde ?? item.qtd ?? 0) || 0);
 
