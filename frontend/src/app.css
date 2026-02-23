@@ -222,6 +222,9 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  position: sticky;
+  top: 10px;
+  z-index: 80;
 }
 
 .crm-search {
@@ -1993,6 +1996,10 @@ tbody tr:hover {
 @media (max-width: 980px) {
   .crm-main {
     padding: 12px;
+  }
+
+  .crm-topbar {
+    top: 8px;
   }
 
   .crm-topbar,
