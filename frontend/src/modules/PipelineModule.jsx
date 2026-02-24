@@ -934,6 +934,48 @@ function normalizeLookupText(value) {
     .trim();
 }
 
+const OPPORTUNITY_SUBCATEGORY_BY_KEY = SALES_TYPES.flatMap((type) => getSubcategoriesByType(type.value)).reduce((acc, subcategory) => {
+  acc[normalizeLookupText(subcategory)] = subcategory;
+  return acc;
+}, {});
+
+function canonicalizeOpportunitySubcategory(value) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) return "";
+  return OPPORTUNITY_SUBCATEGORY_BY_KEY[normalizeLookupText(rawValue)] || rawValue;
+}
+
+function appendUniqueProduct(targetList, seenSet, value) {
+  const productName = String(value || "").trim();
+  if (!productName) return;
+  const productKey = normalizeLookupText(productName);
+  if (!productKey || seenSet.has(productKey)) return;
+  seenSet.add(productKey);
+  targetList.push(productName);
+}
+
+function resolveEstimatedValueByProfile(titleSubcategory, titleProduct, profiles = []) {
+  const productKey = normalizeLookupText(titleProduct);
+  if (!productKey) return null;
+  const subcategoryKey = normalizeLookupText(canonicalizeOpportunitySubcategory(titleSubcategory));
+
+  let fallbackProfile = null;
+  for (const profile of profiles || []) {
+    const profileProductKey = normalizeLookupText(profile?.product_name);
+    if (profileProductKey !== productKey) continue;
+    const profileSubcategoryKey = normalizeLookupText(canonicalizeOpportunitySubcategory(profile?.product_subcategory));
+    if (!subcategoryKey || !profileSubcategoryKey || profileSubcategoryKey === subcategoryKey) {
+      fallbackProfile = profile;
+      if (subcategoryKey && profileSubcategoryKey === subcategoryKey) break;
+    }
+  }
+
+  if (!fallbackProfile) return null;
+  const parsed = Number(String(fallbackProfile.base_price ?? "").replace(",", "."));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 function formatCnpj(value) {
   const digits = String(value || "").replace(/\D/g, "");
   if (digits.length !== 14) return String(value || "");
@@ -1233,6 +1275,41 @@ export default function PipelineModule({
       : companies;
     return source.slice(0, 10);
   }, [companies, companySearchTerm]);
+  const productOptionsBySubcategory = useMemo(() => {
+    const merged = {};
+    const seenBySubcategory = {};
+
+    function ensureBucket(subcategory) {
+      if (!merged[subcategory]) merged[subcategory] = [];
+      if (!seenBySubcategory[subcategory]) seenBySubcategory[subcategory] = new Set();
+      return {
+        items: merged[subcategory],
+        seen: seenBySubcategory[subcategory]
+      };
+    }
+
+    for (const [subcategory, products] of Object.entries(PRODUCTS_BY_SUBCATEGORY || {})) {
+      const canonicalSubcategory = canonicalizeOpportunitySubcategory(subcategory);
+      if (!canonicalSubcategory) continue;
+      const bucket = ensureBucket(canonicalSubcategory);
+      for (const product of products || []) {
+        appendUniqueProduct(bucket.items, bucket.seen, product);
+      }
+    }
+
+    for (const profile of savedProposalProductProfiles || []) {
+      const canonicalSubcategory = canonicalizeOpportunitySubcategory(profile?.product_subcategory);
+      if (!canonicalSubcategory) continue;
+      const bucket = ensureBucket(canonicalSubcategory);
+      appendUniqueProduct(bucket.items, bucket.seen, profile?.product_name);
+    }
+
+    return merged;
+  }, [savedProposalProductProfiles]);
+  const productsForSelectedSubcategory = useMemo(
+    () => productOptionsBySubcategory[form.title_subcategory] || [],
+    [form.title_subcategory, productOptionsBySubcategory]
+  );
   const draftOpportunityItem = useMemo(
     () =>
       normalizeOpportunityItem({
@@ -2703,17 +2780,23 @@ export default function PipelineModule({
               setForm((prev) => {
                 const nextProduct = e.target.value;
                 const mappedEstimatedValue = resolveEstimatedValueByProduct(prev.title_subcategory, nextProduct);
+                const profileEstimatedValue = resolveEstimatedValueByProfile(
+                  prev.title_subcategory,
+                  nextProduct,
+                  savedProposalProductProfiles
+                );
+                const resolvedEstimatedValue = mappedEstimatedValue === null ? profileEstimatedValue : mappedEstimatedValue;
                 return {
                   ...prev,
                   title_product: nextProduct,
-                  estimated_value: mappedEstimatedValue === null ? "" : String(mappedEstimatedValue)
+                  estimated_value: resolvedEstimatedValue === null ? "" : String(resolvedEstimatedValue)
                 };
               })
             }
             disabled={!form.title_subcategory}
           />
           <datalist id="pipeline-product-options">
-            {(PRODUCTS_BY_SUBCATEGORY[form.title_subcategory] || []).map((product) => (
+            {productsForSelectedSubcategory.map((product) => (
               <option key={product} value={product} />
             ))}
           </datalist>
