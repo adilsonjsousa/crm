@@ -67,6 +67,26 @@ function normalizeSearchTerm(term) {
     .slice(0, 80);
 }
 
+function normalizeSearchAscii(term) {
+  return String(term || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildLooseSearchFallbackTerm(term) {
+  const normalized = normalizeSearchAscii(term);
+  if (!normalized) return "";
+  const words = normalized.split(" ").filter(Boolean);
+  if (!words.length) return "";
+  const candidate = [...words].sort((a, b) => b.length - a.length)[0] || "";
+  if (candidate.length < 5) return "";
+  return candidate.slice(0, Math.max(4, candidate.length - 2));
+}
+
 function asObject(value) {
   if (value && typeof value === "object" && !Array.isArray(value)) return value;
   return {};
@@ -2072,39 +2092,54 @@ export async function searchGlobalRecords(term) {
   if (!normalized || normalized.length < 2) return [];
 
   const pattern = `%${normalized}%`;
+  const looseFallbackTerm = buildLooseSearchFallbackTerm(normalized);
 
-  const [companiesRes, contactsRes, opportunitiesRes, ordersRes, ticketsRes, tasksRes] = await Promise.all([
+  const [companiesInitialRes, contactsRes, opportunitiesRes, ordersRes, ticketsRes, tasksRes] = await Promise.all([
     supabase
       .from("companies")
       .select("id,trade_name,cnpj")
       .or(`trade_name.ilike.${pattern},legal_name.ilike.${pattern},cnpj.ilike.${pattern}`)
-      .limit(5),
+      .limit(8),
     supabase
       .from("contacts")
       .select("id,company_id,full_name,email,companies:company_id(trade_name)")
       .or(`full_name.ilike.${pattern},email.ilike.${pattern},whatsapp.ilike.${pattern}`)
-      .limit(5),
+      .limit(8),
     supabase
       .from("opportunities")
       .select("id,title,stage,companies:company_id(trade_name)")
       .or(`title.ilike.${pattern},stage.ilike.${pattern}`)
-      .limit(5),
+      .limit(8),
     supabase
       .from("sales_orders")
       .select("id,order_number,status,companies:company_id(trade_name)")
       .or(`order_number.ilike.${pattern},status.ilike.${pattern}`)
-      .limit(5),
+      .limit(8),
     supabase
       .from("service_tickets")
       .select("id,description,status,companies:company_id(trade_name)")
       .or(`description.ilike.${pattern},status.ilike.${pattern}`)
-      .limit(5),
+      .limit(8),
     supabase
       .from("tasks")
       .select("id,title,status,task_type,companies:company_id(trade_name)")
       .or(`title.ilike.${pattern},description.ilike.${pattern},status.ilike.${pattern}`)
-      .limit(5)
+      .limit(8)
   ]);
+
+  let companiesRes = companiesInitialRes;
+  const hasCompanies = Array.isArray(companiesRes.data) && companiesRes.data.length > 0;
+  if (!companiesRes.error && !hasCompanies && looseFallbackTerm) {
+    const loosePattern = `%${looseFallbackTerm}%`;
+    const fallbackRes = await supabase
+      .from("companies")
+      .select("id,trade_name,cnpj")
+      .or(`trade_name.ilike.${loosePattern},legal_name.ilike.${loosePattern}`)
+      .limit(8);
+    if (!fallbackRes.error && Array.isArray(fallbackRes.data) && fallbackRes.data.length > 0) {
+      companiesRes = fallbackRes;
+    }
+  }
 
   if (companiesRes.error) throw new Error(normalizeError(companiesRes.error, "Falha na busca global (empresas)."));
   if (contactsRes.error) throw new Error(normalizeError(contactsRes.error, "Falha na busca global (contatos)."));
