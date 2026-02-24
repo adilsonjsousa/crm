@@ -357,7 +357,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     setOmiePurchasesLoading(true);
     setOmiePurchasesError("");
 
-    listCompanyOmiePurchases({ cnpj: cnpjDigits })
+    listCompanyOmiePurchases({ id: companyId, cnpj: cnpjDigits })
       .then((data) => {
         if (!active) return;
         setOmiePurchases((prev) => ({
@@ -402,7 +402,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     setOmieReceivablesError("");
 
     listCompanyOmieReceivables(
-      { cnpj: cnpjDigits },
+      { id: companyId, cnpj: cnpjDigits },
       {
         records_per_page: 500,
         max_pages: 30,

@@ -930,6 +930,9 @@ Deno.serve(async (request: Request) => {
   const appKey = safeString(body.app_key || body.appKey);
   const appSecret = safeString(body.app_secret || body.appSecret);
   const cnpj = normalizeCnpj(body.cnpj_cpf || body.cnpj || body.cnpjCpf);
+  const customerCodeHint = safeString(
+    body.customer_code_hint || body.customerCodeHint || body.customer_code || body.customerCode || body.codigo_cliente_omie
+  );
 
   if (!appKey || !appSecret) {
     return jsonResponse(400, {
@@ -948,16 +951,36 @@ Deno.serve(async (request: Request) => {
   const ordersUrl = safeString(body.omie_orders_url || body.omieOrdersUrl || DEFAULT_OMIE_ORDERS_URL) || DEFAULT_OMIE_ORDERS_URL;
   const recordsPerPage = clampNumber(body.records_per_page || body.recordsPerPage, 1, 500, 100);
   const maxPages = clampNumber(body.max_pages || body.maxPages, 1, 200, 60);
-  const maxFallbackPages = clampNumber(body.max_client_scan_pages || body.maxClientScanPages, 1, 300, 80);
+  const maxFallbackPages = clampNumber(body.max_client_scan_pages || body.maxClientScanPages, 1, 500, 160);
 
   try {
-    const customerLookup = await findOmieCustomer({
-      appKey,
-      appSecret,
-      clientsUrl,
-      cnpj,
-      maxFallbackPages
-    });
+    let customerLookup: {
+      customer: AnyRecord | null;
+      warnings: string[];
+    } = customerCodeHint
+      ? {
+          customer: {
+            codigo_cliente_omie: customerCodeHint,
+            cnpj,
+            razao_social: "",
+            nome_fantasia: ""
+          },
+          warnings: ["Consulta OMIE priorizou o codigo de cliente vinculado no CRM."]
+        }
+      : {
+          customer: null,
+          warnings: []
+        };
+
+    if (!customerLookup.customer?.codigo_cliente_omie) {
+      customerLookup = await findOmieCustomer({
+        appKey,
+        appSecret,
+        clientsUrl,
+        cnpj,
+        maxFallbackPages
+      });
+    }
 
     if (!customerLookup.customer?.codigo_cliente_omie) {
       return jsonResponse(404, {
@@ -996,6 +1019,46 @@ Deno.serve(async (request: Request) => {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha ao listar pedidos no OMIE.";
       orderLookup.warnings.push(`ListarPedidos: ${message}`);
+
+      if (customerCodeHint) {
+        try {
+          const fallbackLookup = await findOmieCustomer({
+            appKey,
+            appSecret,
+            clientsUrl,
+            cnpj,
+            maxFallbackPages
+          });
+
+          const fallbackCode = safeString(fallbackLookup.customer?.codigo_cliente_omie);
+          const currentCode = safeString(customerLookup.customer?.codigo_cliente_omie);
+          if (fallbackCode && fallbackCode !== currentCode) {
+            const fallbackOrderResult = await listOmieOrdersByCustomer({
+              appKey,
+              appSecret,
+              ordersUrl,
+              customerCode: fallbackCode,
+              recordsPerPage,
+              maxPages
+            });
+            customerLookup = fallbackLookup;
+            orderLookup = {
+              ...fallbackOrderResult,
+              warnings: [
+                ...orderLookup.warnings,
+                ...fallbackLookup.warnings,
+                "Pedidos recuperados via busca de cliente por CNPJ."
+              ]
+            };
+          } else if (fallbackLookup.warnings.length) {
+            orderLookup.warnings.push(...fallbackLookup.warnings);
+          }
+        } catch (fallbackError) {
+          const fallbackMessage =
+            fallbackError instanceof Error ? fallbackError.message : "Falha ao tentar recuperar cliente OMIE por CNPJ.";
+          orderLookup.warnings.push(`ListarPedidos fallback CNPJ: ${fallbackMessage}`);
+        }
+      }
     }
 
     const summary = buildOrderSummary(orderLookup.orders);

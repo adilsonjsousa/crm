@@ -933,6 +933,9 @@ Deno.serve(async (request: Request) => {
   const appKey = safeString(body.app_key || body.appKey);
   const appSecret = safeString(body.app_secret || body.appSecret);
   const cnpj = normalizeCnpj(body.cnpj_cpf || body.cnpj || body.cnpjCpf);
+  const customerCodeHint = safeString(
+    body.customer_code_hint || body.customerCodeHint || body.customer_code || body.customerCode || body.codigo_cliente_omie
+  );
 
   if (!appKey || !appSecret) {
     return jsonResponse(400, { error: "missing_omie_credentials", message: "Informe App Key e App Secret do OMIE." });
@@ -947,17 +950,38 @@ Deno.serve(async (request: Request) => {
     DEFAULT_OMIE_RECEIVABLES_URL;
   const recordsPerPage = clampNumber(body.records_per_page || body.recordsPerPage, 1, 500, 500);
   const maxPages = clampNumber(body.max_pages || body.maxPages, 1, 400, 120);
-  const maxClientScanPages = clampNumber(body.max_client_scan_pages || body.maxClientScanPages, 1, 200, 80);
+  const maxClientScanPages = clampNumber(body.max_client_scan_pages || body.maxClientScanPages, 1, 400, 160);
   const pageConcurrency = clampNumber(body.page_concurrency || body.pageConcurrency, 1, 8, 4);
 
   try {
-    const customerLookup = await findCustomerByCnpj({
-      appKey,
-      appSecret,
-      clientsUrl,
-      cnpj,
-      maxPages: maxClientScanPages
-    });
+    let customerLookup: {
+      customer: AnyRecord | null;
+      warnings: string[];
+    } = customerCodeHint
+      ? {
+          customer: {
+            codigo_cliente_omie: customerCodeHint,
+            identifiers: [customerCodeHint],
+            cnpj,
+            razao_social: "",
+            nome_fantasia: ""
+          },
+          warnings: ["Consulta OMIE priorizou o codigo de cliente vinculado no CRM."]
+        }
+      : {
+          customer: null,
+          warnings: []
+        };
+
+    if (!customerLookup.customer) {
+      customerLookup = await findCustomerByCnpj({
+        appKey,
+        appSecret,
+        clientsUrl,
+        cnpj,
+        maxPages: maxClientScanPages
+      });
+    }
 
     if (!customerLookup.customer) {
       return jsonResponse(404, {
@@ -968,24 +992,73 @@ Deno.serve(async (request: Request) => {
       });
     }
 
-    const receivableLookup = await listReceivablesByCustomer({
-      appKey,
-      appSecret,
-      receivablesUrl,
-      customerIdentifiers: Array.isArray(customerLookup.customer.identifiers)
-        ? customerLookup.customer.identifiers
-        : customerLookup.customer.codigo_cliente_omie
-        ? [customerLookup.customer.codigo_cliente_omie]
-        : [],
-      customerCnpj: cnpj,
-      customerNames: [
-        customerLookup.customer.razao_social,
-        customerLookup.customer.nome_fantasia
-      ].map((value) => safeString(value)).filter(Boolean),
-      recordsPerPage,
-      maxPages,
-      pageConcurrency
-    });
+    let receivableLookup: {
+      receivables: AnyRecord[];
+      pages_processed: number;
+      total_pages_detected: number;
+      scanned_rows: number;
+      warnings: string[];
+    };
+    try {
+      receivableLookup = await listReceivablesByCustomer({
+        appKey,
+        appSecret,
+        receivablesUrl,
+        customerIdentifiers: Array.isArray(customerLookup.customer.identifiers)
+          ? customerLookup.customer.identifiers
+          : customerLookup.customer.codigo_cliente_omie
+          ? [customerLookup.customer.codigo_cliente_omie]
+          : [],
+        customerCnpj: cnpj,
+        customerNames: [customerLookup.customer.razao_social, customerLookup.customer.nome_fantasia]
+          .map((value) => safeString(value))
+          .filter(Boolean),
+        recordsPerPage,
+        maxPages,
+        pageConcurrency
+      });
+    } catch (error) {
+      if (!customerCodeHint) throw error;
+
+      const initialMessage = error instanceof Error ? error.message : "Falha ao listar contas a receber no OMIE.";
+      const fallbackLookup = await findCustomerByCnpj({
+        appKey,
+        appSecret,
+        clientsUrl,
+        cnpj,
+        maxPages: maxClientScanPages
+      });
+
+      if (!fallbackLookup.customer) {
+        throw new Error(`${initialMessage} | Falha no fallback por CNPJ.`);
+      }
+
+      customerLookup = fallbackLookup;
+      receivableLookup = await listReceivablesByCustomer({
+        appKey,
+        appSecret,
+        receivablesUrl,
+        customerIdentifiers: Array.isArray(customerLookup.customer.identifiers)
+          ? customerLookup.customer.identifiers
+          : customerLookup.customer.codigo_cliente_omie
+          ? [customerLookup.customer.codigo_cliente_omie]
+          : [],
+        customerCnpj: cnpj,
+        customerNames: [customerLookup.customer.razao_social, customerLookup.customer.nome_fantasia]
+          .map((value) => safeString(value))
+          .filter(Boolean),
+        recordsPerPage,
+        maxPages,
+        pageConcurrency
+      });
+      receivableLookup = {
+        ...receivableLookup,
+        warnings: [
+          ...(Array.isArray(receivableLookup.warnings) ? receivableLookup.warnings : []),
+          "Contas a receber recuperadas via busca de cliente por CNPJ."
+        ]
+      };
+    }
 
     return jsonResponse(200, {
       cnpj,

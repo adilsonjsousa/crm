@@ -2372,6 +2372,29 @@ function readOmieCredentialsFromLocalStorage() {
   }
 }
 
+async function readOmieCustomerCodeHint(supabase, company) {
+  const companyData = asObject(company);
+  const companyId = String(companyData.id || companyData.company_id || "").trim();
+  if (!companyId) return "";
+
+  try {
+    const { data, error } = await supabase
+      .from("integration_links")
+      .select("external_id,updated_at")
+      .eq("provider", "omie")
+      .eq("local_entity_type", "company")
+      .eq("local_entity_id", companyId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) return "";
+    return String(data?.external_id || "").trim();
+  } catch {
+    return "";
+  }
+}
+
 async function invokeOmieReceivablesWithFallback(supabase, body) {
   const functionNames = [
     "omie-customer-receivables-public",
@@ -2449,12 +2472,15 @@ function resolveOmieLookupContext(company, options = {}, defaults = {}) {
 }
 
 export async function listCompanyOmiePurchases(company, options = {}) {
+  const companyData = asObject(company);
   const { cnpjDigits, body, supabase } = resolveOmieLookupContext(company, options, {
     records_per_page: 100,
     max_pages: 60
   });
+  const customerCodeHint = await readOmieCustomerCodeHint(supabase, companyData);
+  const requestBody = customerCodeHint ? { ...body, customer_code_hint: customerCodeHint } : body;
 
-  const { data, error } = await invokeOmiePurchasesWithRetry(supabase, body);
+  const { data, error } = await invokeOmiePurchasesWithRetry(supabase, requestBody);
   if (error) {
     if (isEdgeFunctionNon2xx(error)) {
       throw new Error("A consulta de compras OMIE ficou instavel neste lote. Tente novamente em alguns segundos.");
@@ -2479,14 +2505,17 @@ export async function listCompanyOmiePurchases(company, options = {}) {
 }
 
 export async function listCompanyOmieReceivables(company, options = {}) {
+  const companyData = asObject(company);
   const { cnpjDigits, body, supabase } = resolveOmieLookupContext(company, options, {
     records_per_page: 500,
     max_pages: 30
   });
+  const customerCodeHint = await readOmieCustomerCodeHint(supabase, companyData);
 
   const concurrency = Number(options.page_concurrency);
   const requestBody = {
     ...body,
+    ...(customerCodeHint ? { customer_code_hint: customerCodeHint } : {}),
     page_concurrency: Number.isFinite(concurrency) && concurrency > 0 ? Math.min(8, Math.max(1, Math.floor(concurrency))) : 4
   };
 
