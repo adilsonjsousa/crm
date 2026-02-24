@@ -895,13 +895,29 @@ async function fetchCompanyByCnpjFromBrasilApi({
 }
 
 function shouldAttemptCompanyCnpjEnrichment(company: AnyRecord) {
+  const hasWeakAddress = isWeakCompanyAddressFull(company.address_full, company.state);
   return (
     !safeString(company.city) ||
     !safeString(company.state) ||
-    !safeString(company.address_full) ||
+    hasWeakAddress ||
     !safeString(company.legal_name) ||
     !safeString(company.trade_name)
   );
+}
+
+function isWeakCompanyAddressFull(addressFull: unknown, stateHint: unknown) {
+  const raw = safeString(addressFull).toUpperCase();
+  if (!raw) return true;
+
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  const normalizedStateHint = normalizeUf(stateHint);
+  const normalizedAsUf = normalizeUf(normalized);
+
+  if (normalized.length === 2 && normalizedAsUf) return true;
+  if (normalizedStateHint && normalized === normalizedStateHint) return true;
+  if (/^[A-Z]{2}\s*(,|-)?\s*CEP\s*\d{5}-?\d{3}$/i.test(normalized)) return true;
+
+  return false;
 }
 
 function buildCompanyEnrichmentPatch({
@@ -918,12 +934,14 @@ function buildCompanyEnrichmentPatch({
   const city = normalizeCity(cnpjProfile.city, cnpjProfile.state).toUpperCase();
   const state = normalizeUf(cnpjProfile.state);
   const addressFull = safeString(cnpjProfile.address_full);
+  const existingAddressFull = safeString(existingCompany.address_full);
+  const shouldReplaceAddress = isWeakCompanyAddressFull(existingAddressFull, existingCompany.state);
 
   if (!safeString(existingCompany.legal_name) && legalName) patch.legal_name = legalName;
   if (!safeString(existingCompany.trade_name) && tradeName) patch.trade_name = tradeName;
   if (!safeString(existingCompany.city) && city) patch.city = city;
   if (!safeString(existingCompany.state) && state) patch.state = state;
-  if (!safeString(existingCompany.address_full) && addressFull) patch.address_full = addressFull;
+  if (shouldReplaceAddress && addressFull) patch.address_full = addressFull;
 
   return patch;
 }
