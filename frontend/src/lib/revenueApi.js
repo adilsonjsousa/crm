@@ -38,6 +38,16 @@ function formatCnpj(value) {
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
 }
 
+function formatCnpjSearchPattern(value) {
+  const digits = cleanDigits(value).slice(0, 14);
+  if (!digits) return "";
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 5) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+  if (digits.length <= 8) return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5)}`;
+  if (digits.length <= 12) return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8)}`;
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+}
+
 function joinAddress(parts) {
   return parts.filter(Boolean).join(", ");
 }
@@ -2092,6 +2102,7 @@ export async function searchGlobalRecords(term) {
   if (!normalized || normalized.length < 2) return [];
 
   const pattern = `%${normalized}%`;
+  const cnpjDigitsTerm = cleanDigits(normalized);
   const looseFallbackTerm = buildLooseSearchFallbackTerm(normalized);
 
   const [companiesInitialRes, contactsRes, opportunitiesRes, ordersRes, ticketsRes, tasksRes] = await Promise.all([
@@ -2128,8 +2139,24 @@ export async function searchGlobalRecords(term) {
   ]);
 
   let companiesRes = companiesInitialRes;
-  const hasCompanies = Array.isArray(companiesRes.data) && companiesRes.data.length > 0;
-  if (!companiesRes.error && !hasCompanies && looseFallbackTerm) {
+  if (!companiesRes.error && (!Array.isArray(companiesRes.data) || companiesRes.data.length === 0) && cnpjDigitsTerm.length >= 4) {
+    const cnpjRawPattern = `%${cnpjDigitsTerm}%`;
+    const cnpjFormattedPattern = `%${formatCnpjSearchPattern(cnpjDigitsTerm)}%`;
+    const cnpjClauses = [`cnpj.ilike.${cnpjRawPattern}`];
+    if (cnpjFormattedPattern !== cnpjRawPattern) {
+      cnpjClauses.push(`cnpj.ilike.${cnpjFormattedPattern}`);
+    }
+    const cnpjFallbackRes = await supabase
+      .from("companies")
+      .select("id,trade_name,cnpj")
+      .or(cnpjClauses.join(","))
+      .limit(8);
+    if (!cnpjFallbackRes.error && Array.isArray(cnpjFallbackRes.data) && cnpjFallbackRes.data.length > 0) {
+      companiesRes = cnpjFallbackRes;
+    }
+  }
+
+  if (!companiesRes.error && (!Array.isArray(companiesRes.data) || companiesRes.data.length === 0) && looseFallbackTerm) {
     const loosePattern = `%${looseFallbackTerm}%`;
     const fallbackRes = await supabase
       .from("companies")
