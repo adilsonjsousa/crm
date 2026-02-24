@@ -31,7 +31,8 @@ const SEGMENTOS = [
   "Varejo",
   "Gráfica",
   "Gráfica Digital",
-  "Comunicação visual"
+  "Comunicação visual",
+  "Sublimação Textil"
 ];
 
 const EMPTY_COMPANY_FORM = {

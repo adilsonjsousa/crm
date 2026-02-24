@@ -59,6 +59,7 @@ function inferSegmentoFromCnae(description) {
     .toLowerCase();
 
   if (!raw) return "";
+  if (raw.includes("sublim")) return "Sublimação Textil";
   if (raw.includes("grafica digital")) return "Gráfica Digital";
   if (raw.includes("grafica")) return "Gráfica";
   if (raw.includes("comunicacao visual")) return "Comunicação visual";
