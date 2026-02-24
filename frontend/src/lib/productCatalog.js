@@ -153,6 +153,8 @@ const TYPE_LABEL_TO_VALUE = SALES_TYPES.reduce((acc, type) => {
   return acc;
 }, {});
 
+const OPPORTUNITY_ITEMS_SEPARATOR = " || ";
+
 export function getSubcategoriesByType(typeValue) {
   const requestedType = normalizeTitlePart(typeValue).toLowerCase();
   return OPPORTUNITY_SUBCATEGORIES.filter((subcategory) => {
@@ -169,7 +171,7 @@ export function composeOpportunityTitle(titleSubcategory, titleProduct) {
   return `${category} > ${product}`;
 }
 
-export function parseOpportunityTitle(rawTitle) {
+function parseSingleOpportunityTitle(rawTitle) {
   const normalized = normalizeTitlePart(rawTitle);
   if (!normalized) {
     return { opportunity_type: "equipment", title_subcategory: "", title_product: "" };
@@ -211,6 +213,45 @@ export function parseOpportunityTitle(rawTitle) {
   }
 
   return { opportunity_type: opportunityType, title_subcategory: titleSubcategory, title_product: titleProduct };
+}
+
+export function parseOpportunityItems(rawTitle) {
+  const normalized = normalizeTitlePart(rawTitle);
+  if (!normalized) return [];
+
+  const segments = normalized
+    .split("||")
+    .map((segment) => normalizeTitlePart(segment))
+    .filter(Boolean);
+
+  if (!segments.length) return [];
+
+  return segments
+    .map((segment) => parseSingleOpportunityTitle(segment))
+    .filter((item) => item.title_subcategory || item.title_product);
+}
+
+export function composeOpportunityTitleFromItems(items = []) {
+  const normalizedItems = (items || [])
+    .map((item) => ({
+      title_subcategory: canonicalizeSubcategory(item?.title_subcategory),
+      title_product: normalizeTitlePart(item?.title_product)
+    }))
+    .filter((item) => item.title_subcategory && item.title_product);
+
+  if (!normalizedItems.length) return "";
+  return normalizedItems
+    .map((item) => composeOpportunityTitle(item.title_subcategory, item.title_product))
+    .filter(Boolean)
+    .join(OPPORTUNITY_ITEMS_SEPARATOR);
+}
+
+export function parseOpportunityTitle(rawTitle) {
+  const items = parseOpportunityItems(rawTitle);
+  if (!items.length) {
+    return { opportunity_type: "equipment", title_subcategory: "", title_product: "" };
+  }
+  return items[0];
 }
 
 export function resolveEstimatedValueByProduct(titleSubcategory, titleProduct) {

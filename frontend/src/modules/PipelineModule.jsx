@@ -15,8 +15,9 @@ import { PIPELINE_STAGES, canMoveToStage, stageLabel, stageStatus } from "../lib
 import {
   PRODUCTS_BY_SUBCATEGORY,
   SALES_TYPES,
-  composeOpportunityTitle,
+  composeOpportunityTitleFromItems,
   getSubcategoriesByType,
+  parseOpportunityItems,
   parseOpportunityTitle,
   resolveEstimatedValueByProduct
 } from "../lib/productCatalog";
@@ -426,6 +427,36 @@ function emptyOpportunityForm(defaultCompanyId = "", defaultOwnerUserId = "", ra
   };
 }
 
+function toPositiveMoneyNumber(value) {
+  if (value === null || value === undefined || value === "") return 0;
+  const parsed = Number(String(value).replace(",", "."));
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return parsed;
+}
+
+function normalizeOpportunityItem(item = {}) {
+  const type = SALES_TYPES.some((entry) => entry.value === item.opportunity_type)
+    ? String(item.opportunity_type)
+    : "equipment";
+  const titleSubcategory = String(item.title_subcategory || "").trim();
+  const titleProduct = String(item.title_product || "").trim();
+  const mappedValue = resolveEstimatedValueByProduct(titleSubcategory, titleProduct);
+  const typedValue = String(item.estimated_value ?? "").trim();
+  const fallbackValue = toPositiveMoneyNumber(item.estimated_value);
+  const estimatedValue = typedValue ? fallbackValue : mappedValue === null ? fallbackValue : mappedValue;
+
+  return {
+    opportunity_type: type,
+    title_subcategory: titleSubcategory,
+    title_product: titleProduct,
+    estimated_value: estimatedValue
+  };
+}
+
+function isOpportunityItemComplete(item = {}) {
+  return Boolean(String(item.title_subcategory || "").trim() && String(item.title_product || "").trim());
+}
+
 function createProposalDraft({ opportunity, linkedOrder, contacts }) {
   const parsedTitle = parseOpportunityTitle(opportunity?.title || "");
   const proposalType = normalizeProposalType(parsedTitle.opportunity_type);
@@ -493,6 +524,7 @@ export default function PipelineModule({
     companyName: ""
   });
   const [form, setForm] = useState(() => emptyOpportunityForm("", "", pipelineDefaultsRef.current));
+  const [opportunityItems, setOpportunityItems] = useState([]);
   const [companySearchTerm, setCompanySearchTerm] = useState("");
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
 
@@ -527,6 +559,34 @@ export default function PipelineModule({
       : companies;
     return source.slice(0, 10);
   }, [companies, companySearchTerm]);
+  const draftOpportunityItem = useMemo(
+    () =>
+      normalizeOpportunityItem({
+        opportunity_type: form.opportunity_type,
+        title_subcategory: form.title_subcategory,
+        title_product: form.title_product,
+        estimated_value: form.estimated_value
+      }),
+    [form.estimated_value, form.opportunity_type, form.title_product, form.title_subcategory]
+  );
+  const draftItemHasAnyValue = useMemo(
+    () =>
+      Boolean(
+        String(form.title_subcategory || "").trim() ||
+          String(form.title_product || "").trim() ||
+          String(form.estimated_value || "").trim()
+      ),
+    [form.estimated_value, form.title_product, form.title_subcategory]
+  );
+  const draftItemIsComplete = useMemo(() => isOpportunityItemComplete(draftOpportunityItem), [draftOpportunityItem]);
+  const allOpportunityItems = useMemo(
+    () => (draftItemIsComplete ? [...opportunityItems, draftOpportunityItem] : opportunityItems),
+    [draftItemIsComplete, draftOpportunityItem, opportunityItems]
+  );
+  const opportunityItemsTotalValue = useMemo(
+    () => allOpportunityItems.reduce((acc, item) => acc + toPositiveMoneyNumber(item.estimated_value), 0),
+    [allOpportunityItems]
+  );
 
   const itemsByStage = useMemo(() => {
     const grouped = PIPELINE_STAGES.reduce((acc, stage) => {
@@ -672,6 +732,7 @@ export default function PipelineModule({
     setError("");
     setSuccess("");
     setForm(() => emptyOpportunityForm(prefillCompanyId || companyById?.id || "", viewerUserId, pipelineDefaultsRef.current));
+    setOpportunityItems([]);
     setCompanySearchTerm(prefillCompanyName || companyById?.trade_name || "");
     setCompanySuggestionsOpen(false);
   }, [prefillCompanyDraft, prefillCompanyRequest, companies, viewerUserId]);
@@ -737,6 +798,45 @@ export default function PipelineModule({
     });
   }
 
+  function handleAddOpportunityItem() {
+    setError("");
+    setSuccess("");
+
+    if (!draftItemIsComplete) {
+      setError("Preencha categoria, sub-categoria e produto para adicionar o item.");
+      return;
+    }
+
+    setOpportunityItems((prev) => [...prev, draftOpportunityItem]);
+    setForm((prev) => ({
+      ...prev,
+      title_product: "",
+      estimated_value: ""
+    }));
+  }
+
+  function handleRemoveOpportunityItem(index) {
+    const safeIndex = Number(index);
+    if (!Number.isFinite(safeIndex) || safeIndex < 0) return;
+    setOpportunityItems((prev) => prev.filter((_, itemIndex) => itemIndex !== safeIndex));
+  }
+
+  function handleEditOpportunityItem(index) {
+    const safeIndex = Number(index);
+    if (!Number.isFinite(safeIndex) || safeIndex < 0) return;
+    const selectedItem = opportunityItems[safeIndex];
+    if (!selectedItem) return;
+
+    setForm((prev) => ({
+      ...prev,
+      opportunity_type: selectedItem.opportunity_type || "equipment",
+      title_subcategory: selectedItem.title_subcategory || "",
+      title_product: selectedItem.title_product || "",
+      estimated_value: String(selectedItem.estimated_value ?? "")
+    }));
+    setOpportunityItems((prev) => prev.filter((_, itemIndex) => itemIndex !== safeIndex));
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
@@ -747,33 +847,32 @@ export default function PipelineModule({
     let postSaveSuccessMessage = "";
 
     try {
-      const opportunityType = String(form.opportunity_type || "").trim();
-      const titleSubcategory = String(form.title_subcategory || "").trim();
-      const titleProduct = String(form.title_product || "").trim();
-      if (!opportunityType) {
-        setError("Selecione o tipo.");
-        return;
-      }
-      if (!titleSubcategory) {
-        setError("Selecione a sub-categoria.");
-        return;
-      }
-      if (!titleProduct) {
-        setError("Informe o produto.");
+      if (draftItemHasAnyValue && !draftItemIsComplete) {
+        setError("Finalize o item em edição (sub-categoria e produto) ou limpe-o antes de salvar.");
         return;
       }
       if (!form.company_id) {
         setError("Selecione uma empresa cadastrada.");
         return;
       }
+      if (!allOpportunityItems.length) {
+        setError("Adicione ao menos um item na oportunidade.");
+        return;
+      }
+
+      const title = composeOpportunityTitleFromItems(allOpportunityItems);
+      if (!title) {
+        setError("Não foi possível montar o título da oportunidade com os itens informados.");
+        return;
+      }
 
       const payload = {
         company_id: form.company_id,
         owner_user_id: form.owner_user_id || viewerUserId || null,
-        title: composeOpportunityTitle(titleSubcategory, titleProduct),
+        title,
         stage: form.stage,
         status: stageStatus(form.stage),
-        estimated_value: Number(form.estimated_value || 0),
+        estimated_value: opportunityItemsTotalValue,
         expected_close_date: form.expected_close_date || null
       };
 
@@ -793,18 +892,22 @@ export default function PipelineModule({
       if (editingOpportunityId) {
         setEditingOpportunityId("");
         setForm(emptyOpportunityForm("", viewerUserId, pipelineDefaultsRef.current));
+        setOpportunityItems([]);
         setCompanySearchTerm("");
         postSaveSuccessMessage = "Oportunidade atualizada com sucesso.";
       } else if (createAnotherAfterSave) {
         setForm((prev) => ({
           ...prev,
+          title_subcategory: "",
           title_product: "",
           estimated_value: "",
           expected_close_date: ""
         }));
+        setOpportunityItems([]);
         postSaveSuccessMessage = "Oportunidade salva. Formulário mantido para cadastrar a próxima.";
       } else {
         setForm(emptyOpportunityForm("", viewerUserId, pipelineDefaultsRef.current));
+        setOpportunityItems([]);
         setCompanySearchTerm("");
         postSaveSuccessMessage = "Oportunidade salva com sucesso.";
       }
@@ -889,18 +992,32 @@ export default function PipelineModule({
   function startEditOpportunity(item) {
     setError("");
     setSuccess("");
-    const parsedTitle = parseOpportunityTitle(item.title);
+    const parsedItems = parseOpportunityItems(item.title);
+    const fallbackFirst = parseOpportunityTitle(item.title);
+    const firstItem = parsedItems[0] || fallbackFirst;
+    const remainingItems = parsedItems.slice(1).map((entry) =>
+      normalizeOpportunityItem({
+        opportunity_type: entry.opportunity_type,
+        title_subcategory: entry.title_subcategory,
+        title_product: entry.title_product,
+        estimated_value: resolveEstimatedValueByProduct(entry.title_subcategory, entry.title_product)
+      })
+    );
+    const firstItemEstimated = parsedItems.length > 1
+      ? resolveEstimatedValueByProduct(firstItem.title_subcategory, firstItem.title_product)
+      : Number(item.estimated_value ?? resolveEstimatedValueByProduct(firstItem.title_subcategory, firstItem.title_product) ?? 0);
     const companyLabel =
       item.companies?.trade_name || companies.find((company) => company.id === item.company_id)?.trade_name || "";
     setEditingOpportunityId(item.id);
+    setOpportunityItems(remainingItems);
     setForm({
       company_id: item.company_id || "",
       owner_user_id: item.owner_user_id || viewerUserId,
-      opportunity_type: parsedTitle.opportunity_type || "equipment",
-      title_subcategory: parsedTitle.title_subcategory,
-      title_product: parsedTitle.title_product,
+      opportunity_type: firstItem.opportunity_type || "equipment",
+      title_subcategory: firstItem.title_subcategory,
+      title_product: firstItem.title_product,
       stage: item.stage || "lead",
-      estimated_value: String(item.estimated_value ?? ""),
+      estimated_value: String(firstItemEstimated ?? ""),
       expected_close_date: item.expected_close_date || ""
     });
     setCompanySearchTerm(companyLabel);
@@ -912,6 +1029,7 @@ export default function PipelineModule({
     setSuccess("");
     setEditingOpportunityId("");
     setForm(emptyOpportunityForm("", viewerUserId, pipelineDefaultsRef.current));
+    setOpportunityItems([]);
     setCompanySearchTerm("");
     setCompanySuggestionsOpen(false);
   }
@@ -925,6 +1043,7 @@ export default function PipelineModule({
     setViewerRole(String(nextViewer.role || "sales"));
     setEditingOpportunityId("");
     setForm(() => emptyOpportunityForm("", nextViewer.user_id, pipelineDefaultsRef.current));
+    setOpportunityItems([]);
     setCompanySearchTerm("");
     setCompanySuggestionsOpen(false);
 
@@ -1272,47 +1391,49 @@ export default function PipelineModule({
               ))}
             </select>
           </label>
-          <select
-            required
-            value={form.opportunity_type}
-            onChange={(e) =>
-              setForm((prev) => ({
-                ...prev,
-                opportunity_type: e.target.value,
-                title_subcategory: "",
-                title_product: "",
-                estimated_value: ""
-              }))
-            }
-          >
-            <option value="">Selecione o tipo</option>
-            {SALES_TYPES.map((type) => (
-              <option key={type.value} value={type.value}>
-                {type.label}
-              </option>
-            ))}
-          </select>
+          <label className="settings-field">
+            <span>Categoria do item</span>
+            <select
+              value={form.opportunity_type}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  opportunity_type: e.target.value,
+                  title_subcategory: "",
+                  title_product: "",
+                  estimated_value: ""
+                }))
+              }
+            >
+              {SALES_TYPES.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-field">
+            <span>Sub-categoria</span>
+            <select
+              value={form.title_subcategory}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  title_subcategory: e.target.value,
+                  title_product: "",
+                  estimated_value: ""
+                }))
+              }
+            >
+              <option value="">Selecione a sub-categoria</option>
+              {getSubcategoriesByType(form.opportunity_type).map((subcategory) => (
+                <option key={subcategory} value={subcategory}>
+                  {subcategory}
+                </option>
+              ))}
+            </select>
+          </label>
           <input
-            required
-            list="pipeline-subcategory-options"
-            placeholder="Sub-categoria"
-            value={form.title_subcategory}
-            onChange={(e) =>
-              setForm((prev) => ({
-                ...prev,
-                title_subcategory: e.target.value,
-                title_product: "",
-                estimated_value: ""
-              }))
-            }
-          />
-          <datalist id="pipeline-subcategory-options">
-            {getSubcategoriesByType(form.opportunity_type).map((subcategory) => (
-              <option key={subcategory} value={subcategory} />
-            ))}
-          </datalist>
-          <input
-            required
             list="pipeline-product-options"
             placeholder="Produto (ex.: CANON imagePRESS V700)"
             value={form.title_product}
@@ -1338,10 +1459,53 @@ export default function PipelineModule({
             type="number"
             min="0"
             step="0.01"
-            placeholder="Valor estimado"
+            placeholder="Valor do item"
             value={form.estimated_value}
             onChange={(e) => setForm((prev) => ({ ...prev, estimated_value: e.target.value }))}
           />
+          <button type="button" className="btn-ghost" onClick={handleAddOpportunityItem}>
+            + Adicionar item
+          </button>
+          <div className="pipeline-items-panel">
+            <p className="pipeline-items-title">Itens adicionados ({opportunityItems.length})</p>
+            {!opportunityItems.length ? <p className="muted">Nenhum item adicionado.</p> : null}
+            {opportunityItems.length ? (
+              <ul className="pipeline-items-list">
+                {opportunityItems.map((entry, index) => (
+                  <li key={`${entry.opportunity_type}-${entry.title_subcategory}-${entry.title_product}-${index}`}>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-table-action"
+                      onClick={() => handleEditOpportunityItem(index)}
+                      title="Editar item"
+                    >
+                      {SALES_TYPES.find((type) => type.value === entry.opportunity_type)?.label || "Categoria"} · {entry.title_subcategory} · {entry.title_product}
+                    </button>
+                    <span>{brl(entry.estimated_value)}</span>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-table-action"
+                      onClick={() => handleRemoveOpportunityItem(index)}
+                      title="Remover item"
+                    >
+                      Remover
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {draftItemIsComplete ? (
+              <p className="pipeline-items-draft">
+                Item em edição (ainda não adicionado):{" "}
+                <strong>
+                  {SALES_TYPES.find((type) => type.value === draftOpportunityItem.opportunity_type)?.label || "Categoria"} ·{" "}
+                  {draftOpportunityItem.title_subcategory} · {draftOpportunityItem.title_product}
+                </strong>{" "}
+                ({brl(draftOpportunityItem.estimated_value)})
+              </p>
+            ) : null}
+            <p className="pipeline-items-total">Valor total da oportunidade: {brl(opportunityItemsTotalValue)}</p>
+          </div>
           <select value={form.stage} onChange={(e) => setForm((prev) => ({ ...prev, stage: e.target.value }))}>
             {PIPELINE_STAGES.map((stage) => (
               <option key={stage.value} value={stage.value}>

@@ -1435,6 +1435,50 @@ tbody tr:hover {
   gap: 8px;
 }
 
+.pipeline-items-panel {
+  grid-column: 1 / -1;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--bg-soft);
+  display: grid;
+  gap: 8px;
+}
+
+.pipeline-items-title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.pipeline-items-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.pipeline-items-list li {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.pipeline-items-draft {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-sub);
+}
+
+.pipeline-items-total {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--accent-2);
+}
+
 .pipeline-company-autocomplete {
   position: relative;
 }
