@@ -372,6 +372,8 @@ export default function CompaniesModule({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [cnpjValidation, setCnpjValidation] = useState({ type: "idle", message: "" });
+  const [savingCompanyCreate, setSavingCompanyCreate] = useState(false);
+  const [savingContactCreate, setSavingContactCreate] = useState(false);
   const [form, setForm] = useState(EMPTY_COMPANY_FORM);
   const [contactForm, setContactForm] = useState(EMPTY_CONTACT_FORM);
   const [contactCompanySearchTerm, setContactCompanySearchTerm] = useState("");
@@ -769,6 +771,7 @@ export default function CompaniesModule({
   async function handleCompanySubmit(event) {
     event.preventDefault();
     setError("");
+    if (savingCompanyCreate) return;
     const normalizedCnpj = cleanCnpj(form.cnpj);
 
     try {
@@ -796,6 +799,7 @@ export default function CompaniesModule({
       const companyPhone = validateBrazilPhoneOrEmpty(form.phone, "Telefone da empresa");
       const primaryContactWhatsapp = validateBrazilPhoneOrEmpty(form.contact_whatsapp, "WhatsApp do contato");
 
+      setSavingCompanyCreate(true);
       const createdCompany = await createCompany({
         cnpj: normalizedCnpj,
         trade_name: upperLettersOnly(form.trade_name),
@@ -838,12 +842,15 @@ export default function CompaniesModule({
       setSelectedCompanyId(createdCompany.id);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setSavingCompanyCreate(false);
     }
   }
 
   async function handleContactSubmit(event) {
     event.preventDefault();
     setError("");
+    if (savingContactCreate) return;
 
     try {
       if (!String(contactForm.full_name || "").trim()) {
@@ -853,6 +860,7 @@ export default function CompaniesModule({
 
       const contactWhatsapp = validateBrazilPhoneOrEmpty(contactForm.whatsapp, "WhatsApp do contato");
 
+      setSavingContactCreate(true);
       await createContact({
         company_id: contactForm.company_id || null,
         full_name: upperLettersOnly(contactForm.full_name),
@@ -868,6 +876,8 @@ export default function CompaniesModule({
       if (selectedCompanyId) await loadCustomerWorkspace(selectedCompanyId);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setSavingContactCreate(false);
     }
   }
 
@@ -1422,8 +1432,8 @@ export default function CompaniesModule({
                 onChange={(event) => setForm((prev) => ({ ...prev, contact_birth_date: event.target.value }))}
               />
 
-              <button type="submit" className="btn-primary" disabled={isCheckingCnpj || isCnpjBlocked}>
-                {isCheckingCnpj ? "Validando CNPJ..." : "Salvar empresa"}
+              <button type="submit" className="btn-primary" disabled={isCheckingCnpj || isCnpjBlocked || savingCompanyCreate}>
+                {isCheckingCnpj ? "Validando CNPJ..." : savingCompanyCreate ? "Salvando..." : "Salvar empresa"}
               </button>
             </form>
           </article>
@@ -1631,7 +1641,9 @@ export default function CompaniesModule({
               value={contactForm.birth_date}
               onChange={(event) => setContactForm((prev) => ({ ...prev, birth_date: event.target.value }))}
             />
-            <button type="submit" className="btn-primary">Salvar contato</button>
+            <button type="submit" className="btn-primary" disabled={savingContactCreate}>
+              {savingContactCreate ? "Salvando..." : "Salvar contato"}
+            </button>
           </form>
         </article>
 

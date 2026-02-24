@@ -4,7 +4,22 @@ import { parseOpportunityTitle, resolveEstimatedValueByProduct } from "./product
 import { formatBrazilPhone, toWhatsAppBrazilNumber, validateBrazilPhoneOrEmpty } from "./phone";
 
 function normalizeError(error, fallback) {
-  return error?.message || fallback;
+  const message = String(error?.message || "").trim();
+  const details = String(error?.details || "").trim();
+  const hint = String(error?.hint || "").trim();
+  const fingerprint = `${message} ${details} ${hint}`.toLowerCase();
+
+  if (fingerprint.includes("companies_cnpj_digits_14_unique_idx") || fingerprint.includes("companies_cnpj_key")) {
+    return "Já existe empresa cadastrada com este CNPJ.";
+  }
+  if (fingerprint.includes("contacts_company_whatsapp_digits_unique_idx")) {
+    return "Já existe contato com este WhatsApp para esta empresa.";
+  }
+  if (fingerprint.includes("opportunities_open_owner_company_title_stage_unique_idx")) {
+    return "Já existe oportunidade aberta com este título nesta etapa para este responsável.";
+  }
+
+  return message || fallback;
 }
 
 function cleanDigits(value) {
@@ -55,6 +70,13 @@ function normalizeSearchTerm(term) {
 function asObject(value) {
   if (value && typeof value === "object" && !Array.isArray(value)) return value;
   return {};
+}
+
+function normalizeOpportunityTitleKey(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 }
 
 function normalizeLifecycleStageName(value) {
@@ -418,12 +440,25 @@ export async function lookupCompanyDataByCnpj(cnpj) {
 export async function createCompany(payload) {
   const supabase = ensureSupabase();
   const normalizedPayload = { ...payload };
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "cnpj")) {
+    const cnpjDigits = cleanDigits(payload?.cnpj);
+    normalizedPayload.cnpj = cnpjDigits.length === 14 ? formatCnpj(cnpjDigits) : String(payload?.cnpj || "").trim();
+  }
   if (Object.prototype.hasOwnProperty.call(normalizedPayload, "phone")) {
     normalizedPayload.phone = validateBrazilPhoneOrEmpty(payload?.phone, "Telefone da empresa");
   }
   if (Object.prototype.hasOwnProperty.call(normalizedPayload, "lifecycle_stage_id")) {
     normalizedPayload.lifecycle_stage_id = payload?.lifecycle_stage_id || null;
   }
+
+  const normalizedCnpjDigits = cleanDigits(normalizedPayload.cnpj);
+  if (normalizedCnpjDigits.length === 14) {
+    const existing = await findCompanyByCnpj(normalizedCnpjDigits);
+    if (existing) {
+      throw new Error(`Este CNPJ já está cadastrado para "${existing.trade_name}".`);
+    }
+  }
+
   const { data, error } = await supabase.from("companies").insert(normalizedPayload).select("id").single();
   if (error) throw new Error(normalizeError(error, "Falha ao criar empresa."));
   return data;
@@ -432,6 +467,16 @@ export async function createCompany(payload) {
 export async function updateCompany(companyId, payload) {
   const supabase = ensureSupabase();
   const normalizedPayload = { ...payload };
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "cnpj")) {
+    const cnpjDigits = cleanDigits(payload?.cnpj);
+    normalizedPayload.cnpj = cnpjDigits.length === 14 ? formatCnpj(cnpjDigits) : String(payload?.cnpj || "").trim();
+    if (cnpjDigits.length === 14) {
+      const existing = await findCompanyByCnpj(cnpjDigits);
+      if (existing && String(existing.id || "") !== String(companyId || "")) {
+        throw new Error(`Este CNPJ já está cadastrado para "${existing.trade_name}".`);
+      }
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(normalizedPayload, "phone")) {
     normalizedPayload.phone = validateBrazilPhoneOrEmpty(payload?.phone, "Telefone da empresa");
   }
@@ -519,12 +564,37 @@ export async function listUpcomingBirthdays(daysAhead = 7) {
 export async function createContact(payload) {
   const supabase = ensureSupabase();
   const normalizedPayload = { ...payload };
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "email")) {
+    normalizedPayload.email = String(payload?.email || "").trim().toLowerCase() || null;
+  }
   if (Object.prototype.hasOwnProperty.call(normalizedPayload, "phone")) {
     normalizedPayload.phone = validateBrazilPhoneOrEmpty(payload?.phone, "Telefone do contato");
   }
   if (Object.prototype.hasOwnProperty.call(normalizedPayload, "whatsapp")) {
     normalizedPayload.whatsapp = validateBrazilPhoneOrEmpty(payload?.whatsapp, "WhatsApp do contato");
   }
+
+  const normalizedWhatsapp = String(normalizedPayload.whatsapp || "").trim();
+  if (normalizedWhatsapp) {
+    let conflictQuery = supabase
+      .from("contacts")
+      .select("id,full_name")
+      .eq("whatsapp", normalizedWhatsapp)
+      .limit(1);
+    if (normalizedPayload.company_id) {
+      conflictQuery = conflictQuery.eq("company_id", normalizedPayload.company_id);
+    } else {
+      conflictQuery = conflictQuery.is("company_id", null);
+    }
+    const { data: conflictData, error: conflictError } = await conflictQuery.maybeSingle();
+    if (conflictError) {
+      throw new Error(normalizeError(conflictError, "Falha ao validar conflito de contato."));
+    }
+    if (conflictData?.id) {
+      throw new Error(`Já existe contato com este WhatsApp: "${conflictData.full_name || "Contato"}".`);
+    }
+  }
+
   const { error } = await supabase.from("contacts").insert(normalizedPayload);
   if (error) throw new Error(normalizeError(error, "Falha ao criar contato."));
 }
@@ -532,12 +602,38 @@ export async function createContact(payload) {
 export async function updateContact(contactId, payload) {
   const supabase = ensureSupabase();
   const normalizedPayload = { ...payload };
+  if (Object.prototype.hasOwnProperty.call(normalizedPayload, "email")) {
+    normalizedPayload.email = String(payload?.email || "").trim().toLowerCase() || null;
+  }
   if (Object.prototype.hasOwnProperty.call(normalizedPayload, "phone")) {
     normalizedPayload.phone = validateBrazilPhoneOrEmpty(payload?.phone, "Telefone do contato");
   }
   if (Object.prototype.hasOwnProperty.call(normalizedPayload, "whatsapp")) {
     normalizedPayload.whatsapp = validateBrazilPhoneOrEmpty(payload?.whatsapp, "WhatsApp do contato");
   }
+
+  const normalizedWhatsapp = String(normalizedPayload.whatsapp || "").trim();
+  if (normalizedWhatsapp) {
+    let conflictQuery = supabase
+      .from("contacts")
+      .select("id,full_name")
+      .eq("whatsapp", normalizedWhatsapp)
+      .neq("id", contactId)
+      .limit(1);
+    if (normalizedPayload.company_id) {
+      conflictQuery = conflictQuery.eq("company_id", normalizedPayload.company_id);
+    } else {
+      conflictQuery = conflictQuery.is("company_id", null);
+    }
+    const { data: conflictData, error: conflictError } = await conflictQuery.maybeSingle();
+    if (conflictError) {
+      throw new Error(normalizeError(conflictError, "Falha ao validar conflito de contato."));
+    }
+    if (conflictData?.id) {
+      throw new Error(`Já existe contato com este WhatsApp: "${conflictData.full_name || "Contato"}".`);
+    }
+  }
+
   const { error } = await supabase.from("contacts").update(normalizedPayload).eq("id", contactId);
   if (error) throw new Error(normalizeError(error, "Falha ao atualizar contato."));
 }
@@ -576,8 +672,43 @@ export async function createOpportunity(payload, options = {}) {
   const fallbackOwnerUserId = String(options?.ownerUserId || "").trim();
   const normalizedPayload = {
     ...payload,
+    title: String(payload?.title || "").trim().replace(/\s+/g, " "),
     owner_user_id: String(payload?.owner_user_id || "").trim() || fallbackOwnerUserId || null
   };
+
+  const opportunityTitleKey = normalizeOpportunityTitleKey(normalizedPayload.title);
+  if (
+    normalizedPayload.company_id &&
+    normalizedPayload.stage &&
+    normalizedPayload.status === "open" &&
+    opportunityTitleKey
+  ) {
+    let duplicateQuery = supabase
+      .from("opportunities")
+      .select("id,title")
+      .eq("company_id", normalizedPayload.company_id)
+      .eq("stage", normalizedPayload.stage)
+      .eq("status", "open")
+      .limit(50);
+
+    if (normalizedPayload.owner_user_id) {
+      duplicateQuery = duplicateQuery.eq("owner_user_id", normalizedPayload.owner_user_id);
+    } else {
+      duplicateQuery = duplicateQuery.is("owner_user_id", null);
+    }
+
+    const { data: duplicateData, error: duplicateError } = await duplicateQuery;
+    if (duplicateError) {
+      throw new Error(normalizeError(duplicateError, "Falha ao validar conflito da oportunidade."));
+    }
+
+    const duplicate = (duplicateData || []).find(
+      (row) => normalizeOpportunityTitleKey(row?.title) === opportunityTitleKey
+    );
+    if (duplicate?.id) {
+      throw new Error("Já existe oportunidade aberta com este título nesta etapa para este responsável.");
+    }
+  }
 
   const { error } = await supabase.from("opportunities").insert(normalizedPayload);
   if (error) throw new Error(normalizeError(error, "Falha ao criar oportunidade."));
@@ -1982,16 +2113,26 @@ export async function searchGlobalRecords(term) {
   if (ticketsRes.error) throw new Error(normalizeError(ticketsRes.error, "Falha na busca global (assistência)."));
   if (tasksRes.error) throw new Error(normalizeError(tasksRes.error, "Falha na busca global (tarefas)."));
 
-  const mappedCompanies = (companiesRes.data || []).map((item) => ({
-    id: `company-${item.id}`,
-    entity_type: "company",
-    company_id: item.id,
-    company_name: item.trade_name || "Empresa",
-    type: "Empresa",
-    title: item.trade_name || "Empresa",
-    subtitle: item.cnpj ? `CNPJ ${item.cnpj}` : "Sem CNPJ",
-    tab: "companies"
-  }));
+  const mappedCompanies = [];
+  const seenCompanyKeys = new Set();
+  for (const item of companiesRes.data || []) {
+    const cnpjDigits = cleanDigits(item?.cnpj);
+    const tradeNameKey = normalizeText(item?.trade_name || "empresa").replace(/\s+/g, " ").trim();
+    const dedupeKey = cnpjDigits.length === 14 ? `cnpj:${cnpjDigits}` : `name:${tradeNameKey}`;
+    if (seenCompanyKeys.has(dedupeKey)) continue;
+    seenCompanyKeys.add(dedupeKey);
+
+    mappedCompanies.push({
+      id: `company-${item.id}`,
+      entity_type: "company",
+      company_id: item.id,
+      company_name: item.trade_name || "Empresa",
+      type: "Empresa",
+      title: item.trade_name || "Empresa",
+      subtitle: item.cnpj ? `CNPJ ${formatCnpj(item.cnpj)}` : "Sem CNPJ",
+      tab: "companies"
+    });
+  }
 
   const mappedContacts = (contactsRes.data || []).map((item) => ({
     id: `contact-${item.id}`,

@@ -475,6 +475,7 @@ export default function PipelineModule({
   const [draggingId, setDraggingId] = useState("");
   const [dragOverStage, setDragOverStage] = useState("");
   const [editingOpportunityId, setEditingOpportunityId] = useState("");
+  const [savingOpportunity, setSavingOpportunity] = useState(false);
   const [creatingProposalId, setCreatingProposalId] = useState("");
   const [proposalsByOpportunity, setProposalsByOpportunity] = useState({});
   const [autoProposalMode, setAutoProposalMode] = useState(() => {
@@ -740,6 +741,7 @@ export default function PipelineModule({
     event.preventDefault();
     setError("");
     setSuccess("");
+    if (savingOpportunity) return;
     const submitIntent = String(event?.nativeEvent?.submitter?.value || "save");
     const createAnotherAfterSave = !editingOpportunityId && submitIntent === "save_and_create";
     let postSaveSuccessMessage = "";
@@ -775,6 +777,7 @@ export default function PipelineModule({
         expected_close_date: form.expected_close_date || null
       };
 
+      setSavingOpportunity(true);
       if (editingOpportunityId) {
         const currentOpportunity = items.find((item) => item.id === editingOpportunityId);
         await updateOpportunity(editingOpportunityId, {
@@ -812,6 +815,8 @@ export default function PipelineModule({
       }
     } catch (err) {
       setError(err.message);
+    } finally {
+      setSavingOpportunity(false);
     }
   }
 
@@ -1350,12 +1355,12 @@ export default function PipelineModule({
             onChange={(e) => setForm((prev) => ({ ...prev, expected_close_date: e.target.value }))}
           />
           <div className="inline-actions pipeline-form-actions">
-            <button type="submit" value="save" className="btn-primary">
-              {editingOpportunityId ? "Atualizar oportunidade" : "Salvar oportunidade"}
+            <button type="submit" value="save" className="btn-primary" disabled={savingOpportunity}>
+              {savingOpportunity ? "Salvando..." : editingOpportunityId ? "Atualizar oportunidade" : "Salvar oportunidade"}
             </button>
             {!editingOpportunityId ? (
-              <button type="submit" value="save_and_create" className="btn-ghost">
-                Salvar e criar outra
+              <button type="submit" value="save_and_create" className="btn-ghost" disabled={savingOpportunity}>
+                {savingOpportunity ? "Salvando..." : "Salvar e criar outra"}
               </button>
             ) : null}
             {editingOpportunityId ? (
