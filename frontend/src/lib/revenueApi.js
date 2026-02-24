@@ -142,6 +142,29 @@ function normalizeLifecycleStageName(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function normalizeProposalTemplateName(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeProposalTemplateBody(value) {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+}
+
+function normalizeProposalTemplateType(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "equipment" || normalized === "supplies" || normalized === "service") return normalized;
+  return null;
+}
+
+function normalizeProposalTemplateSortOrder(value, fallback = 100) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(9999, Math.floor(parsed)));
+}
+
 function normalizeStoragePart(value) {
   return String(value || "arquivo")
     .normalize("NFD")
@@ -1716,6 +1739,110 @@ export async function deleteCompanyLifecycleStage(stageId) {
   if (error) throw new Error(normalizeError(error, "Falha ao excluir fase do ciclo de vida."));
 
   await resequenceCompanyLifecycleStages(supabase);
+}
+
+export async function listProposalTemplates({ includeInactive = true } = {}) {
+  const supabase = ensureSupabase();
+  let query = supabase
+    .from("proposal_templates")
+    .select("id,name,proposal_type,product_hint,template_body,is_active,sort_order,created_at,updated_at")
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (!includeInactive) {
+    query = query.eq("is_active", true);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(normalizeError(error, "Falha ao listar templates de proposta."));
+  return data || [];
+}
+
+export async function createProposalTemplate(payload) {
+  const supabase = ensureSupabase();
+  const name = normalizeProposalTemplateName(payload?.name);
+  const templateBody = normalizeProposalTemplateBody(payload?.template_body);
+  if (!name) throw new Error("Informe o nome do template.");
+  if (!templateBody) throw new Error("Informe o conteúdo do template.");
+
+  const { data, error } = await supabase
+    .from("proposal_templates")
+    .insert({
+      name,
+      proposal_type: normalizeProposalTemplateType(payload?.proposal_type),
+      product_hint: String(payload?.product_hint || "").trim() || null,
+      template_body: templateBody,
+      is_active: payload?.is_active !== false,
+      sort_order: normalizeProposalTemplateSortOrder(payload?.sort_order, 100)
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("proposal_templates_name_unique_idx")) {
+      throw new Error("Já existe um template com este nome.");
+    }
+    throw new Error(normalizeError(error, "Falha ao criar template de proposta."));
+  }
+
+  return data;
+}
+
+export async function updateProposalTemplate(templateId, payload) {
+  const normalizedTemplateId = String(templateId || "").trim();
+  if (!normalizedTemplateId) throw new Error("Template inválido para atualização.");
+
+  const supabase = ensureSupabase();
+  const updatePayload = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "name")) {
+    const name = normalizeProposalTemplateName(payload?.name);
+    if (!name) throw new Error("Informe o nome do template.");
+    updatePayload.name = name;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "proposal_type")) {
+    updatePayload.proposal_type = normalizeProposalTemplateType(payload?.proposal_type);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "product_hint")) {
+    updatePayload.product_hint = String(payload?.product_hint || "").trim() || null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "template_body")) {
+    const templateBody = normalizeProposalTemplateBody(payload?.template_body);
+    if (!templateBody) throw new Error("Informe o conteúdo do template.");
+    updatePayload.template_body = templateBody;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "is_active")) {
+    updatePayload.is_active = Boolean(payload?.is_active);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "sort_order")) {
+    updatePayload.sort_order = normalizeProposalTemplateSortOrder(payload?.sort_order, 100);
+  }
+
+  if (!Object.keys(updatePayload).length) return;
+
+  const { error } = await supabase.from("proposal_templates").update(updatePayload).eq("id", normalizedTemplateId);
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("proposal_templates_name_unique_idx")) {
+      throw new Error("Já existe um template com este nome.");
+    }
+    throw new Error(normalizeError(error, "Falha ao atualizar template de proposta."));
+  }
+}
+
+export async function deleteProposalTemplate(templateId) {
+  const normalizedTemplateId = String(templateId || "").trim();
+  if (!normalizedTemplateId) throw new Error("Template inválido para exclusão.");
+
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("proposal_templates").delete().eq("id", normalizedTemplateId);
+  if (error) throw new Error(normalizeError(error, "Falha ao excluir template de proposta."));
 }
 
 export async function syncOmieCustomers(payload) {

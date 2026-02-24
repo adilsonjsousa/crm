@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   createCompanyLifecycleStage,
+  createProposalTemplate,
   createSystemUser,
   deleteCompanyLifecycleStage,
+  deleteProposalTemplate,
   listCompanyLifecycleStages,
   listOmieCustomerSyncJobs,
+  listProposalTemplates,
   listRdStationSyncJobs,
   listSystemUsers,
   saveCompanyLifecycleStageOrder,
@@ -12,6 +15,7 @@ import {
   syncRdStationCrm,
   syncOmieCustomers,
   updateCompanyLifecycleStage,
+  updateProposalTemplate,
   updateSystemUser
 } from "../lib/revenueApi";
 
@@ -86,6 +90,48 @@ const EMPTY_EDIT_USER_FORM = {
   whatsapp: "",
   role: "sales",
   status: "active"
+};
+
+const PROPOSAL_TEMPLATE_TYPE_OPTIONS = [
+  { value: "", label: "Todos os tipos" },
+  { value: "equipment", label: "Equipamentos" },
+  { value: "supplies", label: "Suprimentos" },
+  { value: "service", label: "Serviços" }
+];
+
+const DEFAULT_PROPOSAL_TEMPLATE_BODY = [
+  "PROPOSTA COMERCIAL {{numero_proposta}}",
+  "",
+  "Empresa: {{empresa_nome}}",
+  "Contato: {{cliente_nome}}",
+  "Data de emissao: {{data_emissao}}",
+  "Validade: {{validade_dias}} dias",
+  "",
+  "Itens da oportunidade:",
+  "{{itens_oportunidade}}",
+  "",
+  "Valor total: {{valor_total}}",
+  "",
+  "Condicoes de pagamento:",
+  "{{condicoes_pagamento}}",
+  "",
+  "Prazo de entrega:",
+  "{{prazo_entrega}}",
+  "",
+  "Garantia:",
+  "{{garantia}}",
+  "",
+  "Observacoes:",
+  "{{observacoes}}"
+].join("\n");
+
+const EMPTY_PROPOSAL_TEMPLATE_FORM = {
+  name: "",
+  proposal_type: "",
+  product_hint: "",
+  sort_order: "100",
+  is_active: true,
+  template_body: DEFAULT_PROPOSAL_TEMPLATE_BODY
 };
 
 function asObject(value) {
@@ -170,6 +216,11 @@ function userStatusLabel(status) {
   return found?.label || String(status || "-");
 }
 
+function proposalTemplateTypeLabel(typeValue) {
+  const found = PROPOSAL_TEMPLATE_TYPE_OPTIONS.find((item) => item.value === String(typeValue || ""));
+  return found?.label || "Todos os tipos";
+}
+
 function userDeliveryMessage(delivery) {
   const map = {
     invite_email_sent: "Convite enviado para o e-mail do usuário.",
@@ -250,6 +301,17 @@ export default function SettingsModule() {
   const [deletingStageId, setDeletingStageId] = useState("");
   const [savingOrder, setSavingOrder] = useState(false);
 
+  const [proposalTemplates, setProposalTemplates] = useState([]);
+  const [proposalTemplatesLoading, setProposalTemplatesLoading] = useState(false);
+  const [proposalTemplatesError, setProposalTemplatesError] = useState("");
+  const [proposalTemplatesSuccess, setProposalTemplatesSuccess] = useState("");
+  const [proposalTemplateForm, setProposalTemplateForm] = useState(EMPTY_PROPOSAL_TEMPLATE_FORM);
+  const [creatingProposalTemplate, setCreatingProposalTemplate] = useState(false);
+  const [editingProposalTemplateId, setEditingProposalTemplateId] = useState("");
+  const [editProposalTemplateForm, setEditProposalTemplateForm] = useState(EMPTY_PROPOSAL_TEMPLATE_FORM);
+  const [savingProposalTemplateId, setSavingProposalTemplateId] = useState("");
+  const [deletingProposalTemplateId, setDeletingProposalTemplateId] = useState("");
+
   const [omieForm, setOmieForm] = useState(() => readOmieFormStorage());
   const [omieError, setOmieError] = useState("");
   const [omieSuccess, setOmieSuccess] = useState("");
@@ -307,6 +369,20 @@ export default function SettingsModule() {
     }
   }
 
+  async function loadProposalTemplates() {
+    setProposalTemplatesLoading(true);
+    setProposalTemplatesError("");
+    try {
+      const rows = await listProposalTemplates({ includeInactive: true });
+      setProposalTemplates(rows);
+    } catch (err) {
+      setProposalTemplatesError(err.message);
+      setProposalTemplates([]);
+    } finally {
+      setProposalTemplatesLoading(false);
+    }
+  }
+
   async function loadOmieHistory() {
     setOmieHistoryLoading(true);
     try {
@@ -334,6 +410,7 @@ export default function SettingsModule() {
   useEffect(() => {
     loadUsers();
     loadStages();
+    loadProposalTemplates();
     loadOmieHistory();
     loadRdHistory();
   }, []);
@@ -590,6 +667,117 @@ export default function SettingsModule() {
       setLifecycleError(err.message);
     } finally {
       setDeletingStageId("");
+    }
+  }
+
+  async function handleCreateProposalTemplate(event) {
+    event.preventDefault();
+    setProposalTemplatesError("");
+    setProposalTemplatesSuccess("");
+    setCreatingProposalTemplate(true);
+
+    try {
+      await createProposalTemplate(proposalTemplateForm);
+      setProposalTemplateForm(EMPTY_PROPOSAL_TEMPLATE_FORM);
+      await loadProposalTemplates();
+      setProposalTemplatesSuccess("Template de proposta criado.");
+    } catch (err) {
+      setProposalTemplatesError(err.message);
+    } finally {
+      setCreatingProposalTemplate(false);
+    }
+  }
+
+  function startEditProposalTemplate(template) {
+    const templateId = String(template?.id || "").trim();
+    if (!templateId) return;
+
+    setProposalTemplatesError("");
+    setProposalTemplatesSuccess("");
+    setEditingProposalTemplateId(templateId);
+    setEditProposalTemplateForm({
+      name: String(template.name || ""),
+      proposal_type: String(template.proposal_type || ""),
+      product_hint: String(template.product_hint || ""),
+      sort_order: String(template.sort_order || "100"),
+      is_active: Boolean(template.is_active),
+      template_body: String(template.template_body || "")
+    });
+  }
+
+  function cancelEditProposalTemplate() {
+    setEditingProposalTemplateId("");
+    setEditProposalTemplateForm(EMPTY_PROPOSAL_TEMPLATE_FORM);
+  }
+
+  async function handleSaveProposalTemplate(event) {
+    event.preventDefault();
+    if (!editingProposalTemplateId) return;
+
+    setProposalTemplatesError("");
+    setProposalTemplatesSuccess("");
+    setSavingProposalTemplateId(editingProposalTemplateId);
+    try {
+      await updateProposalTemplate(editingProposalTemplateId, editProposalTemplateForm);
+      await loadProposalTemplates();
+      setProposalTemplatesSuccess("Template atualizado com sucesso.");
+      cancelEditProposalTemplate();
+    } catch (err) {
+      setProposalTemplatesError(err.message);
+    } finally {
+      setSavingProposalTemplateId("");
+    }
+  }
+
+  async function handleToggleProposalTemplateStatus(template) {
+    const templateId = String(template?.id || "").trim();
+    if (!templateId) return;
+
+    setProposalTemplatesError("");
+    setProposalTemplatesSuccess("");
+    setSavingProposalTemplateId(templateId);
+
+    try {
+      await updateProposalTemplate(templateId, {
+        is_active: !Boolean(template.is_active)
+      });
+      await loadProposalTemplates();
+      setProposalTemplatesSuccess(Boolean(template.is_active) ? "Template desativado." : "Template ativado.");
+      if (editingProposalTemplateId === templateId) {
+        setEditProposalTemplateForm((prev) => ({
+          ...prev,
+          is_active: !Boolean(template.is_active)
+        }));
+      }
+    } catch (err) {
+      setProposalTemplatesError(err.message);
+    } finally {
+      setSavingProposalTemplateId("");
+    }
+  }
+
+  async function handleDeleteProposalTemplate(template) {
+    const templateId = String(template?.id || "").trim();
+    if (!templateId) return;
+
+    const confirmed = window.confirm(`Excluir template "${template.name}"?`);
+    if (!confirmed) return;
+
+    setProposalTemplatesError("");
+    setProposalTemplatesSuccess("");
+    setDeletingProposalTemplateId(templateId);
+
+    try {
+      await deleteProposalTemplate(templateId);
+      await loadProposalTemplates();
+      setProposalTemplatesSuccess("Template excluído.");
+      if (editingProposalTemplateId === templateId) {
+        cancelEditProposalTemplate();
+      }
+    } catch (err) {
+      setProposalTemplatesError(err.message);
+    } finally {
+      setDeletingProposalTemplateId("");
     }
   }
 
@@ -1285,6 +1473,230 @@ export default function SettingsModule() {
           </div>
         </article>
       </div>
+
+      <article className="panel top-gap">
+        <h2>Templates de proposta</h2>
+        <p className="muted">
+          Crie modelos reutilizáveis para propostas e aplique manualmente por oportunidade no Pipeline.
+        </p>
+
+        {proposalTemplatesError ? <p className="error-text">{proposalTemplatesError}</p> : null}
+        {proposalTemplatesSuccess ? <p className="success-text">{proposalTemplatesSuccess}</p> : null}
+
+        <div className="settings-users-layout top-gap">
+          <form className="form-grid" onSubmit={handleCreateProposalTemplate}>
+            <h3>Novo template</h3>
+            <input
+              required
+              placeholder="Nome do template (ex.: Canon imagePRESS V700)"
+              value={proposalTemplateForm.name}
+              onChange={(event) => setProposalTemplateForm((prev) => ({ ...prev, name: event.target.value }))}
+            />
+            <div className="settings-users-selects">
+              <label className="settings-field">
+                <span>Tipo alvo</span>
+                <select
+                  value={proposalTemplateForm.proposal_type}
+                  onChange={(event) => setProposalTemplateForm((prev) => ({ ...prev, proposal_type: event.target.value }))}
+                >
+                  {PROPOSAL_TEMPLATE_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value || "all"} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="settings-field">
+                <span>Ordem</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={9999}
+                  value={proposalTemplateForm.sort_order}
+                  onChange={(event) => setProposalTemplateForm((prev) => ({ ...prev, sort_order: event.target.value }))}
+                />
+              </label>
+            </div>
+            <input
+              placeholder="Dica de produto (opcional, ex.: imagePRESS V700)"
+              value={proposalTemplateForm.product_hint}
+              onChange={(event) => setProposalTemplateForm((prev) => ({ ...prev, product_hint: event.target.value }))}
+            />
+            <label className="checkbox-inline">
+              <input
+                type="checkbox"
+                checked={proposalTemplateForm.is_active}
+                onChange={(event) => setProposalTemplateForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+              />
+              Template ativo
+            </label>
+            <textarea
+              className="settings-template-body"
+              required
+              placeholder="Corpo do template"
+              value={proposalTemplateForm.template_body}
+              onChange={(event) => setProposalTemplateForm((prev) => ({ ...prev, template_body: event.target.value }))}
+            />
+            <p className="proposal-placeholder-help">
+              Placeholders: <code>{"{{numero_proposta}}"}</code>, <code>{"{{cliente_nome}}"}</code>,{" "}
+              <code>{"{{empresa_nome}}"}</code>, <code>{"{{itens_oportunidade}}"}</code>,{" "}
+              <code>{"{{valor_total}}"}</code>, <code>{"{{condicoes_pagamento}}"}</code>,{" "}
+              <code>{"{{prazo_entrega}}"}</code>, <code>{"{{garantia}}"}</code>, <code>{"{{observacoes}}"}</code>
+            </p>
+            <button type="submit" className="btn-primary" disabled={creatingProposalTemplate}>
+              {creatingProposalTemplate ? "Salvando..." : "Criar template"}
+            </button>
+          </form>
+
+          <div className="settings-users-summary">
+            <h3>Resumo</h3>
+            <p className="muted">{proposalTemplates.length} template(s) cadastrado(s)</p>
+            <div className="inline-actions">
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={loadProposalTemplates}
+                disabled={proposalTemplatesLoading || creatingProposalTemplate}
+              >
+                {proposalTemplatesLoading ? "Atualizando..." : "Atualizar templates"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="table-wrap top-gap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>Tipo</th>
+                <th>Produto</th>
+                <th>Ordem</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {proposalTemplates.map((template) => (
+                <tr key={template.id}>
+                  <td>{template.name}</td>
+                  <td>{proposalTemplateTypeLabel(template.proposal_type)}</td>
+                  <td>{template.product_hint || "-"}</td>
+                  <td>{template.sort_order || 100}</td>
+                  <td>{template.is_active ? "Ativo" : "Inativo"}</td>
+                  <td>
+                    <div className="inline-actions">
+                      <button
+                        type="button"
+                        className="btn-ghost btn-table-action"
+                        onClick={() => startEditProposalTemplate(template)}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost btn-table-action"
+                        onClick={() => handleToggleProposalTemplateStatus(template)}
+                        disabled={savingProposalTemplateId === template.id}
+                      >
+                        {savingProposalTemplateId === template.id
+                          ? "Salvando..."
+                          : template.is_active
+                            ? "Desativar"
+                            : "Ativar"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost btn-table-action"
+                        onClick={() => handleDeleteProposalTemplate(template)}
+                        disabled={deletingProposalTemplateId === template.id}
+                      >
+                        {deletingProposalTemplateId === template.id ? "Excluindo..." : "Excluir"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!proposalTemplates.length && !proposalTemplatesLoading ? (
+                <tr>
+                  <td colSpan={6} className="muted">
+                    Nenhum template cadastrado.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        {editingProposalTemplateId ? (
+          <form className="form-grid top-gap settings-user-edit-form" onSubmit={handleSaveProposalTemplate}>
+            <h3>Editar template</h3>
+            <input
+              required
+              placeholder="Nome do template"
+              value={editProposalTemplateForm.name}
+              onChange={(event) => setEditProposalTemplateForm((prev) => ({ ...prev, name: event.target.value }))}
+            />
+            <div className="settings-users-selects">
+              <label className="settings-field">
+                <span>Tipo alvo</span>
+                <select
+                  value={editProposalTemplateForm.proposal_type}
+                  onChange={(event) => setEditProposalTemplateForm((prev) => ({ ...prev, proposal_type: event.target.value }))}
+                >
+                  {PROPOSAL_TEMPLATE_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value || "all"} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="settings-field">
+                <span>Ordem</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={9999}
+                  value={editProposalTemplateForm.sort_order}
+                  onChange={(event) => setEditProposalTemplateForm((prev) => ({ ...prev, sort_order: event.target.value }))}
+                />
+              </label>
+            </div>
+            <input
+              placeholder="Dica de produto (opcional)"
+              value={editProposalTemplateForm.product_hint}
+              onChange={(event) => setEditProposalTemplateForm((prev) => ({ ...prev, product_hint: event.target.value }))}
+            />
+            <label className="checkbox-inline">
+              <input
+                type="checkbox"
+                checked={editProposalTemplateForm.is_active}
+                onChange={(event) => setEditProposalTemplateForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+              />
+              Template ativo
+            </label>
+            <textarea
+              className="settings-template-body"
+              required
+              value={editProposalTemplateForm.template_body}
+              onChange={(event) => setEditProposalTemplateForm((prev) => ({ ...prev, template_body: event.target.value }))}
+            />
+            <div className="inline-actions">
+              <button type="submit" className="btn-primary" disabled={savingProposalTemplateId === editingProposalTemplateId}>
+                {savingProposalTemplateId === editingProposalTemplateId ? "Salvando..." : "Salvar template"}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={cancelEditProposalTemplate}
+                disabled={savingProposalTemplateId === editingProposalTemplateId}
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        ) : null}
+      </article>
 
       <article className="panel top-gap">
         <h2>Integração RD Station CRM</h2>

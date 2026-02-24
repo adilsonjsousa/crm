@@ -7,6 +7,7 @@ import {
   listCompanyOptions,
   listLatestOrdersByOpportunity,
   listOpportunities,
+  listProposalTemplates,
   listSystemUsers,
   updateOpportunity,
   updateOpportunityStage
@@ -299,6 +300,42 @@ function resolveProposalTemplateProfile({ proposalType = "equipment", product = 
     label: `Tipo: ${proposalTypeLabel(normalizedType)}`,
     template: getRdTemplateByType(normalizedType)
   };
+}
+
+function pickSavedTemplateForOpportunity(templates = [], { proposalType = "equipment", product = "" } = {}) {
+  const activeTemplates = (templates || [])
+    .filter((entry) => Boolean(entry?.is_active) && String(entry?.template_body || "").trim())
+    .slice()
+    .sort((a, b) => {
+      const orderA = Number(a.sort_order || 100);
+      const orderB = Number(b.sort_order || 100);
+      if (orderA !== orderB) return orderA - orderB;
+      return String(a.name || "").localeCompare(String(b.name || ""), "pt-BR");
+    });
+  if (!activeTemplates.length) return null;
+
+  const normalizedType = normalizeProposalType(proposalType);
+  const normalizedProduct = normalizeProposalLookupKey(product);
+
+  if (normalizedProduct) {
+    const productMatch = activeTemplates.find((entry) => {
+      const hint = normalizeProposalLookupKey(entry.product_hint || "");
+      if (!hint || hint.length < 3) return false;
+      if (entry.proposal_type && normalizeProposalType(entry.proposal_type) !== normalizedType) return false;
+      return normalizedProduct.includes(hint);
+    });
+    if (productMatch) return productMatch;
+  }
+
+  const typedMatch = activeTemplates.find(
+    (entry) => entry.proposal_type && normalizeProposalType(entry.proposal_type) === normalizedType
+  );
+  if (typedMatch) return typedMatch;
+
+  const genericMatch = activeTemplates.find((entry) => !entry.proposal_type);
+  if (genericMatch) return genericMatch;
+
+  return activeTemplates[0];
 }
 
 function readStoredProposalTemplateProfiles() {
@@ -792,7 +829,7 @@ function ensureProposalItems(items = [], fallbackItem = null) {
   return isOpportunityItemComplete(fallbackNormalized) ? [fallbackNormalized] : [];
 }
 
-function createProposalDraft({ opportunity, linkedOrder, contacts }) {
+function createProposalDraft({ opportunity, linkedOrder, contacts, templates = [] }) {
   const parsedTitle = parseOpportunityTitle(opportunity?.title || "");
   const parsedItems = parseOpportunityLineItems(opportunity);
   const fallbackPrimaryItem = normalizeOpportunityItem({
@@ -805,6 +842,10 @@ function createProposalDraft({ opportunity, linkedOrder, contacts }) {
   const primaryItem = opportunityItems[0] || fallbackPrimaryItem;
   const proposalType = normalizeProposalType(primaryItem.opportunity_type || parsedTitle.opportunity_type);
   const templateProfile = resolveProposalTemplateProfile({
+    proposalType,
+    product: primaryItem.title_product
+  });
+  const selectedTemplate = pickSavedTemplateForOpportunity(templates, {
     proposalType,
     product: primaryItem.title_product
   });
@@ -823,6 +864,8 @@ function createProposalDraft({ opportunity, linkedOrder, contacts }) {
     category: primaryItem.title_subcategory || "",
     product: primaryItem.title_product || String(opportunity?.title || "").trim(),
     opportunity_items: opportunityItems,
+    selected_template_id: selectedTemplate?.id || "",
+    selected_template_name: selectedTemplate?.name || "",
     template_profile_key: templateProfile.key,
     template_profile_label: templateProfile.label,
     estimated_value: Number.isFinite(totalValue) ? totalValue : 0,
@@ -836,7 +879,7 @@ function createProposalDraft({ opportunity, linkedOrder, contacts }) {
     client_whatsapp: formatBrazilPhone(preferredContact?.whatsapp || preferredContact?.phone || opportunity?.companies?.phone || ""),
     send_channel: "whatsapp",
     enable_send: false,
-    template_body: getStoredProposalTemplate(templateProfile)
+    template_body: selectedTemplate?.template_body || getStoredProposalTemplate(templateProfile)
   };
 }
 
@@ -868,6 +911,8 @@ export default function PipelineModule({
   const [proposalEditor, setProposalEditor] = useState(null);
   const [proposalContacts, setProposalContacts] = useState([]);
   const [proposalLoadingContacts, setProposalLoadingContacts] = useState(false);
+  const [savedProposalTemplates, setSavedProposalTemplates] = useState([]);
+  const [savedProposalTemplatesLoading, setSavedProposalTemplatesLoading] = useState(false);
   const [proposalLogoDataUrl, setProposalLogoDataUrl] = useState("");
   const [sendingProposal, setSendingProposal] = useState(false);
   const [customerHistoryModal, setCustomerHistoryModal] = useState({
@@ -1070,6 +1115,18 @@ export default function PipelineModule({
     }
   }
 
+  async function loadSavedProposalTemplates({ silent = false } = {}) {
+    if (!silent) setSavedProposalTemplatesLoading(true);
+    try {
+      const templates = await listProposalTemplates({ includeInactive: false });
+      setSavedProposalTemplates(templates);
+    } catch (err) {
+      if (!silent) setError(err.message);
+    } finally {
+      if (!silent) setSavedProposalTemplatesLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadUsersContext();
   }, []);
@@ -1077,6 +1134,10 @@ export default function PipelineModule({
   useEffect(() => {
     load();
   }, [viewerUserId, viewerRole]);
+
+  useEffect(() => {
+    loadSavedProposalTemplates({ silent: true });
+  }, []);
 
   useEffect(() => {
     const nextDefaults = normalizePipelineFormDefaults({
@@ -1475,10 +1536,21 @@ export default function PipelineModule({
     setProposalLoadingContacts(true);
 
     try {
-      const contacts = item.company_id ? await listCompanyContacts(item.company_id) : [];
+      const [contacts, templates] = await Promise.all([
+        item.company_id ? listCompanyContacts(item.company_id) : Promise.resolve([]),
+        listProposalTemplates({ includeInactive: false })
+      ]);
       const linkedOrder = proposalsByOpportunity[item.id] || null;
+      setSavedProposalTemplates(templates);
       setProposalContacts(contacts);
-      setProposalEditor(createProposalDraft({ opportunity: item, linkedOrder, contacts }));
+      setProposalEditor(
+        createProposalDraft({
+          opportunity: item,
+          linkedOrder,
+          contacts,
+          templates
+        })
+      );
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1530,6 +1602,30 @@ export default function PipelineModule({
     });
   }
 
+  function handleProposalTemplateSelection(templateId) {
+    const selectedId = String(templateId || "").trim();
+    const selectedTemplate = savedProposalTemplates.find((item) => String(item.id || "") === selectedId);
+    setProposalEditor((prev) => {
+      if (!prev) return prev;
+      if (!selectedTemplate) {
+        return {
+          ...prev,
+          selected_template_id: "",
+          selected_template_name: ""
+        };
+      }
+      return {
+        ...prev,
+        selected_template_id: selectedTemplate.id,
+        selected_template_name: selectedTemplate.name || "",
+        template_body: String(selectedTemplate.template_body || prev.template_body || "")
+      };
+    });
+    if (selectedTemplate) {
+      setSuccess(`Template aplicado: ${selectedTemplate.name}.`);
+    }
+  }
+
   function handleProposalContactChange(contactId) {
     const contact = proposalContacts.find((item) => item.id === contactId);
     setProposalEditor((prev) => {
@@ -1556,6 +1652,25 @@ export default function PipelineModule({
 
   function handleApplyRecommendedTemplate() {
     if (!proposalEditor) return;
+    const selectedTemplate = pickSavedTemplateForOpportunity(savedProposalTemplates, {
+      proposalType: proposalEditor.proposal_type,
+      product: proposalEditor.product
+    });
+    if (selectedTemplate) {
+      setProposalEditor((prev) =>
+        prev
+          ? {
+              ...prev,
+              selected_template_id: selectedTemplate.id,
+              selected_template_name: selectedTemplate.name || "",
+              template_body: String(selectedTemplate.template_body || prev.template_body || "")
+            }
+          : prev
+      );
+      setSuccess(`Template recomendado aplicado (${selectedTemplate.name}).`);
+      return;
+    }
+
     const profile = resolveProposalTemplateProfile({
       proposalType: proposalEditor.proposal_type,
       product: proposalEditor.product
@@ -1564,6 +1679,8 @@ export default function PipelineModule({
       prev
         ? {
             ...prev,
+            selected_template_id: "",
+            selected_template_name: "",
             template_profile_key: profile.key,
             template_profile_label: profile.label,
             template_body: getStoredProposalTemplate(profile)
@@ -1579,11 +1696,13 @@ export default function PipelineModule({
     setProposalEditor((prev) =>
       prev
         ? {
-            ...prev,
-            template_profile_key: `type:${normalizeProposalType(prev.proposal_type)}`,
-            template_profile_label: `Tipo: ${typeLabel}`,
-            template_body: getRdTemplateByType(prev.proposal_type)
-          }
+          ...prev,
+          selected_template_id: "",
+          selected_template_name: "",
+          template_profile_key: `type:${normalizeProposalType(prev.proposal_type)}`,
+          template_profile_label: `Tipo: ${typeLabel}`,
+          template_body: getRdTemplateByType(prev.proposal_type)
+        }
         : prev
     );
     setSuccess(`Template RD (${typeLabel}) aplicado nesta proposta.`);
@@ -1593,11 +1712,13 @@ export default function PipelineModule({
     setProposalEditor((prev) =>
       prev
         ? {
-            ...prev,
-            template_profile_key: "basic",
-            template_profile_label: "Basico",
-            template_body: BASIC_PROPOSAL_TEMPLATE
-          }
+          ...prev,
+          selected_template_id: "",
+          selected_template_name: "",
+          template_profile_key: "basic",
+          template_profile_label: "Basico",
+          template_body: BASIC_PROPOSAL_TEMPLATE
+        }
         : prev
     );
     setSuccess("Template basico aplicado nesta proposta.");
@@ -2141,6 +2262,20 @@ export default function PipelineModule({
                     </option>
                   ))}
                 </select>
+                <select
+                  value={proposalEditor.selected_template_id || ""}
+                  onChange={(event) => handleProposalTemplateSelection(event.target.value)}
+                >
+                  <option value="">Template salvo (manual)</option>
+                  {savedProposalTemplates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                      {template.proposal_type
+                        ? ` · ${SALES_TYPES.find((type) => type.value === template.proposal_type)?.label || "Tipo"}`
+                        : " · Todos os tipos"}
+                    </option>
+                  ))}
+                </select>
                 <select value={proposalEditor.contact_id} onChange={(event) => handleProposalContactChange(event.target.value)}>
                   <option value="">Selecionar contato do cliente</option>
                   {proposalContacts.map((contact) => (
@@ -2210,11 +2345,21 @@ export default function PipelineModule({
                   onChange={(event) => handleProposalField("template_body", event.target.value)}
                 />
                 <p className="proposal-placeholder-help">
-                  Template recomendado:{" "}
-                  <strong>{proposalTemplateProfile?.label || proposalEditor.template_profile_label || "Tipo padrao"}</strong>
+                  Template atual:{" "}
+                  <strong>
+                    {proposalEditor.selected_template_name ||
+                      proposalTemplateProfile?.label ||
+                      proposalEditor.template_profile_label ||
+                      "Manual"}
+                  </strong>
                   {" · "}
                   {proposalItemsForDocument.length} item(ns) na oportunidade.
                 </p>
+                {!savedProposalTemplates.length ? (
+                  <p className="warning-text proposal-warning">
+                    Nenhum template salvo em Configurações. Você pode criar templates e depois aplicar por oportunidade.
+                  </p>
+                ) : null}
                 <p className="proposal-placeholder-help">
                   Placeholders:{" "}
                   <code>{"{{numero_proposta}}"}</code>, <code>{"{{cliente_nome}}"}</code>,{" "}
@@ -2227,6 +2372,14 @@ export default function PipelineModule({
                   <code>{"{{garantia}}"}</code>, <code>{"{{observacoes}}"}</code>
                 </p>
                 <div className="inline-actions">
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => loadSavedProposalTemplates({ silent: false })}
+                    disabled={savedProposalTemplatesLoading}
+                  >
+                    {savedProposalTemplatesLoading ? "Atualizando templates..." : "Atualizar templates"}
+                  </button>
                   <button type="button" className="btn-ghost" onClick={handleApplyRecommendedTemplate}>
                     Aplicar recomendado
                   </button>

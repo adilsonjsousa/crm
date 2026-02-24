@@ -977,6 +977,12 @@ a.btn-table-action {
   grid-column: 1 / -1;
 }
 
+.settings-template-body {
+  min-height: 220px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.8rem;
+}
+
 .theme-toggle {
   width: 100%;
   border: 1px solid rgba(var(--accent-rgb), 0.46);
