@@ -2007,8 +2007,13 @@ export async function createProposalProductProfile(payload) {
 
   const name = normalizeProposalTemplateName(payload?.name);
   const productName = normalizeProposalTemplateName(payload?.product_name);
+  const proposalType = normalizeProposalTemplateType(payload?.proposal_type);
+  const productSubcategory = normalizeProposalLibraryOptionalText(payload?.product_subcategory);
   if (!name) throw new Error("Informe o nome do perfil do produto.");
   if (!productName) throw new Error("Informe o nome do produto.");
+  if (proposalType && !productSubcategory) {
+    throw new Error("Informe a sub-categoria do produto.");
+  }
 
   const parsedBasePrice = normalizeProposalLibraryNullableNumber(payload?.base_price);
   if (String(payload?.base_price ?? "").trim() && parsedBasePrice === null) {
@@ -2019,8 +2024,8 @@ export async function createProposalProductProfile(payload) {
     .from("proposal_product_profiles")
     .insert({
       name,
-      proposal_type: normalizeProposalTemplateType(payload?.proposal_type),
-      product_subcategory: normalizeProposalLibraryOptionalText(payload?.product_subcategory),
+      proposal_type: proposalType,
+      product_subcategory: productSubcategory,
       product_code: normalizeProposalLibraryOptionalText(payload?.product_code),
       product_name: productName,
       headline: normalizeProposalLibraryOptionalText(payload?.headline),

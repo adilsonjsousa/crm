@@ -30,6 +30,7 @@ import {
   updateProposalTemplate,
   updateSystemUser
 } from "../lib/revenueApi";
+import { getSubcategoriesByType } from "../lib/productCatalog";
 
 const OMIE_STORAGE_KEY = "crm.settings.omie.customers.v1";
 const RDSTATION_STORAGE_KEY = "crm.settings.rdstation.crm.v1";
@@ -453,6 +454,14 @@ export default function SettingsModule() {
   const omieResultSummary = useMemo(() => asObject(omieResult), [omieResult]);
   const rdResultSummary = useMemo(() => asObject(rdResult), [rdResult]);
   const activeUsersCount = useMemo(() => users.filter((item) => item.status === "active").length, [users]);
+  const createProfileSubcategoryOptions = useMemo(
+    () => getSubcategoriesByType(proposalProductProfileForm.proposal_type),
+    [proposalProductProfileForm.proposal_type]
+  );
+  const editProfileSubcategoryOptions = useMemo(
+    () => getSubcategoriesByType(editProposalProductProfileForm.proposal_type),
+    [editProposalProductProfileForm.proposal_type]
+  );
 
   async function loadUsers() {
     setUsersLoading(true);
@@ -2315,13 +2324,6 @@ export default function SettingsModule() {
                 onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))}
               />
               <input
-                placeholder="Sub-categoria (ex.: PRODUÇÃO COLOR)"
-                value={proposalProductProfileForm.product_subcategory}
-                onChange={(event) =>
-                  setProposalProductProfileForm((prev) => ({ ...prev, product_subcategory: event.target.value }))
-                }
-              />
-              <input
                 placeholder="Código do produto OMIE (opcional)"
                 value={proposalProductProfileForm.product_code}
                 onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))}
@@ -2336,7 +2338,15 @@ export default function SettingsModule() {
                   <span>Categoria</span>
                   <select
                     value={proposalProductProfileForm.proposal_type}
-                    onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, proposal_type: event.target.value }))}
+                    onChange={(event) => {
+                      const nextType = event.target.value;
+                      const nextOptions = getSubcategoriesByType(nextType);
+                      setProposalProductProfileForm((prev) => ({
+                        ...prev,
+                        proposal_type: nextType,
+                        product_subcategory: nextOptions.includes(prev.product_subcategory) ? prev.product_subcategory : ""
+                      }));
+                    }}
                   >
                     {PROPOSAL_PRODUCT_TYPE_OPTIONS.map((option) => (
                       <option key={option.value || "generic"} value={option.value}>
@@ -2345,6 +2355,30 @@ export default function SettingsModule() {
                     ))}
                   </select>
                 </label>
+                <label className="settings-field">
+                  <span>Sub-categoria</span>
+                  <select
+                    value={proposalProductProfileForm.product_subcategory}
+                    onChange={(event) =>
+                      setProposalProductProfileForm((prev) => ({ ...prev, product_subcategory: event.target.value }))
+                    }
+                    disabled={!proposalProductProfileForm.proposal_type}
+                    required={Boolean(proposalProductProfileForm.proposal_type)}
+                  >
+                    <option value="">
+                      {proposalProductProfileForm.proposal_type
+                        ? "Selecione a sub-categoria"
+                        : "Selecione a categoria primeiro"}
+                    </option>
+                    {createProfileSubcategoryOptions.map((subcategory) => (
+                      <option key={subcategory} value={subcategory}>
+                        {subcategory}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="settings-users-selects">
                 <label className="settings-field">
                   <span>Valor base</span>
                   <input
@@ -2355,8 +2389,6 @@ export default function SettingsModule() {
                     onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, base_price: event.target.value }))}
                   />
                 </label>
-              </div>
-              <div className="settings-users-selects">
                 <label className="settings-field">
                   <span>Ordem</span>
                   <input
@@ -2367,15 +2399,15 @@ export default function SettingsModule() {
                     onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, sort_order: event.target.value }))}
                   />
                 </label>
-                <label className="checkbox-inline">
-                  <input
-                    type="checkbox"
-                    checked={proposalProductProfileForm.is_active}
-                    onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, is_active: event.target.checked }))}
-                  />
-                  Perfil ativo
-                </label>
               </div>
+              <label className="checkbox-inline">
+                <input
+                  type="checkbox"
+                  checked={proposalProductProfileForm.is_active}
+                  onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+                />
+                Perfil ativo
+              </label>
               <textarea
                 className="settings-library-textarea"
                 placeholder="Texto introdutório"
@@ -2516,13 +2548,6 @@ export default function SettingsModule() {
                   }
                 />
                 <input
-                  placeholder="Sub-categoria"
-                  value={editProposalProductProfileForm.product_subcategory}
-                  onChange={(event) =>
-                    setEditProposalProductProfileForm((prev) => ({ ...prev, product_subcategory: event.target.value }))
-                  }
-                />
-                <input
                   placeholder="Código do produto"
                   value={editProposalProductProfileForm.product_code}
                   onChange={(event) =>
@@ -2534,9 +2559,15 @@ export default function SettingsModule() {
                     <span>Categoria</span>
                     <select
                       value={editProposalProductProfileForm.proposal_type}
-                      onChange={(event) =>
-                        setEditProposalProductProfileForm((prev) => ({ ...prev, proposal_type: event.target.value }))
-                      }
+                      onChange={(event) => {
+                        const nextType = event.target.value;
+                        const nextOptions = getSubcategoriesByType(nextType);
+                        setEditProposalProductProfileForm((prev) => ({
+                          ...prev,
+                          proposal_type: nextType,
+                          product_subcategory: nextOptions.includes(prev.product_subcategory) ? prev.product_subcategory : ""
+                        }));
+                      }}
                     >
                       {PROPOSAL_PRODUCT_TYPE_OPTIONS.map((option) => (
                         <option key={option.value || "generic"} value={option.value}>
@@ -2545,6 +2576,30 @@ export default function SettingsModule() {
                       ))}
                     </select>
                   </label>
+                  <label className="settings-field">
+                    <span>Sub-categoria</span>
+                    <select
+                      value={editProposalProductProfileForm.product_subcategory}
+                      onChange={(event) =>
+                        setEditProposalProductProfileForm((prev) => ({ ...prev, product_subcategory: event.target.value }))
+                      }
+                      disabled={!editProposalProductProfileForm.proposal_type}
+                      required={Boolean(editProposalProductProfileForm.proposal_type)}
+                    >
+                      <option value="">
+                        {editProposalProductProfileForm.proposal_type
+                          ? "Selecione a sub-categoria"
+                          : "Selecione a categoria primeiro"}
+                      </option>
+                      {editProfileSubcategoryOptions.map((subcategory) => (
+                        <option key={subcategory} value={subcategory}>
+                          {subcategory}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="settings-users-selects">
                   <label className="settings-field">
                     <span>Valor base</span>
                     <input
