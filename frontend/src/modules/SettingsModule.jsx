@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   createCompanyLifecycleStage,
+  createProposalCommercialTerms,
+  createProposalCppRow,
+  createProposalProductProfile,
   createProposalTemplate,
   createSystemUser,
   deleteCompanyLifecycleStage,
+  deleteProposalCommercialTerms,
+  deleteProposalCppRow,
+  deleteProposalProductProfile,
   deleteProposalTemplate,
   listCompanyLifecycleStages,
   listOmieCustomerSyncJobs,
+  listProposalCommercialTerms,
+  listProposalCppRows,
+  listProposalProductProfiles,
   listProposalTemplates,
   listRdStationSyncJobs,
   listSystemUsers,
@@ -15,6 +24,9 @@ import {
   syncRdStationCrm,
   syncOmieCustomers,
   updateCompanyLifecycleStage,
+  updateProposalCommercialTerms,
+  updateProposalCppRow,
+  updateProposalProductProfile,
   updateProposalTemplate,
   updateSystemUser
 } from "../lib/revenueApi";
@@ -99,6 +111,18 @@ const PROPOSAL_TEMPLATE_TYPE_OPTIONS = [
   { value: "service", label: "Serviços" }
 ];
 
+const PROPOSAL_PRODUCT_TYPE_OPTIONS = [
+  { value: "", label: "Sem tipo específico" },
+  { value: "equipment", label: "Equipamentos" },
+  { value: "supplies", label: "Suprimentos" },
+  { value: "service", label: "Serviços" }
+];
+
+const PROPOSAL_CPP_SECTION_OPTIONS = [
+  { value: "toner", label: "Toner" },
+  { value: "components", label: "Componentes" }
+];
+
 const DEFAULT_PROPOSAL_TEMPLATE_BODY = [
   "PROPOSTA COMERCIAL {{numero_proposta}}",
   "",
@@ -134,6 +158,47 @@ const EMPTY_PROPOSAL_TEMPLATE_FORM = {
   template_body: DEFAULT_PROPOSAL_TEMPLATE_BODY
 };
 
+const EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM = {
+  name: "",
+  proposal_type: "",
+  product_code: "",
+  product_name: "",
+  headline: "",
+  intro_text: "",
+  technical_text: "",
+  video_url: "",
+  included_accessories: "",
+  optional_accessories: "",
+  base_price: "0",
+  notes: "",
+  is_active: true,
+  sort_order: "100"
+};
+
+const EMPTY_PROPOSAL_CPP_ROW_FORM = {
+  product_profile_id: "",
+  section: "toner",
+  item_name: "",
+  manufacturer_durability: "",
+  graphic_durability: "",
+  item_value: "",
+  cpp_cost: "",
+  sort_order: "100",
+  is_active: true
+};
+
+const EMPTY_PROPOSAL_COMMERCIAL_TERMS_FORM = {
+  name: "",
+  payment_terms: "",
+  included_offer: "",
+  excluded_offer: "",
+  financing_terms: "",
+  closing_text: "",
+  is_default: false,
+  is_active: true,
+  sort_order: "100"
+};
+
 function asObject(value) {
   if (value && typeof value === "object" && !Array.isArray(value)) return value;
   return {};
@@ -143,6 +208,14 @@ function clampInteger(value, min, max, fallback) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, Math.floor(parsed)));
+}
+
+function parseBoolean(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "sim") return true;
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "nao") return false;
+  return fallback;
 }
 
 function sanitizeRdAccessToken(value) {
@@ -219,6 +292,16 @@ function userStatusLabel(status) {
 function proposalTemplateTypeLabel(typeValue) {
   const found = PROPOSAL_TEMPLATE_TYPE_OPTIONS.find((item) => item.value === String(typeValue || ""));
   return found?.label || "Todos os tipos";
+}
+
+function proposalProductTypeLabel(typeValue) {
+  const found = PROPOSAL_PRODUCT_TYPE_OPTIONS.find((item) => item.value === String(typeValue || ""));
+  return found?.label || "Sem tipo específico";
+}
+
+function proposalCppSectionLabel(sectionValue) {
+  const found = PROPOSAL_CPP_SECTION_OPTIONS.find((item) => item.value === String(sectionValue || ""));
+  return found?.label || "Toner";
 }
 
 function userDeliveryMessage(delivery) {
@@ -312,6 +395,42 @@ export default function SettingsModule() {
   const [savingProposalTemplateId, setSavingProposalTemplateId] = useState("");
   const [deletingProposalTemplateId, setDeletingProposalTemplateId] = useState("");
 
+  const [proposalProductProfiles, setProposalProductProfiles] = useState([]);
+  const [proposalProductProfilesLoading, setProposalProductProfilesLoading] = useState(false);
+  const [proposalProductProfilesError, setProposalProductProfilesError] = useState("");
+  const [proposalProductProfilesSuccess, setProposalProductProfilesSuccess] = useState("");
+  const [proposalProductProfileForm, setProposalProductProfileForm] = useState(EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM);
+  const [creatingProposalProductProfile, setCreatingProposalProductProfile] = useState(false);
+  const [editingProposalProductProfileId, setEditingProposalProductProfileId] = useState("");
+  const [editProposalProductProfileForm, setEditProposalProductProfileForm] = useState(EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM);
+  const [savingProposalProductProfileId, setSavingProposalProductProfileId] = useState("");
+  const [deletingProposalProductProfileId, setDeletingProposalProductProfileId] = useState("");
+
+  const [proposalCppRows, setProposalCppRows] = useState([]);
+  const [proposalCppRowsLoading, setProposalCppRowsLoading] = useState(false);
+  const [proposalCppRowsError, setProposalCppRowsError] = useState("");
+  const [proposalCppRowsSuccess, setProposalCppRowsSuccess] = useState("");
+  const [proposalCppRowForm, setProposalCppRowForm] = useState(EMPTY_PROPOSAL_CPP_ROW_FORM);
+  const [creatingProposalCppRow, setCreatingProposalCppRow] = useState(false);
+  const [selectedProposalCppProfileId, setSelectedProposalCppProfileId] = useState("");
+  const [editingProposalCppRowId, setEditingProposalCppRowId] = useState("");
+  const [editProposalCppRowForm, setEditProposalCppRowForm] = useState(EMPTY_PROPOSAL_CPP_ROW_FORM);
+  const [savingProposalCppRowId, setSavingProposalCppRowId] = useState("");
+  const [deletingProposalCppRowId, setDeletingProposalCppRowId] = useState("");
+
+  const [proposalCommercialTerms, setProposalCommercialTerms] = useState([]);
+  const [proposalCommercialTermsLoading, setProposalCommercialTermsLoading] = useState(false);
+  const [proposalCommercialTermsError, setProposalCommercialTermsError] = useState("");
+  const [proposalCommercialTermsSuccess, setProposalCommercialTermsSuccess] = useState("");
+  const [proposalCommercialTermsForm, setProposalCommercialTermsForm] = useState(EMPTY_PROPOSAL_COMMERCIAL_TERMS_FORM);
+  const [creatingProposalCommercialTerms, setCreatingProposalCommercialTerms] = useState(false);
+  const [editingProposalCommercialTermsId, setEditingProposalCommercialTermsId] = useState("");
+  const [editProposalCommercialTermsForm, setEditProposalCommercialTermsForm] = useState(
+    EMPTY_PROPOSAL_COMMERCIAL_TERMS_FORM
+  );
+  const [savingProposalCommercialTermsId, setSavingProposalCommercialTermsId] = useState("");
+  const [deletingProposalCommercialTermsId, setDeletingProposalCommercialTermsId] = useState("");
+
   const [omieForm, setOmieForm] = useState(() => readOmieFormStorage());
   const [omieError, setOmieError] = useState("");
   const [omieSuccess, setOmieSuccess] = useState("");
@@ -383,6 +502,66 @@ export default function SettingsModule() {
     }
   }
 
+  async function loadProposalProductProfiles() {
+    setProposalProductProfilesLoading(true);
+    setProposalProductProfilesError("");
+    try {
+      const rows = await listProposalProductProfiles({ includeInactive: true });
+      setProposalProductProfiles(rows);
+      setSelectedProposalCppProfileId((previous) => {
+        if (previous && rows.some((row) => row.id === previous)) return previous;
+        return rows[0]?.id || "";
+      });
+    } catch (err) {
+      setProposalProductProfilesError(err.message);
+      setProposalProductProfiles([]);
+      setSelectedProposalCppProfileId("");
+    } finally {
+      setProposalProductProfilesLoading(false);
+    }
+  }
+
+  async function loadProposalCppRows(profileId = selectedProposalCppProfileId) {
+    const normalizedProfileId = String(profileId || "").trim();
+    if (!normalizedProfileId) {
+      setProposalCppRows([]);
+      return;
+    }
+
+    setProposalCppRowsLoading(true);
+    setProposalCppRowsError("");
+    try {
+      const rows = await listProposalCppRows({
+        productProfileId: normalizedProfileId,
+        includeInactive: true
+      });
+      setProposalCppRows(rows);
+      setProposalCppRowForm((previous) => ({
+        ...previous,
+        product_profile_id: normalizedProfileId
+      }));
+    } catch (err) {
+      setProposalCppRowsError(err.message);
+      setProposalCppRows([]);
+    } finally {
+      setProposalCppRowsLoading(false);
+    }
+  }
+
+  async function loadProposalCommercialTerms() {
+    setProposalCommercialTermsLoading(true);
+    setProposalCommercialTermsError("");
+    try {
+      const rows = await listProposalCommercialTerms({ includeInactive: true });
+      setProposalCommercialTerms(rows);
+    } catch (err) {
+      setProposalCommercialTermsError(err.message);
+      setProposalCommercialTerms([]);
+    } finally {
+      setProposalCommercialTermsLoading(false);
+    }
+  }
+
   async function loadOmieHistory() {
     setOmieHistoryLoading(true);
     try {
@@ -411,9 +590,23 @@ export default function SettingsModule() {
     loadUsers();
     loadStages();
     loadProposalTemplates();
+    loadProposalProductProfiles();
+    loadProposalCommercialTerms();
     loadOmieHistory();
     loadRdHistory();
   }, []);
+
+  useEffect(() => {
+    if (!selectedProposalCppProfileId) {
+      setProposalCppRows([]);
+      setProposalCppRowForm((previous) => ({
+        ...previous,
+        product_profile_id: ""
+      }));
+      return;
+    }
+    loadProposalCppRows(selectedProposalCppProfileId);
+  }, [selectedProposalCppProfileId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -781,6 +974,384 @@ export default function SettingsModule() {
     }
   }
 
+  async function handleCreateProposalProductProfile(event) {
+    event.preventDefault();
+    setProposalProductProfilesError("");
+    setProposalProductProfilesSuccess("");
+    setCreatingProposalProductProfile(true);
+
+    try {
+      await createProposalProductProfile(proposalProductProfileForm);
+      setProposalProductProfileForm(EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM);
+      await loadProposalProductProfiles();
+      setProposalProductProfilesSuccess("Perfil de produto criado.");
+    } catch (err) {
+      setProposalProductProfilesError(err.message);
+    } finally {
+      setCreatingProposalProductProfile(false);
+    }
+  }
+
+  function startEditProposalProductProfile(profile) {
+    const profileId = String(profile?.id || "").trim();
+    if (!profileId) return;
+
+    setProposalProductProfilesError("");
+    setProposalProductProfilesSuccess("");
+    setEditingProposalProductProfileId(profileId);
+    setEditProposalProductProfileForm({
+      name: String(profile.name || ""),
+      proposal_type: String(profile.proposal_type || ""),
+      product_code: String(profile.product_code || ""),
+      product_name: String(profile.product_name || ""),
+      headline: String(profile.headline || ""),
+      intro_text: String(profile.intro_text || ""),
+      technical_text: String(profile.technical_text || ""),
+      video_url: String(profile.video_url || ""),
+      included_accessories: String(profile.included_accessories || ""),
+      optional_accessories: String(profile.optional_accessories || ""),
+      base_price: String(profile.base_price ?? "0"),
+      notes: String(profile.notes || ""),
+      is_active: Boolean(profile.is_active),
+      sort_order: String(profile.sort_order || 100)
+    });
+  }
+
+  function cancelEditProposalProductProfile() {
+    setEditingProposalProductProfileId("");
+    setEditProposalProductProfileForm(EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM);
+  }
+
+  async function handleSaveProposalProductProfile(event) {
+    event.preventDefault();
+    if (!editingProposalProductProfileId) return;
+
+    setProposalProductProfilesError("");
+    setProposalProductProfilesSuccess("");
+    setSavingProposalProductProfileId(editingProposalProductProfileId);
+    try {
+      await updateProposalProductProfile(editingProposalProductProfileId, editProposalProductProfileForm);
+      await loadProposalProductProfiles();
+      if (selectedProposalCppProfileId === editingProposalProductProfileId) {
+        await loadProposalCppRows(editingProposalProductProfileId);
+      }
+      setProposalProductProfilesSuccess("Perfil de produto atualizado.");
+      cancelEditProposalProductProfile();
+    } catch (err) {
+      setProposalProductProfilesError(err.message);
+    } finally {
+      setSavingProposalProductProfileId("");
+    }
+  }
+
+  async function handleToggleProposalProductProfileStatus(profile) {
+    const profileId = String(profile?.id || "").trim();
+    if (!profileId) return;
+
+    setProposalProductProfilesError("");
+    setProposalProductProfilesSuccess("");
+    setSavingProposalProductProfileId(profileId);
+    try {
+      await updateProposalProductProfile(profileId, {
+        is_active: !Boolean(profile.is_active)
+      });
+      await loadProposalProductProfiles();
+      setProposalProductProfilesSuccess(Boolean(profile.is_active) ? "Perfil desativado." : "Perfil ativado.");
+      if (editingProposalProductProfileId === profileId) {
+        setEditProposalProductProfileForm((previous) => ({
+          ...previous,
+          is_active: !Boolean(profile.is_active)
+        }));
+      }
+    } catch (err) {
+      setProposalProductProfilesError(err.message);
+    } finally {
+      setSavingProposalProductProfileId("");
+    }
+  }
+
+  async function handleDeleteProposalProductProfile(profile) {
+    const profileId = String(profile?.id || "").trim();
+    if (!profileId) return;
+
+    const confirmed = window.confirm(`Excluir perfil "${profile.name}"?`);
+    if (!confirmed) return;
+
+    setProposalProductProfilesError("");
+    setProposalProductProfilesSuccess("");
+    setDeletingProposalProductProfileId(profileId);
+    try {
+      await deleteProposalProductProfile(profileId);
+      await loadProposalProductProfiles();
+      setProposalProductProfilesSuccess("Perfil excluído.");
+      if (editingProposalProductProfileId === profileId) {
+        cancelEditProposalProductProfile();
+      }
+    } catch (err) {
+      setProposalProductProfilesError(err.message);
+    } finally {
+      setDeletingProposalProductProfileId("");
+    }
+  }
+
+  async function handleCreateProposalCppRow(event) {
+    event.preventDefault();
+    if (!selectedProposalCppProfileId) {
+      setProposalCppRowsError("Selecione um perfil de produto para cadastrar linhas CPP.");
+      return;
+    }
+
+    setProposalCppRowsError("");
+    setProposalCppRowsSuccess("");
+    setCreatingProposalCppRow(true);
+    try {
+      await createProposalCppRow({
+        ...proposalCppRowForm,
+        product_profile_id: selectedProposalCppProfileId
+      });
+      setProposalCppRowForm((previous) => ({
+        ...EMPTY_PROPOSAL_CPP_ROW_FORM,
+        product_profile_id: selectedProposalCppProfileId
+      }));
+      await loadProposalCppRows(selectedProposalCppProfileId);
+      setProposalCppRowsSuccess("Linha CPP criada.");
+    } catch (err) {
+      setProposalCppRowsError(err.message);
+    } finally {
+      setCreatingProposalCppRow(false);
+    }
+  }
+
+  function startEditProposalCppRow(row) {
+    const rowId = String(row?.id || "").trim();
+    if (!rowId) return;
+
+    setProposalCppRowsError("");
+    setProposalCppRowsSuccess("");
+    setEditingProposalCppRowId(rowId);
+    setEditProposalCppRowForm({
+      product_profile_id: String(row.product_profile_id || selectedProposalCppProfileId || ""),
+      section: String(row.section || "toner"),
+      item_name: String(row.item_name || ""),
+      manufacturer_durability: String(row.manufacturer_durability || ""),
+      graphic_durability: String(row.graphic_durability || ""),
+      item_value: row.item_value === null || row.item_value === undefined ? "" : String(row.item_value),
+      cpp_cost: row.cpp_cost === null || row.cpp_cost === undefined ? "" : String(row.cpp_cost),
+      sort_order: String(row.sort_order || 100),
+      is_active: Boolean(row.is_active)
+    });
+  }
+
+  function cancelEditProposalCppRow() {
+    setEditingProposalCppRowId("");
+    setEditProposalCppRowForm(EMPTY_PROPOSAL_CPP_ROW_FORM);
+  }
+
+  async function handleSaveProposalCppRow(event) {
+    event.preventDefault();
+    if (!editingProposalCppRowId) return;
+
+    setProposalCppRowsError("");
+    setProposalCppRowsSuccess("");
+    setSavingProposalCppRowId(editingProposalCppRowId);
+    try {
+      await updateProposalCppRow(editingProposalCppRowId, editProposalCppRowForm);
+      await loadProposalCppRows(selectedProposalCppProfileId);
+      setProposalCppRowsSuccess("Linha CPP atualizada.");
+      cancelEditProposalCppRow();
+    } catch (err) {
+      setProposalCppRowsError(err.message);
+    } finally {
+      setSavingProposalCppRowId("");
+    }
+  }
+
+  async function handleToggleProposalCppRowStatus(row) {
+    const rowId = String(row?.id || "").trim();
+    if (!rowId) return;
+
+    setProposalCppRowsError("");
+    setProposalCppRowsSuccess("");
+    setSavingProposalCppRowId(rowId);
+    try {
+      await updateProposalCppRow(rowId, {
+        is_active: !Boolean(row.is_active)
+      });
+      await loadProposalCppRows(selectedProposalCppProfileId);
+      setProposalCppRowsSuccess(Boolean(row.is_active) ? "Linha CPP desativada." : "Linha CPP ativada.");
+      if (editingProposalCppRowId === rowId) {
+        setEditProposalCppRowForm((previous) => ({
+          ...previous,
+          is_active: !Boolean(row.is_active)
+        }));
+      }
+    } catch (err) {
+      setProposalCppRowsError(err.message);
+    } finally {
+      setSavingProposalCppRowId("");
+    }
+  }
+
+  async function handleDeleteProposalCppRow(row) {
+    const rowId = String(row?.id || "").trim();
+    if (!rowId) return;
+
+    const confirmed = window.confirm(`Excluir linha CPP "${row.item_name}"?`);
+    if (!confirmed) return;
+
+    setProposalCppRowsError("");
+    setProposalCppRowsSuccess("");
+    setDeletingProposalCppRowId(rowId);
+    try {
+      await deleteProposalCppRow(rowId);
+      await loadProposalCppRows(selectedProposalCppProfileId);
+      setProposalCppRowsSuccess("Linha CPP excluída.");
+      if (editingProposalCppRowId === rowId) {
+        cancelEditProposalCppRow();
+      }
+    } catch (err) {
+      setProposalCppRowsError(err.message);
+    } finally {
+      setDeletingProposalCppRowId("");
+    }
+  }
+
+  async function handleCreateProposalCommercialTerms(event) {
+    event.preventDefault();
+    setProposalCommercialTermsError("");
+    setProposalCommercialTermsSuccess("");
+    setCreatingProposalCommercialTerms(true);
+    try {
+      await createProposalCommercialTerms(proposalCommercialTermsForm);
+      setProposalCommercialTermsForm(EMPTY_PROPOSAL_COMMERCIAL_TERMS_FORM);
+      await loadProposalCommercialTerms();
+      setProposalCommercialTermsSuccess("Condições comerciais criadas.");
+    } catch (err) {
+      setProposalCommercialTermsError(err.message);
+    } finally {
+      setCreatingProposalCommercialTerms(false);
+    }
+  }
+
+  function startEditProposalCommercialTerms(term) {
+    const termId = String(term?.id || "").trim();
+    if (!termId) return;
+
+    setProposalCommercialTermsError("");
+    setProposalCommercialTermsSuccess("");
+    setEditingProposalCommercialTermsId(termId);
+    setEditProposalCommercialTermsForm({
+      name: String(term.name || ""),
+      payment_terms: String(term.payment_terms || ""),
+      included_offer: String(term.included_offer || ""),
+      excluded_offer: String(term.excluded_offer || ""),
+      financing_terms: String(term.financing_terms || ""),
+      closing_text: String(term.closing_text || ""),
+      is_default: Boolean(term.is_default),
+      is_active: Boolean(term.is_active),
+      sort_order: String(term.sort_order || 100)
+    });
+  }
+
+  function cancelEditProposalCommercialTerms() {
+    setEditingProposalCommercialTermsId("");
+    setEditProposalCommercialTermsForm(EMPTY_PROPOSAL_COMMERCIAL_TERMS_FORM);
+  }
+
+  async function handleSaveProposalCommercialTerms(event) {
+    event.preventDefault();
+    if (!editingProposalCommercialTermsId) return;
+
+    setProposalCommercialTermsError("");
+    setProposalCommercialTermsSuccess("");
+    setSavingProposalCommercialTermsId(editingProposalCommercialTermsId);
+    try {
+      await updateProposalCommercialTerms(editingProposalCommercialTermsId, editProposalCommercialTermsForm);
+      await loadProposalCommercialTerms();
+      setProposalCommercialTermsSuccess("Condições comerciais atualizadas.");
+      cancelEditProposalCommercialTerms();
+    } catch (err) {
+      setProposalCommercialTermsError(err.message);
+    } finally {
+      setSavingProposalCommercialTermsId("");
+    }
+  }
+
+  async function handleToggleProposalCommercialTermsStatus(term) {
+    const termId = String(term?.id || "").trim();
+    if (!termId) return;
+
+    setProposalCommercialTermsError("");
+    setProposalCommercialTermsSuccess("");
+    setSavingProposalCommercialTermsId(termId);
+    try {
+      await updateProposalCommercialTerms(termId, {
+        is_active: !Boolean(term.is_active)
+      });
+      await loadProposalCommercialTerms();
+      setProposalCommercialTermsSuccess(Boolean(term.is_active) ? "Condição desativada." : "Condição ativada.");
+      if (editingProposalCommercialTermsId === termId) {
+        setEditProposalCommercialTermsForm((previous) => ({
+          ...previous,
+          is_active: !Boolean(term.is_active)
+        }));
+      }
+    } catch (err) {
+      setProposalCommercialTermsError(err.message);
+    } finally {
+      setSavingProposalCommercialTermsId("");
+    }
+  }
+
+  async function handleSetDefaultProposalCommercialTerms(term) {
+    const termId = String(term?.id || "").trim();
+    if (!termId) return;
+    if (term.is_default) return;
+
+    setProposalCommercialTermsError("");
+    setProposalCommercialTermsSuccess("");
+    setSavingProposalCommercialTermsId(termId);
+    try {
+      await updateProposalCommercialTerms(termId, { is_default: true });
+      await loadProposalCommercialTerms();
+      setProposalCommercialTermsSuccess("Condição padrão atualizada.");
+      if (editingProposalCommercialTermsId === termId) {
+        setEditProposalCommercialTermsForm((previous) => ({
+          ...previous,
+          is_default: true
+        }));
+      }
+    } catch (err) {
+      setProposalCommercialTermsError(err.message);
+    } finally {
+      setSavingProposalCommercialTermsId("");
+    }
+  }
+
+  async function handleDeleteProposalCommercialTerms(term) {
+    const termId = String(term?.id || "").trim();
+    if (!termId) return;
+
+    const confirmed = window.confirm(`Excluir condições comerciais "${term.name}"?`);
+    if (!confirmed) return;
+
+    setProposalCommercialTermsError("");
+    setProposalCommercialTermsSuccess("");
+    setDeletingProposalCommercialTermsId(termId);
+    try {
+      await deleteProposalCommercialTerms(termId);
+      await loadProposalCommercialTerms();
+      setProposalCommercialTermsSuccess("Condições comerciais excluídas.");
+      if (editingProposalCommercialTermsId === termId) {
+        cancelEditProposalCommercialTerms();
+      }
+    } catch (err) {
+      setProposalCommercialTermsError(err.message);
+    } finally {
+      setDeletingProposalCommercialTermsId("");
+    }
+  }
+
   async function handleOmieSync(event) {
     event.preventDefault();
     setOmieError("");
@@ -1128,6 +1699,20 @@ export default function SettingsModule() {
     }));
     setRdResumeCursor(null);
   }
+
+  const activeProposalProductProfilesCount = useMemo(
+    () => proposalProductProfiles.filter((item) => item.is_active).length,
+    [proposalProductProfiles]
+  );
+  const activeProposalCppRowsCount = useMemo(() => proposalCppRows.filter((item) => item.is_active).length, [proposalCppRows]);
+  const activeProposalCommercialTermsCount = useMemo(
+    () => proposalCommercialTerms.filter((item) => item.is_active).length,
+    [proposalCommercialTerms]
+  );
+  const selectedProposalCppProfile = useMemo(
+    () => proposalProductProfiles.find((item) => item.id === selectedProposalCppProfileId) || null,
+    [proposalProductProfiles, selectedProposalCppProfileId]
+  );
 
   const rdSouthOnlySelected = Boolean(rdForm.south_cnpj_only);
   const rdCustomersOnlySelected = Boolean(rdForm.sync_customers_only);
@@ -1696,6 +2281,847 @@ export default function SettingsModule() {
             </div>
           </form>
         ) : null}
+      </article>
+
+      <article className="panel top-gap">
+        <h2>Biblioteca da proposta</h2>
+        <p className="muted">
+          Configure os blocos reutilizáveis para geração documental: perfil técnico/comercial do produto, linhas CPP e condições
+          comerciais.
+        </p>
+
+        <div className="settings-library-grid top-gap">
+          <section className="settings-library-card">
+            <h3>Perfis de produto</h3>
+            <p className="muted">
+              {proposalProductProfiles.length} perfil(is) cadastrado(s) • {activeProposalProductProfilesCount} ativo(s)
+            </p>
+            {proposalProductProfilesError ? <p className="error-text">{proposalProductProfilesError}</p> : null}
+            {proposalProductProfilesSuccess ? <p className="success-text">{proposalProductProfilesSuccess}</p> : null}
+
+            <form className="form-grid top-gap" onSubmit={handleCreateProposalProductProfile}>
+              <input
+                required
+                placeholder="Nome do perfil (ex.: Canon imagePRESS V700 PS + POD Deck)"
+                value={proposalProductProfileForm.name}
+                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, name: event.target.value }))}
+              />
+              <input
+                required
+                placeholder="Nome do produto/equipamento"
+                value={proposalProductProfileForm.product_name}
+                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))}
+              />
+              <input
+                placeholder="Código do produto OMIE (opcional)"
+                value={proposalProductProfileForm.product_code}
+                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))}
+              />
+              <input
+                placeholder="Headline comercial"
+                value={proposalProductProfileForm.headline}
+                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, headline: event.target.value }))}
+              />
+              <div className="settings-users-selects">
+                <label className="settings-field">
+                  <span>Categoria</span>
+                  <select
+                    value={proposalProductProfileForm.proposal_type}
+                    onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, proposal_type: event.target.value }))}
+                  >
+                    {PROPOSAL_PRODUCT_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value || "generic"} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="settings-field">
+                  <span>Valor base</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={proposalProductProfileForm.base_price}
+                    onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, base_price: event.target.value }))}
+                  />
+                </label>
+              </div>
+              <div className="settings-users-selects">
+                <label className="settings-field">
+                  <span>Ordem</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={9999}
+                    value={proposalProductProfileForm.sort_order}
+                    onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, sort_order: event.target.value }))}
+                  />
+                </label>
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={proposalProductProfileForm.is_active}
+                    onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+                  />
+                  Perfil ativo
+                </label>
+              </div>
+              <textarea
+                className="settings-library-textarea"
+                placeholder="Texto introdutório"
+                value={proposalProductProfileForm.intro_text}
+                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, intro_text: event.target.value }))}
+              />
+              <textarea
+                className="settings-library-textarea"
+                placeholder="Texto técnico"
+                value={proposalProductProfileForm.technical_text}
+                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, technical_text: event.target.value }))}
+              />
+              <textarea
+                className="settings-library-textarea"
+                placeholder="Acessórios inclusos"
+                value={proposalProductProfileForm.included_accessories}
+                onChange={(event) =>
+                  setProposalProductProfileForm((prev) => ({ ...prev, included_accessories: event.target.value }))
+                }
+              />
+              <textarea
+                className="settings-library-textarea"
+                placeholder="Acessórios opcionais/exclusões"
+                value={proposalProductProfileForm.optional_accessories}
+                onChange={(event) =>
+                  setProposalProductProfileForm((prev) => ({ ...prev, optional_accessories: event.target.value }))
+                }
+              />
+              <input
+                placeholder="Vídeo URL (opcional)"
+                value={proposalProductProfileForm.video_url}
+                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, video_url: event.target.value }))}
+              />
+              <textarea
+                className="settings-library-textarea"
+                placeholder="Observações internas"
+                value={proposalProductProfileForm.notes}
+                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, notes: event.target.value }))}
+              />
+              <div className="inline-actions">
+                <button type="submit" className="btn-primary" disabled={creatingProposalProductProfile}>
+                  {creatingProposalProductProfile ? "Salvando..." : "Criar perfil"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={loadProposalProductProfiles}
+                  disabled={proposalProductProfilesLoading || creatingProposalProductProfile}
+                >
+                  {proposalProductProfilesLoading ? "Atualizando..." : "Atualizar perfis"}
+                </button>
+              </div>
+            </form>
+
+            <div className="table-wrap top-gap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Nome</th>
+                    <th>Categoria</th>
+                    <th>Produto</th>
+                    <th>Código</th>
+                    <th>Valor base</th>
+                    <th>Status</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {proposalProductProfiles.map((profile) => (
+                    <tr key={profile.id}>
+                      <td>{profile.name}</td>
+                      <td>{proposalProductTypeLabel(profile.proposal_type)}</td>
+                      <td>{profile.product_name}</td>
+                      <td>{profile.product_code || "-"}</td>
+                      <td>{Number(profile.base_price || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
+                      <td>{profile.is_active ? "Ativo" : "Inativo"}</td>
+                      <td>
+                        <div className="inline-actions">
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action"
+                            onClick={() => startEditProposalProductProfile(profile)}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action"
+                            onClick={() => handleToggleProposalProductProfileStatus(profile)}
+                            disabled={savingProposalProductProfileId === profile.id}
+                          >
+                            {savingProposalProductProfileId === profile.id
+                              ? "Salvando..."
+                              : profile.is_active
+                                ? "Desativar"
+                                : "Ativar"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action"
+                            onClick={() => handleDeleteProposalProductProfile(profile)}
+                            disabled={deletingProposalProductProfileId === profile.id}
+                          >
+                            {deletingProposalProductProfileId === profile.id ? "Excluindo..." : "Excluir"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {!proposalProductProfiles.length ? (
+                    <tr>
+                      <td colSpan={7} className="muted">
+                        Nenhum perfil cadastrado.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+
+            {editingProposalProductProfileId ? (
+              <form className="form-grid top-gap settings-user-edit-form" onSubmit={handleSaveProposalProductProfile}>
+                <h3>Editar perfil</h3>
+                <input
+                  required
+                  placeholder="Nome do perfil"
+                  value={editProposalProductProfileForm.name}
+                  onChange={(event) => setEditProposalProductProfileForm((prev) => ({ ...prev, name: event.target.value }))}
+                />
+                <input
+                  required
+                  placeholder="Nome do produto"
+                  value={editProposalProductProfileForm.product_name}
+                  onChange={(event) =>
+                    setEditProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))
+                  }
+                />
+                <input
+                  placeholder="Código do produto"
+                  value={editProposalProductProfileForm.product_code}
+                  onChange={(event) =>
+                    setEditProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))
+                  }
+                />
+                <div className="settings-users-selects">
+                  <label className="settings-field">
+                    <span>Categoria</span>
+                    <select
+                      value={editProposalProductProfileForm.proposal_type}
+                      onChange={(event) =>
+                        setEditProposalProductProfileForm((prev) => ({ ...prev, proposal_type: event.target.value }))
+                      }
+                    >
+                      {PROPOSAL_PRODUCT_TYPE_OPTIONS.map((option) => (
+                        <option key={option.value || "generic"} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="settings-field">
+                    <span>Valor base</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={editProposalProductProfileForm.base_price}
+                      onChange={(event) =>
+                        setEditProposalProductProfileForm((prev) => ({ ...prev, base_price: event.target.value }))
+                      }
+                    />
+                  </label>
+                </div>
+                <textarea
+                  className="settings-library-textarea"
+                  placeholder="Texto introdutório"
+                  value={editProposalProductProfileForm.intro_text}
+                  onChange={(event) =>
+                    setEditProposalProductProfileForm((prev) => ({ ...prev, intro_text: event.target.value }))
+                  }
+                />
+                <textarea
+                  className="settings-library-textarea"
+                  placeholder="Texto técnico"
+                  value={editProposalProductProfileForm.technical_text}
+                  onChange={(event) =>
+                    setEditProposalProductProfileForm((prev) => ({ ...prev, technical_text: event.target.value }))
+                  }
+                />
+                <div className="inline-actions">
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={savingProposalProductProfileId === editingProposalProductProfileId}
+                  >
+                    {savingProposalProductProfileId === editingProposalProductProfileId ? "Salvando..." : "Salvar perfil"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={cancelEditProposalProductProfile}
+                    disabled={savingProposalProductProfileId === editingProposalProductProfileId}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            ) : null}
+          </section>
+
+          <section className="settings-library-card">
+            <h3>Linhas CPP por produto</h3>
+            <p className="muted">
+              {proposalCppRows.length} linha(s) para {selectedProposalCppProfile?.name || "perfil selecionado"} • {activeProposalCppRowsCount}{" "}
+              ativa(s)
+            </p>
+            {proposalCppRowsError ? <p className="error-text">{proposalCppRowsError}</p> : null}
+            {proposalCppRowsSuccess ? <p className="success-text">{proposalCppRowsSuccess}</p> : null}
+
+            <label className="settings-field top-gap">
+              <span>Perfil para editar CPP</span>
+              <select
+                value={selectedProposalCppProfileId}
+                onChange={(event) => setSelectedProposalCppProfileId(event.target.value)}
+                disabled={!proposalProductProfiles.length}
+              >
+                {!proposalProductProfiles.length ? <option value="">Cadastre um perfil primeiro</option> : null}
+                {proposalProductProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <form className="form-grid top-gap" onSubmit={handleCreateProposalCppRow}>
+              <div className="settings-users-selects">
+                <label className="settings-field">
+                  <span>Seção</span>
+                  <select
+                    value={proposalCppRowForm.section}
+                    onChange={(event) => setProposalCppRowForm((prev) => ({ ...prev, section: event.target.value }))}
+                  >
+                    {PROPOSAL_CPP_SECTION_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="settings-field">
+                  <span>Ordem</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={9999}
+                    value={proposalCppRowForm.sort_order}
+                    onChange={(event) => setProposalCppRowForm((prev) => ({ ...prev, sort_order: event.target.value }))}
+                  />
+                </label>
+              </div>
+              <input
+                required
+                placeholder="Item (ex.: Toner T01 Preto)"
+                value={proposalCppRowForm.item_name}
+                onChange={(event) => setProposalCppRowForm((prev) => ({ ...prev, item_name: event.target.value }))}
+                disabled={!selectedProposalCppProfileId}
+              />
+              <div className="settings-users-selects">
+                <input
+                  placeholder="Durabilidade fabricante"
+                  value={proposalCppRowForm.manufacturer_durability}
+                  onChange={(event) =>
+                    setProposalCppRowForm((prev) => ({ ...prev, manufacturer_durability: event.target.value }))
+                  }
+                  disabled={!selectedProposalCppProfileId}
+                />
+                <input
+                  placeholder="Durabilidade gráfica"
+                  value={proposalCppRowForm.graphic_durability}
+                  onChange={(event) => setProposalCppRowForm((prev) => ({ ...prev, graphic_durability: event.target.value }))}
+                  disabled={!selectedProposalCppProfileId}
+                />
+              </div>
+              <div className="settings-users-selects">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="Valor do item"
+                  value={proposalCppRowForm.item_value}
+                  onChange={(event) => setProposalCppRowForm((prev) => ({ ...prev, item_value: event.target.value }))}
+                  disabled={!selectedProposalCppProfileId}
+                />
+                <input
+                  type="number"
+                  min={0}
+                  step="0.00001"
+                  placeholder="Custo CPP"
+                  value={proposalCppRowForm.cpp_cost}
+                  onChange={(event) => setProposalCppRowForm((prev) => ({ ...prev, cpp_cost: event.target.value }))}
+                  disabled={!selectedProposalCppProfileId}
+                />
+              </div>
+              <label className="checkbox-inline">
+                <input
+                  type="checkbox"
+                  checked={proposalCppRowForm.is_active}
+                  onChange={(event) => setProposalCppRowForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+                  disabled={!selectedProposalCppProfileId}
+                />
+                Linha ativa
+              </label>
+              <div className="inline-actions">
+                <button type="submit" className="btn-primary" disabled={creatingProposalCppRow || !selectedProposalCppProfileId}>
+                  {creatingProposalCppRow ? "Salvando..." : "Criar linha CPP"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => loadProposalCppRows(selectedProposalCppProfileId)}
+                  disabled={proposalCppRowsLoading || creatingProposalCppRow || !selectedProposalCppProfileId}
+                >
+                  {proposalCppRowsLoading ? "Atualizando..." : "Atualizar CPP"}
+                </button>
+              </div>
+            </form>
+
+            <div className="table-wrap top-gap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Seção</th>
+                    <th>Item</th>
+                    <th>Fabricante</th>
+                    <th>Gráfica</th>
+                    <th>Valor</th>
+                    <th>CPP</th>
+                    <th>Status</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {proposalCppRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{proposalCppSectionLabel(row.section)}</td>
+                      <td>{row.item_name}</td>
+                      <td>{row.manufacturer_durability || "-"}</td>
+                      <td>{row.graphic_durability || "-"}</td>
+                      <td>
+                        {row.item_value === null || row.item_value === undefined
+                          ? "-"
+                          : Number(row.item_value).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </td>
+                      <td>
+                        {row.cpp_cost === null || row.cpp_cost === undefined
+                          ? "-"
+                          : Number(row.cpp_cost).toLocaleString("pt-BR", { minimumFractionDigits: 5 })}
+                      </td>
+                      <td>{row.is_active ? "Ativa" : "Inativa"}</td>
+                      <td>
+                        <div className="inline-actions">
+                          <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditProposalCppRow(row)}>
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action"
+                            onClick={() => handleToggleProposalCppRowStatus(row)}
+                            disabled={savingProposalCppRowId === row.id}
+                          >
+                            {savingProposalCppRowId === row.id ? "Salvando..." : row.is_active ? "Desativar" : "Ativar"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action"
+                            onClick={() => handleDeleteProposalCppRow(row)}
+                            disabled={deletingProposalCppRowId === row.id}
+                          >
+                            {deletingProposalCppRowId === row.id ? "Excluindo..." : "Excluir"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {!proposalCppRows.length ? (
+                    <tr>
+                      <td colSpan={8} className="muted">
+                        Nenhuma linha CPP cadastrada para este perfil.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+
+            {editingProposalCppRowId ? (
+              <form className="form-grid top-gap settings-user-edit-form" onSubmit={handleSaveProposalCppRow}>
+                <h3>Editar linha CPP</h3>
+                <div className="settings-users-selects">
+                  <label className="settings-field">
+                    <span>Seção</span>
+                    <select
+                      value={editProposalCppRowForm.section}
+                      onChange={(event) => setEditProposalCppRowForm((prev) => ({ ...prev, section: event.target.value }))}
+                    >
+                      {PROPOSAL_CPP_SECTION_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="settings-field">
+                    <span>Ordem</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={9999}
+                      value={editProposalCppRowForm.sort_order}
+                      onChange={(event) => setEditProposalCppRowForm((prev) => ({ ...prev, sort_order: event.target.value }))}
+                    />
+                  </label>
+                </div>
+                <input
+                  required
+                  placeholder="Item"
+                  value={editProposalCppRowForm.item_name}
+                  onChange={(event) => setEditProposalCppRowForm((prev) => ({ ...prev, item_name: event.target.value }))}
+                />
+                <div className="settings-users-selects">
+                  <input
+                    placeholder="Durabilidade fabricante"
+                    value={editProposalCppRowForm.manufacturer_durability}
+                    onChange={(event) =>
+                      setEditProposalCppRowForm((prev) => ({ ...prev, manufacturer_durability: event.target.value }))
+                    }
+                  />
+                  <input
+                    placeholder="Durabilidade gráfica"
+                    value={editProposalCppRowForm.graphic_durability}
+                    onChange={(event) =>
+                      setEditProposalCppRowForm((prev) => ({ ...prev, graphic_durability: event.target.value }))
+                    }
+                  />
+                </div>
+                <div className="settings-users-selects">
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="Valor do item"
+                    value={editProposalCppRowForm.item_value}
+                    onChange={(event) => setEditProposalCppRowForm((prev) => ({ ...prev, item_value: event.target.value }))}
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.00001"
+                    placeholder="Custo CPP"
+                    value={editProposalCppRowForm.cpp_cost}
+                    onChange={(event) => setEditProposalCppRowForm((prev) => ({ ...prev, cpp_cost: event.target.value }))}
+                  />
+                </div>
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={editProposalCppRowForm.is_active}
+                    onChange={(event) => setEditProposalCppRowForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+                  />
+                  Linha ativa
+                </label>
+                <div className="inline-actions">
+                  <button type="submit" className="btn-primary" disabled={savingProposalCppRowId === editingProposalCppRowId}>
+                    {savingProposalCppRowId === editingProposalCppRowId ? "Salvando..." : "Salvar linha CPP"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={cancelEditProposalCppRow}
+                    disabled={savingProposalCppRowId === editingProposalCppRowId}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            ) : null}
+          </section>
+        </div>
+
+        <section className="settings-library-card top-gap">
+          <h3>Condições comerciais</h3>
+          <p className="muted">
+            {proposalCommercialTerms.length} conjunto(s) cadastrado(s) • {activeProposalCommercialTermsCount} ativo(s)
+          </p>
+          {proposalCommercialTermsError ? <p className="error-text">{proposalCommercialTermsError}</p> : null}
+          {proposalCommercialTermsSuccess ? <p className="success-text">{proposalCommercialTermsSuccess}</p> : null}
+
+          <form className="form-grid top-gap" onSubmit={handleCreateProposalCommercialTerms}>
+            <input
+              required
+              placeholder="Nome das condições (ex.: Condições padrão ArtPrinter)"
+              value={proposalCommercialTermsForm.name}
+              onChange={(event) => setProposalCommercialTermsForm((prev) => ({ ...prev, name: event.target.value }))}
+            />
+            <textarea
+              className="settings-library-textarea"
+              placeholder="Condições de pagamento"
+              value={proposalCommercialTermsForm.payment_terms}
+              onChange={(event) => setProposalCommercialTermsForm((prev) => ({ ...prev, payment_terms: event.target.value }))}
+            />
+            <textarea
+              className="settings-library-textarea"
+              placeholder="Incluso na oferta"
+              value={proposalCommercialTermsForm.included_offer}
+              onChange={(event) => setProposalCommercialTermsForm((prev) => ({ ...prev, included_offer: event.target.value }))}
+            />
+            <textarea
+              className="settings-library-textarea"
+              placeholder="Não incluso na oferta"
+              value={proposalCommercialTermsForm.excluded_offer}
+              onChange={(event) => setProposalCommercialTermsForm((prev) => ({ ...prev, excluded_offer: event.target.value }))}
+            />
+            <textarea
+              className="settings-library-textarea"
+              placeholder="Condições de financiamento"
+              value={proposalCommercialTermsForm.financing_terms}
+              onChange={(event) => setProposalCommercialTermsForm((prev) => ({ ...prev, financing_terms: event.target.value }))}
+            />
+            <textarea
+              className="settings-library-textarea"
+              placeholder="Texto de fechamento"
+              value={proposalCommercialTermsForm.closing_text}
+              onChange={(event) => setProposalCommercialTermsForm((prev) => ({ ...prev, closing_text: event.target.value }))}
+            />
+            <div className="settings-users-selects">
+              <label className="settings-field">
+                <span>Ordem</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={9999}
+                  value={proposalCommercialTermsForm.sort_order}
+                  onChange={(event) => setProposalCommercialTermsForm((prev) => ({ ...prev, sort_order: event.target.value }))}
+                />
+              </label>
+              <div className="settings-library-flags">
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={proposalCommercialTermsForm.is_default}
+                    onChange={(event) => setProposalCommercialTermsForm((prev) => ({ ...prev, is_default: event.target.checked }))}
+                  />
+                  Definir como padrão
+                </label>
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={proposalCommercialTermsForm.is_active}
+                    onChange={(event) => setProposalCommercialTermsForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+                  />
+                  Condição ativa
+                </label>
+              </div>
+            </div>
+            <div className="inline-actions">
+              <button type="submit" className="btn-primary" disabled={creatingProposalCommercialTerms}>
+                {creatingProposalCommercialTerms ? "Salvando..." : "Criar condições"}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={loadProposalCommercialTerms}
+                disabled={proposalCommercialTermsLoading || creatingProposalCommercialTerms}
+              >
+                {proposalCommercialTermsLoading ? "Atualizando..." : "Atualizar condições"}
+              </button>
+            </div>
+          </form>
+
+          <div className="table-wrap top-gap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>Padrão</th>
+                  <th>Status</th>
+                  <th>Ordem</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {proposalCommercialTerms.map((term) => (
+                  <tr key={term.id}>
+                    <td>{term.name}</td>
+                    <td>{term.is_default ? "Sim" : "Não"}</td>
+                    <td>{term.is_active ? "Ativo" : "Inativo"}</td>
+                    <td>{term.sort_order || 100}</td>
+                    <td>
+                      <div className="inline-actions">
+                        <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditProposalCommercialTerms(term)}>
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          onClick={() => handleSetDefaultProposalCommercialTerms(term)}
+                          disabled={savingProposalCommercialTermsId === term.id || term.is_default}
+                        >
+                          {savingProposalCommercialTermsId === term.id
+                            ? "Salvando..."
+                            : term.is_default
+                              ? "Padrão"
+                              : "Tornar padrão"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          onClick={() => handleToggleProposalCommercialTermsStatus(term)}
+                          disabled={savingProposalCommercialTermsId === term.id}
+                        >
+                          {savingProposalCommercialTermsId === term.id
+                            ? "Salvando..."
+                            : term.is_active
+                              ? "Desativar"
+                              : "Ativar"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          onClick={() => handleDeleteProposalCommercialTerms(term)}
+                          disabled={deletingProposalCommercialTermsId === term.id}
+                        >
+                          {deletingProposalCommercialTermsId === term.id ? "Excluindo..." : "Excluir"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!proposalCommercialTerms.length ? (
+                  <tr>
+                    <td colSpan={5} className="muted">
+                      Nenhuma condição comercial cadastrada.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+
+          {editingProposalCommercialTermsId ? (
+            <form className="form-grid top-gap settings-user-edit-form" onSubmit={handleSaveProposalCommercialTerms}>
+              <h3>Editar condições comerciais</h3>
+              <input
+                required
+                placeholder="Nome das condições"
+                value={editProposalCommercialTermsForm.name}
+                onChange={(event) => setEditProposalCommercialTermsForm((prev) => ({ ...prev, name: event.target.value }))}
+              />
+              <textarea
+                className="settings-library-textarea"
+                placeholder="Condições de pagamento"
+                value={editProposalCommercialTermsForm.payment_terms}
+                onChange={(event) =>
+                  setEditProposalCommercialTermsForm((prev) => ({ ...prev, payment_terms: event.target.value }))
+                }
+              />
+              <textarea
+                className="settings-library-textarea"
+                placeholder="Incluso na oferta"
+                value={editProposalCommercialTermsForm.included_offer}
+                onChange={(event) =>
+                  setEditProposalCommercialTermsForm((prev) => ({ ...prev, included_offer: event.target.value }))
+                }
+              />
+              <textarea
+                className="settings-library-textarea"
+                placeholder="Não incluso na oferta"
+                value={editProposalCommercialTermsForm.excluded_offer}
+                onChange={(event) =>
+                  setEditProposalCommercialTermsForm((prev) => ({ ...prev, excluded_offer: event.target.value }))
+                }
+              />
+              <textarea
+                className="settings-library-textarea"
+                placeholder="Condições de financiamento"
+                value={editProposalCommercialTermsForm.financing_terms}
+                onChange={(event) =>
+                  setEditProposalCommercialTermsForm((prev) => ({ ...prev, financing_terms: event.target.value }))
+                }
+              />
+              <textarea
+                className="settings-library-textarea"
+                placeholder="Texto de fechamento"
+                value={editProposalCommercialTermsForm.closing_text}
+                onChange={(event) =>
+                  setEditProposalCommercialTermsForm((prev) => ({ ...prev, closing_text: event.target.value }))
+                }
+              />
+              <div className="settings-users-selects">
+                <label className="settings-field">
+                  <span>Ordem</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={9999}
+                    value={editProposalCommercialTermsForm.sort_order}
+                    onChange={(event) =>
+                      setEditProposalCommercialTermsForm((prev) => ({ ...prev, sort_order: event.target.value }))
+                    }
+                  />
+                </label>
+                <div className="settings-library-flags">
+                  <label className="checkbox-inline">
+                    <input
+                      type="checkbox"
+                      checked={editProposalCommercialTermsForm.is_default}
+                      onChange={(event) =>
+                        setEditProposalCommercialTermsForm((prev) => ({ ...prev, is_default: event.target.checked }))
+                      }
+                    />
+                    Definir como padrão
+                  </label>
+                  <label className="checkbox-inline">
+                    <input
+                      type="checkbox"
+                      checked={editProposalCommercialTermsForm.is_active}
+                      onChange={(event) =>
+                        setEditProposalCommercialTermsForm((prev) => ({ ...prev, is_active: event.target.checked }))
+                      }
+                    />
+                    Condição ativa
+                  </label>
+                </div>
+              </div>
+              <div className="inline-actions">
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={savingProposalCommercialTermsId === editingProposalCommercialTermsId}
+                >
+                  {savingProposalCommercialTermsId === editingProposalCommercialTermsId ? "Salvando..." : "Salvar condições"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={cancelEditProposalCommercialTerms}
+                  disabled={savingProposalCommercialTermsId === editingProposalCommercialTermsId}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          ) : null}
+        </section>
       </article>
 
       <article className="panel top-gap">

@@ -983,6 +983,35 @@ a.btn-table-action {
   font-size: 0.8rem;
 }
 
+.settings-library-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.settings-library-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-surface-muted);
+  padding: 10px;
+}
+
+.settings-library-card h3 {
+  margin: 0;
+}
+
+.settings-library-textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.settings-library-flags {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
 .theme-toggle {
   width: 100%;
   border: 1px solid rgba(var(--accent-rgb), 0.46);
@@ -2075,6 +2104,7 @@ tbody tr:hover {
 
   .settings-users-layout,
   .settings-users-selects,
+  .settings-library-grid,
   .tasks-users-grid,
   .tasks-calendar-toolbar {
     grid-template-columns: 1fr;

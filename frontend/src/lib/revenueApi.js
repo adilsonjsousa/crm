@@ -165,6 +165,37 @@ function normalizeProposalTemplateSortOrder(value, fallback = 100) {
   return Math.max(1, Math.min(9999, Math.floor(parsed)));
 }
 
+function normalizeProposalLibraryText(value) {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+}
+
+function normalizeProposalLibraryOptionalText(value) {
+  const normalized = normalizeProposalLibraryText(value);
+  return normalized || null;
+}
+
+function normalizeProposalLibraryNumber(value, fallback = 0) {
+  const parsed = Number(String(value ?? "").replace(",", "."));
+  if (!Number.isFinite(parsed)) return fallback;
+  return parsed;
+}
+
+function normalizeProposalLibraryNullableNumber(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const parsed = Number(raw.replace(",", "."));
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
+function normalizeProposalCppSection(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "components" ? "components" : "toner";
+}
+
 function normalizeStoragePart(value) {
   return String(value || "arquivo")
     .normalize("NFD")
@@ -1843,6 +1874,439 @@ export async function deleteProposalTemplate(templateId) {
   const supabase = ensureSupabase();
   const { error } = await supabase.from("proposal_templates").delete().eq("id", normalizedTemplateId);
   if (error) throw new Error(normalizeError(error, "Falha ao excluir template de proposta."));
+}
+
+export async function listProposalProductProfiles({ includeInactive = true } = {}) {
+  const supabase = ensureSupabase();
+  let query = supabase
+    .from("proposal_product_profiles")
+    .select(
+      "id,name,proposal_type,product_code,product_name,headline,intro_text,technical_text,video_url,included_accessories,optional_accessories,base_price,notes,is_active,sort_order,created_at,updated_at"
+    )
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (!includeInactive) {
+    query = query.eq("is_active", true);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(normalizeError(error, "Falha ao listar perfis de produto da proposta."));
+  return data || [];
+}
+
+export async function createProposalProductProfile(payload) {
+  const supabase = ensureSupabase();
+
+  const name = normalizeProposalTemplateName(payload?.name);
+  const productName = normalizeProposalTemplateName(payload?.product_name);
+  if (!name) throw new Error("Informe o nome do perfil do produto.");
+  if (!productName) throw new Error("Informe o nome do produto.");
+
+  const parsedBasePrice = normalizeProposalLibraryNullableNumber(payload?.base_price);
+  if (String(payload?.base_price ?? "").trim() && parsedBasePrice === null) {
+    throw new Error("Informe um valor base válido.");
+  }
+
+  const { data, error } = await supabase
+    .from("proposal_product_profiles")
+    .insert({
+      name,
+      proposal_type: normalizeProposalTemplateType(payload?.proposal_type),
+      product_code: normalizeProposalLibraryOptionalText(payload?.product_code),
+      product_name: productName,
+      headline: normalizeProposalLibraryOptionalText(payload?.headline),
+      intro_text: normalizeProposalLibraryOptionalText(payload?.intro_text),
+      technical_text: normalizeProposalLibraryOptionalText(payload?.technical_text),
+      video_url: normalizeProposalLibraryOptionalText(payload?.video_url),
+      included_accessories: normalizeProposalLibraryOptionalText(payload?.included_accessories),
+      optional_accessories: normalizeProposalLibraryOptionalText(payload?.optional_accessories),
+      base_price: Math.max(0, parsedBasePrice ?? 0),
+      notes: normalizeProposalLibraryOptionalText(payload?.notes),
+      is_active: payload?.is_active !== false,
+      sort_order: normalizeProposalTemplateSortOrder(payload?.sort_order, 100)
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("proposal_product_profiles_name_unique_idx")) {
+      throw new Error("Ja existe um perfil com este nome.");
+    }
+    throw new Error(normalizeError(error, "Falha ao criar perfil de produto da proposta."));
+  }
+
+  return data;
+}
+
+export async function updateProposalProductProfile(profileId, payload) {
+  const normalizedProfileId = String(profileId || "").trim();
+  if (!normalizedProfileId) throw new Error("Perfil de produto inválido para atualização.");
+
+  const supabase = ensureSupabase();
+  const updatePayload = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "name")) {
+    const name = normalizeProposalTemplateName(payload?.name);
+    if (!name) throw new Error("Informe o nome do perfil do produto.");
+    updatePayload.name = name;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "proposal_type")) {
+    updatePayload.proposal_type = normalizeProposalTemplateType(payload?.proposal_type);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "product_code")) {
+    updatePayload.product_code = normalizeProposalLibraryOptionalText(payload?.product_code);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "product_name")) {
+    const productName = normalizeProposalTemplateName(payload?.product_name);
+    if (!productName) throw new Error("Informe o nome do produto.");
+    updatePayload.product_name = productName;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "headline")) {
+    updatePayload.headline = normalizeProposalLibraryOptionalText(payload?.headline);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "intro_text")) {
+    updatePayload.intro_text = normalizeProposalLibraryOptionalText(payload?.intro_text);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "technical_text")) {
+    updatePayload.technical_text = normalizeProposalLibraryOptionalText(payload?.technical_text);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "video_url")) {
+    updatePayload.video_url = normalizeProposalLibraryOptionalText(payload?.video_url);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "included_accessories")) {
+    updatePayload.included_accessories = normalizeProposalLibraryOptionalText(payload?.included_accessories);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "optional_accessories")) {
+    updatePayload.optional_accessories = normalizeProposalLibraryOptionalText(payload?.optional_accessories);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "base_price")) {
+    const parsedBasePrice = normalizeProposalLibraryNullableNumber(payload?.base_price);
+    if (String(payload?.base_price ?? "").trim() && parsedBasePrice === null) {
+      throw new Error("Informe um valor base válido.");
+    }
+    updatePayload.base_price = Math.max(0, parsedBasePrice ?? 0);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "notes")) {
+    updatePayload.notes = normalizeProposalLibraryOptionalText(payload?.notes);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "is_active")) {
+    updatePayload.is_active = Boolean(payload?.is_active);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "sort_order")) {
+    updatePayload.sort_order = normalizeProposalTemplateSortOrder(payload?.sort_order, 100);
+  }
+
+  if (!Object.keys(updatePayload).length) return;
+
+  const { error } = await supabase.from("proposal_product_profiles").update(updatePayload).eq("id", normalizedProfileId);
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("proposal_product_profiles_name_unique_idx")) {
+      throw new Error("Ja existe um perfil com este nome.");
+    }
+    throw new Error(normalizeError(error, "Falha ao atualizar perfil de produto da proposta."));
+  }
+}
+
+export async function deleteProposalProductProfile(profileId) {
+  const normalizedProfileId = String(profileId || "").trim();
+  if (!normalizedProfileId) throw new Error("Perfil de produto inválido para exclusão.");
+
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("proposal_product_profiles").delete().eq("id", normalizedProfileId);
+  if (error) throw new Error(normalizeError(error, "Falha ao excluir perfil de produto da proposta."));
+}
+
+export async function listProposalCppRows({ productProfileId = "", includeInactive = true } = {}) {
+  const supabase = ensureSupabase();
+  const normalizedProductProfileId = String(productProfileId || "").trim();
+
+  let query = supabase
+    .from("proposal_cpp_rows")
+    .select(
+      "id,product_profile_id,section,item_name,manufacturer_durability,graphic_durability,item_value,cpp_cost,sort_order,is_active,created_at,updated_at"
+    )
+    .order("section", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("item_name", { ascending: true });
+
+  if (normalizedProductProfileId) {
+    query = query.eq("product_profile_id", normalizedProductProfileId);
+  }
+  if (!includeInactive) {
+    query = query.eq("is_active", true);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(normalizeError(error, "Falha ao listar linhas CPP da proposta."));
+  return data || [];
+}
+
+export async function createProposalCppRow(payload) {
+  const supabase = ensureSupabase();
+
+  const productProfileId = String(payload?.product_profile_id || "").trim();
+  if (!productProfileId) throw new Error("Selecione o perfil de produto para a linha CPP.");
+
+  const itemName = normalizeProposalTemplateName(payload?.item_name);
+  if (!itemName) throw new Error("Informe o item da linha CPP.");
+
+  const rawItemValue = String(payload?.item_value ?? "").trim();
+  const itemValue = normalizeProposalLibraryNullableNumber(payload?.item_value);
+  if (rawItemValue && itemValue === null) throw new Error("Informe um valor de item válido.");
+
+  const rawCppCost = String(payload?.cpp_cost ?? "").trim();
+  const cppCost = normalizeProposalLibraryNullableNumber(payload?.cpp_cost);
+  if (rawCppCost && cppCost === null) throw new Error("Informe um custo CPP válido.");
+
+  const { data, error } = await supabase
+    .from("proposal_cpp_rows")
+    .insert({
+      product_profile_id: productProfileId,
+      section: normalizeProposalCppSection(payload?.section),
+      item_name: itemName,
+      manufacturer_durability: normalizeProposalLibraryOptionalText(payload?.manufacturer_durability),
+      graphic_durability: normalizeProposalLibraryOptionalText(payload?.graphic_durability),
+      item_value: itemValue === null ? null : Math.max(0, itemValue),
+      cpp_cost: cppCost === null ? null : Math.max(0, cppCost),
+      sort_order: normalizeProposalTemplateSortOrder(payload?.sort_order, 100),
+      is_active: payload?.is_active !== false
+    })
+    .select("id")
+    .single();
+
+  if (error) throw new Error(normalizeError(error, "Falha ao criar linha CPP da proposta."));
+  return data;
+}
+
+export async function updateProposalCppRow(rowId, payload) {
+  const normalizedRowId = String(rowId || "").trim();
+  if (!normalizedRowId) throw new Error("Linha CPP inválida para atualização.");
+
+  const supabase = ensureSupabase();
+  const updatePayload = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "product_profile_id")) {
+    const productProfileId = String(payload?.product_profile_id || "").trim();
+    if (!productProfileId) throw new Error("Selecione o perfil de produto para a linha CPP.");
+    updatePayload.product_profile_id = productProfileId;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "section")) {
+    updatePayload.section = normalizeProposalCppSection(payload?.section);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "item_name")) {
+    const itemName = normalizeProposalTemplateName(payload?.item_name);
+    if (!itemName) throw new Error("Informe o item da linha CPP.");
+    updatePayload.item_name = itemName;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "manufacturer_durability")) {
+    updatePayload.manufacturer_durability = normalizeProposalLibraryOptionalText(payload?.manufacturer_durability);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "graphic_durability")) {
+    updatePayload.graphic_durability = normalizeProposalLibraryOptionalText(payload?.graphic_durability);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "item_value")) {
+    const rawItemValue = String(payload?.item_value ?? "").trim();
+    const itemValue = normalizeProposalLibraryNullableNumber(payload?.item_value);
+    if (rawItemValue && itemValue === null) throw new Error("Informe um valor de item válido.");
+    updatePayload.item_value = itemValue === null ? null : Math.max(0, itemValue);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "cpp_cost")) {
+    const rawCppCost = String(payload?.cpp_cost ?? "").trim();
+    const cppCost = normalizeProposalLibraryNullableNumber(payload?.cpp_cost);
+    if (rawCppCost && cppCost === null) throw new Error("Informe um custo CPP válido.");
+    updatePayload.cpp_cost = cppCost === null ? null : Math.max(0, cppCost);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "sort_order")) {
+    updatePayload.sort_order = normalizeProposalTemplateSortOrder(payload?.sort_order, 100);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "is_active")) {
+    updatePayload.is_active = Boolean(payload?.is_active);
+  }
+
+  if (!Object.keys(updatePayload).length) return;
+
+  const { error } = await supabase.from("proposal_cpp_rows").update(updatePayload).eq("id", normalizedRowId);
+  if (error) throw new Error(normalizeError(error, "Falha ao atualizar linha CPP da proposta."));
+}
+
+export async function deleteProposalCppRow(rowId) {
+  const normalizedRowId = String(rowId || "").trim();
+  if (!normalizedRowId) throw new Error("Linha CPP inválida para exclusão.");
+
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("proposal_cpp_rows").delete().eq("id", normalizedRowId);
+  if (error) throw new Error(normalizeError(error, "Falha ao excluir linha CPP da proposta."));
+}
+
+export async function listProposalCommercialTerms({ includeInactive = true } = {}) {
+  const supabase = ensureSupabase();
+  let query = supabase
+    .from("proposal_commercial_terms")
+    .select("id,name,payment_terms,included_offer,excluded_offer,financing_terms,closing_text,is_default,is_active,sort_order,created_at,updated_at")
+    .order("is_default", { ascending: false })
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (!includeInactive) {
+    query = query.eq("is_active", true);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(normalizeError(error, "Falha ao listar condicoes comerciais da proposta."));
+  return data || [];
+}
+
+export async function createProposalCommercialTerms(payload) {
+  const supabase = ensureSupabase();
+  const name = normalizeProposalTemplateName(payload?.name);
+  if (!name) throw new Error("Informe o nome das condicoes comerciais.");
+
+  const setAsDefault = payload?.is_default === true;
+  if (setAsDefault) {
+    const { error: clearDefaultError } = await supabase
+      .from("proposal_commercial_terms")
+      .update({ is_default: false })
+      .eq("is_default", true);
+    if (clearDefaultError) {
+      throw new Error(normalizeError(clearDefaultError, "Falha ao ajustar condicao comercial padrao."));
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("proposal_commercial_terms")
+    .insert({
+      name,
+      payment_terms: normalizeProposalLibraryOptionalText(payload?.payment_terms),
+      included_offer: normalizeProposalLibraryOptionalText(payload?.included_offer),
+      excluded_offer: normalizeProposalLibraryOptionalText(payload?.excluded_offer),
+      financing_terms: normalizeProposalLibraryOptionalText(payload?.financing_terms),
+      closing_text: normalizeProposalLibraryOptionalText(payload?.closing_text),
+      is_default: setAsDefault,
+      is_active: payload?.is_active !== false,
+      sort_order: normalizeProposalTemplateSortOrder(payload?.sort_order, 100)
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("proposal_commercial_terms_name_unique_idx")) {
+      throw new Error("Ja existe uma condicao comercial com este nome.");
+    }
+    if (message.includes("proposal_commercial_terms_single_default_idx")) {
+      throw new Error("Ja existe uma condicao comercial definida como padrao.");
+    }
+    throw new Error(normalizeError(error, "Falha ao criar condicoes comerciais da proposta."));
+  }
+
+  return data;
+}
+
+export async function updateProposalCommercialTerms(termId, payload) {
+  const normalizedTermId = String(termId || "").trim();
+  if (!normalizedTermId) throw new Error("Condicao comercial inválida para atualização.");
+
+  const supabase = ensureSupabase();
+  const updatePayload = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "name")) {
+    const name = normalizeProposalTemplateName(payload?.name);
+    if (!name) throw new Error("Informe o nome das condicoes comerciais.");
+    updatePayload.name = name;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "payment_terms")) {
+    updatePayload.payment_terms = normalizeProposalLibraryOptionalText(payload?.payment_terms);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "included_offer")) {
+    updatePayload.included_offer = normalizeProposalLibraryOptionalText(payload?.included_offer);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "excluded_offer")) {
+    updatePayload.excluded_offer = normalizeProposalLibraryOptionalText(payload?.excluded_offer);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "financing_terms")) {
+    updatePayload.financing_terms = normalizeProposalLibraryOptionalText(payload?.financing_terms);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "closing_text")) {
+    updatePayload.closing_text = normalizeProposalLibraryOptionalText(payload?.closing_text);
+  }
+
+  const shouldSetDefault = Object.prototype.hasOwnProperty.call(payload || {}, "is_default")
+    ? Boolean(payload?.is_default)
+    : null;
+  if (shouldSetDefault !== null) {
+    updatePayload.is_default = shouldSetDefault;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "is_active")) {
+    updatePayload.is_active = Boolean(payload?.is_active);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "sort_order")) {
+    updatePayload.sort_order = normalizeProposalTemplateSortOrder(payload?.sort_order, 100);
+  }
+
+  if (!Object.keys(updatePayload).length) return;
+
+  if (shouldSetDefault === true) {
+    const { error: clearDefaultError } = await supabase
+      .from("proposal_commercial_terms")
+      .update({ is_default: false })
+      .eq("is_default", true)
+      .neq("id", normalizedTermId);
+    if (clearDefaultError) {
+      throw new Error(normalizeError(clearDefaultError, "Falha ao ajustar condicao comercial padrao."));
+    }
+  }
+
+  const { error } = await supabase.from("proposal_commercial_terms").update(updatePayload).eq("id", normalizedTermId);
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("proposal_commercial_terms_name_unique_idx")) {
+      throw new Error("Ja existe uma condicao comercial com este nome.");
+    }
+    if (message.includes("proposal_commercial_terms_single_default_idx")) {
+      throw new Error("Ja existe uma condicao comercial definida como padrao.");
+    }
+    throw new Error(normalizeError(error, "Falha ao atualizar condicoes comerciais da proposta."));
+  }
+}
+
+export async function deleteProposalCommercialTerms(termId) {
+  const normalizedTermId = String(termId || "").trim();
+  if (!normalizedTermId) throw new Error("Condicao comercial inválida para exclusão.");
+
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("proposal_commercial_terms").delete().eq("id", normalizedTermId);
+  if (error) throw new Error(normalizeError(error, "Falha ao excluir condicoes comerciais da proposta."));
 }
 
 export async function syncOmieCustomers(payload) {
