@@ -870,6 +870,7 @@ export default function PipelineModule({
         company_id: form.company_id,
         owner_user_id: form.owner_user_id || viewerUserId || null,
         title,
+        line_items: allOpportunityItems,
         stage: form.stage,
         status: stageStatus(form.stage),
         estimated_value: opportunityItemsTotalValue,
@@ -992,10 +993,10 @@ export default function PipelineModule({
   function startEditOpportunity(item) {
     setError("");
     setSuccess("");
-    const parsedItems = parseOpportunityItems(item.title);
-    const fallbackFirst = parseOpportunityTitle(item.title);
-    const firstItem = parsedItems[0] || fallbackFirst;
-    const remainingItems = parsedItems.slice(1).map((entry) =>
+    const dbItems = Array.isArray(item.line_items)
+      ? item.line_items.map((entry) => normalizeOpportunityItem(entry)).filter((entry) => isOpportunityItemComplete(entry))
+      : [];
+    const parsedTitleItems = parseOpportunityItems(item.title).map((entry) =>
       normalizeOpportunityItem({
         opportunity_type: entry.opportunity_type,
         title_subcategory: entry.title_subcategory,
@@ -1003,9 +1004,16 @@ export default function PipelineModule({
         estimated_value: resolveEstimatedValueByProduct(entry.title_subcategory, entry.title_product)
       })
     );
-    const firstItemEstimated = parsedItems.length > 1
-      ? resolveEstimatedValueByProduct(firstItem.title_subcategory, firstItem.title_product)
-      : Number(item.estimated_value ?? resolveEstimatedValueByProduct(firstItem.title_subcategory, firstItem.title_product) ?? 0);
+    const effectiveItems = dbItems.length ? dbItems : parsedTitleItems;
+    const fallbackFirst = parseOpportunityTitle(item.title);
+    const firstItem = effectiveItems[0] || normalizeOpportunityItem(fallbackFirst);
+    const remainingItems = effectiveItems.slice(1);
+    const firstItemEstimated = Number(
+      firstItem.estimated_value ??
+        item.estimated_value ??
+        resolveEstimatedValueByProduct(firstItem.title_subcategory, firstItem.title_product) ??
+        0
+    );
     const companyLabel =
       item.companies?.trade_name || companies.find((company) => company.id === item.company_id)?.trade_name || "";
     setEditingOpportunityId(item.id);

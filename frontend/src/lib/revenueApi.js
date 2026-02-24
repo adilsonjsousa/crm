@@ -110,6 +110,34 @@ function normalizeOpportunityTitleKey(value) {
     .toLowerCase();
 }
 
+function normalizeOpportunityLineItems(value) {
+  if (!Array.isArray(value)) return [];
+
+  const normalized = [];
+  for (const rawItem of value) {
+    const item = asObject(rawItem);
+    const itemType = String(item.opportunity_type || "").trim().toLowerCase();
+    const opportunityType = itemType === "supplies" || itemType === "service" ? itemType : "equipment";
+    const titleSubcategory = String(item.title_subcategory || "").trim();
+    const titleProduct = String(item.title_product || "").trim();
+    if (!titleSubcategory || !titleProduct) continue;
+
+    const parsedEstimated = Number(String(item.estimated_value ?? "").replace(",", "."));
+    const estimatedValue = Number.isFinite(parsedEstimated) && parsedEstimated >= 0 ? parsedEstimated : 0;
+
+    normalized.push({
+      opportunity_type: opportunityType,
+      title_subcategory: titleSubcategory,
+      title_product: titleProduct,
+      estimated_value: estimatedValue
+    });
+
+    if (normalized.length >= 25) break;
+  }
+
+  return normalized;
+}
+
 function normalizeLifecycleStageName(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -678,7 +706,7 @@ export async function listOpportunities(options = {}) {
   let query = supabase
     .from("opportunities")
     .select(
-      "id,company_id,owner_user_id,title,stage,status,estimated_value,expected_close_date,created_at,companies:company_id(trade_name,email,phone)"
+      "id,company_id,owner_user_id,title,stage,status,estimated_value,expected_close_date,line_items,created_at,companies:company_id(trade_name,email,phone)"
     );
 
   if (viewerUserId && !canViewAll) {
@@ -704,7 +732,8 @@ export async function createOpportunity(payload, options = {}) {
   const normalizedPayload = {
     ...payload,
     title: String(payload?.title || "").trim().replace(/\s+/g, " "),
-    owner_user_id: String(payload?.owner_user_id || "").trim() || fallbackOwnerUserId || null
+    owner_user_id: String(payload?.owner_user_id || "").trim() || fallbackOwnerUserId || null,
+    line_items: normalizeOpportunityLineItems(payload?.line_items)
   };
 
   const opportunityTitleKey = normalizeOpportunityTitleKey(normalizedPayload.title);
@@ -750,6 +779,9 @@ export async function updateOpportunity(opportunityId, payload) {
   const fromStage = payload?.from_stage;
   const updatePayload = { ...payload };
   delete updatePayload.from_stage;
+  if (Object.prototype.hasOwnProperty.call(updatePayload, "line_items")) {
+    updatePayload.line_items = normalizeOpportunityLineItems(updatePayload.line_items);
+  }
 
   const { error } = await supabase.from("opportunities").update(updatePayload).eq("id", opportunityId);
   if (error) throw new Error(normalizeError(error, "Falha ao atualizar oportunidade."));
@@ -1133,7 +1165,7 @@ export async function listCompanyOpportunities(companyId) {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("opportunities")
-    .select("id,title,stage,status,estimated_value,expected_close_date,created_at,updated_at")
+    .select("id,title,stage,status,estimated_value,expected_close_date,line_items,created_at,updated_at")
     .eq("company_id", companyId)
     .order("created_at", { ascending: false })
     .limit(120);
