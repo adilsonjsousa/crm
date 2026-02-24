@@ -125,6 +125,7 @@ const PROPOSAL_CPP_SECTION_OPTIONS = [
   { value: "toner", label: "Toner" },
   { value: "components", label: "Componentes" }
 ];
+const PRODUCT_DELETE_CONFIRM_WORD = "EXCLUIR";
 
 const DEFAULT_PROPOSAL_TEMPLATE_BODY = [
   "PROPOSTA COMERCIAL {{numero_proposta}}",
@@ -439,6 +440,8 @@ export default function SettingsModule() {
   const [editProposalProductProfileForm, setEditProposalProductProfileForm] = useState(EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM);
   const [savingProposalProductProfileId, setSavingProposalProductProfileId] = useState("");
   const [deletingProposalProductProfileId, setDeletingProposalProductProfileId] = useState("");
+  const [pendingDeleteProposalProductProfile, setPendingDeleteProposalProductProfile] = useState(null);
+  const [proposalProductDeleteConfirmation, setProposalProductDeleteConfirmation] = useState("");
   const [syncingLegacyProductCatalog, setSyncingLegacyProductCatalog] = useState(false);
 
   const [proposalCppRows, setProposalCppRows] = useState([]);
@@ -1136,6 +1139,21 @@ export default function SettingsModule() {
     setEditProposalProductProfileForm(EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM);
   }
 
+  function requestDeleteProposalProductProfile(profile) {
+    const profileId = String(profile?.id || "").trim();
+    if (!profileId) return;
+    setProposalProductProfilesError("");
+    setProposalProductProfilesSuccess("");
+    setPendingDeleteProposalProductProfile(profile);
+    setProposalProductDeleteConfirmation("");
+  }
+
+  function cancelDeleteProposalProductProfile() {
+    if (deletingProposalProductProfileId) return;
+    setPendingDeleteProposalProductProfile(null);
+    setProposalProductDeleteConfirmation("");
+  }
+
   async function handleSaveProposalProductProfile(event) {
     event.preventDefault();
     if (!editingProposalProductProfileId) return;
@@ -1186,12 +1204,14 @@ export default function SettingsModule() {
     }
   }
 
-  async function handleDeleteProposalProductProfile(profile) {
+  async function handleDeleteProposalProductProfile() {
+    const profile = pendingDeleteProposalProductProfile;
     const profileId = String(profile?.id || "").trim();
     if (!profileId) return;
-
-    const confirmed = window.confirm(`Excluir produto "${profile.product_name || profile.name}"?`);
-    if (!confirmed) return;
+    if (proposalProductDeleteConfirmation.trim().toUpperCase() !== PRODUCT_DELETE_CONFIRM_WORD) {
+      setProposalProductProfilesError(`Digite ${PRODUCT_DELETE_CONFIRM_WORD} para confirmar a exclusão.`);
+      return;
+    }
 
     setProposalProductProfilesError("");
     setProposalProductProfilesSuccess("");
@@ -1203,6 +1223,8 @@ export default function SettingsModule() {
       if (editingProposalProductProfileId === profileId) {
         cancelEditProposalProductProfile();
       }
+      setPendingDeleteProposalProductProfile(null);
+      setProposalProductDeleteConfirmation("");
     } catch (err) {
       setProposalProductProfilesError(err.message);
     } finally {
@@ -2562,7 +2584,7 @@ export default function SettingsModule() {
                           <button
                             type="button"
                             className="btn-ghost btn-table-action"
-                            onClick={() => handleDeleteProposalProductProfile(profile)}
+                            onClick={() => requestDeleteProposalProductProfile(profile)}
                             disabled={deletingProposalProductProfileId === profile.id}
                           >
                             {deletingProposalProductProfileId === profile.id ? "Excluindo..." : "Excluir"}
@@ -2583,121 +2605,199 @@ export default function SettingsModule() {
             </div>
 
             {editingProposalProductProfileId ? (
-              <form className="form-grid top-gap settings-user-edit-form" onSubmit={handleSaveProposalProductProfile}>
-                <h3>Editar produto</h3>
-                <div className="settings-users-selects">
-                  <label className="settings-field">
-                    <span>Categoria</span>
-                    <select
-                      value={editProposalProductProfileForm.proposal_type}
-                      onChange={(event) => {
-                        const nextType = event.target.value;
-                        const nextOptions = getSubcategoriesByType(nextType);
-                        setEditProposalProductProfileForm((prev) => ({
-                          ...prev,
-                          proposal_type: nextType,
-                          product_subcategory: nextOptions.includes(prev.product_subcategory) ? prev.product_subcategory : ""
-                        }));
-                      }}
-                      required
+              <div className="edit-company-modal-overlay" role="presentation" onClick={cancelEditProposalProductProfile}>
+                <article
+                  className="edit-company-modal-card"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Editar produto"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="edit-company-modal-header">
+                    <h2>Editar produto</h2>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-table-action"
+                      onClick={cancelEditProposalProductProfile}
+                      disabled={savingProposalProductProfileId === editingProposalProductProfileId}
                     >
-                      <option value="">Selecione a categoria</option>
-                      {PRODUCT_REGISTRY_TYPE_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="settings-field">
-                    <span>Sub-categoria</span>
-                    <select
-                      value={editProposalProductProfileForm.product_subcategory}
-                      onChange={(event) =>
-                        setEditProposalProductProfileForm((prev) => ({ ...prev, product_subcategory: event.target.value }))
-                      }
-                      disabled={!editProposalProductProfileForm.proposal_type}
-                      required={Boolean(editProposalProductProfileForm.proposal_type)}
-                    >
-                      <option value="">
-                        {editProposalProductProfileForm.proposal_type
-                          ? "Selecione a sub-categoria"
-                          : "Selecione a categoria primeiro"}
-                      </option>
-                      {editProfileSubcategoryOptions.map((subcategory) => (
-                        <option key={subcategory} value={subcategory}>
-                          {subcategory}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <input
-                  required
-                  placeholder="Nome do produto"
-                  value={editProposalProductProfileForm.product_name}
-                  onChange={(event) =>
-                    setEditProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))
-                  }
-                />
-                <textarea
-                  className="settings-library-textarea"
-                  required
-                  placeholder="Descritivo do produto"
-                  value={editProposalProductProfileForm.technical_text}
-                  onChange={(event) =>
-                    setEditProposalProductProfileForm((prev) => ({ ...prev, technical_text: event.target.value }))
-                  }
-                />
-                <input
-                  placeholder="Código no Omie (opcional)"
-                  value={editProposalProductProfileForm.product_code}
-                  onChange={(event) =>
-                    setEditProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))
-                  }
-                />
-                <div className="settings-users-selects">
-                  <label className="settings-field">
-                    <span>Valor base</span>
+                      Fechar
+                    </button>
+                  </div>
+                  <form className="form-grid" onSubmit={handleSaveProposalProductProfile}>
+                    <div className="settings-users-selects">
+                      <label className="settings-field">
+                        <span>Categoria</span>
+                        <select
+                          value={editProposalProductProfileForm.proposal_type}
+                          onChange={(event) => {
+                            const nextType = event.target.value;
+                            const nextOptions = getSubcategoriesByType(nextType);
+                            setEditProposalProductProfileForm((prev) => ({
+                              ...prev,
+                              proposal_type: nextType,
+                              product_subcategory: nextOptions.includes(prev.product_subcategory) ? prev.product_subcategory : ""
+                            }));
+                          }}
+                          required
+                        >
+                          <option value="">Selecione a categoria</option>
+                          {PRODUCT_REGISTRY_TYPE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="settings-field">
+                        <span>Sub-categoria</span>
+                        <select
+                          value={editProposalProductProfileForm.product_subcategory}
+                          onChange={(event) =>
+                            setEditProposalProductProfileForm((prev) => ({ ...prev, product_subcategory: event.target.value }))
+                          }
+                          disabled={!editProposalProductProfileForm.proposal_type}
+                          required={Boolean(editProposalProductProfileForm.proposal_type)}
+                        >
+                          <option value="">
+                            {editProposalProductProfileForm.proposal_type
+                              ? "Selecione a sub-categoria"
+                              : "Selecione a categoria primeiro"}
+                          </option>
+                          {editProfileSubcategoryOptions.map((subcategory) => (
+                            <option key={subcategory} value={subcategory}>
+                              {subcategory}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
                     <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={editProposalProductProfileForm.base_price}
+                      required
+                      placeholder="Nome do produto"
+                      value={editProposalProductProfileForm.product_name}
                       onChange={(event) =>
-                        setEditProposalProductProfileForm((prev) => ({ ...prev, base_price: event.target.value }))
+                        setEditProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))
                       }
                     />
-                  </label>
-                </div>
-                <label className="checkbox-inline">
+                    <textarea
+                      className="settings-library-textarea"
+                      required
+                      placeholder="Descritivo do produto"
+                      value={editProposalProductProfileForm.technical_text}
+                      onChange={(event) =>
+                        setEditProposalProductProfileForm((prev) => ({ ...prev, technical_text: event.target.value }))
+                      }
+                    />
+                    <input
+                      placeholder="Código no Omie (opcional)"
+                      value={editProposalProductProfileForm.product_code}
+                      onChange={(event) =>
+                        setEditProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))
+                      }
+                    />
+                    <div className="settings-users-selects">
+                      <label className="settings-field">
+                        <span>Valor base</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={editProposalProductProfileForm.base_price}
+                          onChange={(event) =>
+                            setEditProposalProductProfileForm((prev) => ({ ...prev, base_price: event.target.value }))
+                          }
+                        />
+                      </label>
+                    </div>
+                    <label className="checkbox-inline">
+                      <input
+                        type="checkbox"
+                        checked={editProposalProductProfileForm.is_active}
+                        onChange={(event) =>
+                          setEditProposalProductProfileForm((prev) => ({ ...prev, is_active: event.target.checked }))
+                        }
+                      />
+                      Produto ativo
+                    </label>
+                    <div className="inline-actions">
+                      <button
+                        type="submit"
+                        className="btn-primary"
+                        disabled={savingProposalProductProfileId === editingProposalProductProfileId}
+                      >
+                        {savingProposalProductProfileId === editingProposalProductProfileId ? "Salvando..." : "Salvar produto"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={cancelEditProposalProductProfile}
+                        disabled={savingProposalProductProfileId === editingProposalProductProfileId}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </form>
+                </article>
+              </div>
+            ) : null}
+
+            {pendingDeleteProposalProductProfile ? (
+              <div className="edit-company-modal-overlay" role="presentation" onClick={cancelDeleteProposalProductProfile}>
+                <article
+                  className="edit-company-modal-card"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Confirmar exclusão de produto"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="edit-company-modal-header">
+                    <h2>Confirmar exclusão</h2>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-table-action"
+                      onClick={cancelDeleteProposalProductProfile}
+                      disabled={Boolean(deletingProposalProductProfileId)}
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                  <p className="muted">
+                    Esta ação exclui o produto de forma permanente. Para continuar, digite{" "}
+                    <strong>{PRODUCT_DELETE_CONFIRM_WORD}</strong>.
+                  </p>
+                  <p>
+                    <strong>Produto:</strong> {proposalProductDisplayLabel(pendingDeleteProposalProductProfile)}
+                  </p>
                   <input
-                    type="checkbox"
-                    checked={editProposalProductProfileForm.is_active}
-                    onChange={(event) =>
-                      setEditProposalProductProfileForm((prev) => ({ ...prev, is_active: event.target.checked }))
-                    }
+                    placeholder={`Digite ${PRODUCT_DELETE_CONFIRM_WORD}`}
+                    value={proposalProductDeleteConfirmation}
+                    onChange={(event) => setProposalProductDeleteConfirmation(event.target.value)}
+                    disabled={Boolean(deletingProposalProductProfileId)}
                   />
-                  Produto ativo
-                </label>
-                <div className="inline-actions">
-                  <button
-                    type="submit"
-                    className="btn-primary"
-                    disabled={savingProposalProductProfileId === editingProposalProductProfileId}
-                  >
-                    {savingProposalProductProfileId === editingProposalProductProfileId ? "Salvando..." : "Salvar produto"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    onClick={cancelEditProposalProductProfile}
-                    disabled={savingProposalProductProfileId === editingProposalProductProfileId}
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </form>
+                  <div className="inline-actions top-gap">
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={cancelDeleteProposalProductProfile}
+                      disabled={Boolean(deletingProposalProductProfileId)}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={handleDeleteProposalProductProfile}
+                      disabled={
+                        Boolean(deletingProposalProductProfileId) ||
+                        proposalProductDeleteConfirmation.trim().toUpperCase() !== PRODUCT_DELETE_CONFIRM_WORD
+                      }
+                    >
+                      {deletingProposalProductProfileId ? "Excluindo..." : "Confirmar exclusão"}
+                    </button>
+                  </div>
+                </article>
+              </div>
             ) : null}
           </section>
 
