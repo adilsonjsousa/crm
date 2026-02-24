@@ -465,6 +465,17 @@ export default function App() {
   function openCustomerHistoryFromSearch(item) {
     const companyId = String(item?.company_id || "").trim();
     if (!companyId) {
+      if (item?.entity_type === "contact") {
+        const contactId = resolveSearchContactId(item);
+        if (!contactId) {
+          setSearchError("Nao foi possivel identificar este contato para edicao.");
+          return false;
+        }
+        setSearchError("");
+        handleSearchRequestEditContact(contactId, item);
+        return true;
+      }
+
       setSearchError("Este contato ainda nao esta vinculado a uma empresa para abrir o historico 360.");
       return false;
     }
