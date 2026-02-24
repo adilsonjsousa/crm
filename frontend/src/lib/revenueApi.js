@@ -1,6 +1,12 @@
 import { ensureSupabase } from "./supabase";
 import { PIPELINE_STAGES, sortByStageOrder, stageStatus } from "./pipelineStages";
-import { parseOpportunityTitle, resolveEstimatedValueByProduct } from "./productCatalog";
+import {
+  PRODUCT_CATALOG_ROWS,
+  SALES_TYPES,
+  getSubcategoriesByType,
+  parseOpportunityTitle,
+  resolveEstimatedValueByProduct
+} from "./productCatalog";
 import { formatBrazilPhone, toWhatsAppBrazilNumber, validateBrazilPhoneOrEmpty } from "./phone";
 
 function normalizeError(error, fallback) {
@@ -159,6 +165,57 @@ function normalizeProposalTemplateType(value) {
   return null;
 }
 
+function normalizeCatalogLookup(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildProductCatalogRegistryKey(proposalType, productSubcategory, productName) {
+  return [
+    normalizeCatalogLookup(proposalType),
+    normalizeCatalogLookup(productSubcategory),
+    normalizeCatalogLookup(productName)
+  ].join("::");
+}
+
+function buildLegacyProductCatalogPayload() {
+  const typeBySubcategory = new Map();
+  for (const type of SALES_TYPES) {
+    for (const subcategory of getSubcategoriesByType(type.value)) {
+      typeBySubcategory.set(normalizeCatalogLookup(subcategory), type.value);
+    }
+  }
+
+  return (PRODUCT_CATALOG_ROWS || [])
+    .map((row) => {
+      const productSubcategory = String(row?.title || "").trim();
+      const productName = String(row?.product || "").trim();
+      if (!productSubcategory || !productName) return null;
+
+      const mappedType = typeBySubcategory.get(normalizeCatalogLookup(productSubcategory));
+      const proposalType = mappedType || "equipment";
+      const parsedBasePrice = Number(String(row?.estimated_value ?? "").replace(",", "."));
+      const basePrice = Number.isFinite(parsedBasePrice) && parsedBasePrice > 0 ? parsedBasePrice : 0;
+
+      return {
+        name: `${proposalType} :: ${productSubcategory} :: ${productName}`,
+        proposal_type: proposalType,
+        product_subcategory: productSubcategory,
+        product_code: null,
+        product_name: productName,
+        technical_text: LEGACY_PRODUCT_DEFAULT_DESCRIPTION,
+        base_price: basePrice,
+        is_active: true,
+        sort_order: 100
+      };
+    })
+    .filter(Boolean);
+}
+
 function normalizeProposalTemplateSortOrder(value, fallback = 100) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -221,6 +278,7 @@ const CRM_ACCESS_LEVELS = ["none", "read", "edit", "admin"];
 const OMIE_CUSTOMERS_STORAGE_KEY = "crm.settings.omie.customers.v1";
 const PROPOSAL_VERSION_EVENT_TYPES = new Set(["manual_save", "export_docx", "export_pdf", "send_email", "send_whatsapp"]);
 const PROPOSAL_VERSION_OUTPUT_FORMATS = new Set(["snapshot", "docx", "pdf", "email", "whatsapp"]);
+const LEGACY_PRODUCT_DEFAULT_DESCRIPTION = "Cadastro legado migrado automaticamente. Revisar descritivo tecnico.";
 const CRM_ROLE_DEFAULT_PERMISSIONS = {
   admin: {
     dashboard: "admin",
@@ -2147,6 +2205,91 @@ export async function deleteProposalProductProfile(profileId) {
   const supabase = ensureSupabase();
   const { error } = await supabase.from("proposal_product_profiles").delete().eq("id", normalizedProfileId);
   if (error) throw new Error(normalizeError(error, "Falha ao excluir perfil de produto da proposta."));
+}
+
+export async function syncLegacyProductCatalogToProposalProfiles({ overwriteDescriptions = false } = {}) {
+  const sourceRows = buildLegacyProductCatalogPayload();
+  const existingProfiles = await listProposalProductProfiles({ includeInactive: true });
+  const existingByKey = new Map();
+
+  for (const profile of existingProfiles || []) {
+    const key = buildProductCatalogRegistryKey(profile?.proposal_type, profile?.product_subcategory, profile?.product_name);
+    if (!key) continue;
+    if (!existingByKey.has(key)) existingByKey.set(key, profile);
+  }
+
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+  const failures = [];
+
+  for (const source of sourceRows) {
+    const key = buildProductCatalogRegistryKey(source.proposal_type, source.product_subcategory, source.product_name);
+    const current = existingByKey.get(key) || null;
+
+    if (!current) {
+      try {
+        await createProposalProductProfile(source);
+        inserted += 1;
+      } catch (err) {
+        failures.push({
+          action: "insert",
+          product_name: source.product_name,
+          error: err?.message || "Falha ao inserir item legado."
+        });
+      }
+      continue;
+    }
+
+    const currentDescription = String(current.technical_text || "").trim();
+    const shouldFillDescription = !currentDescription;
+    const shouldUpdateDescription = overwriteDescriptions || shouldFillDescription;
+    const currentBasePrice = Number(current.base_price || 0);
+    const shouldUpdate =
+      String(current.name || "").trim() !== source.name ||
+      String(current.proposal_type || "").trim() !== source.proposal_type ||
+      String(current.product_subcategory || "").trim() !== source.product_subcategory ||
+      currentBasePrice !== source.base_price ||
+      Boolean(current.is_active) !== true ||
+      shouldUpdateDescription;
+
+    if (!shouldUpdate) {
+      skipped += 1;
+      continue;
+    }
+
+    const updatePayload = {
+      name: source.name,
+      proposal_type: source.proposal_type,
+      product_subcategory: source.product_subcategory,
+      base_price: source.base_price,
+      is_active: true,
+      sort_order: source.sort_order
+    };
+    if (shouldUpdateDescription) {
+      updatePayload.technical_text = source.technical_text;
+    }
+
+    try {
+      await updateProposalProductProfile(current.id, updatePayload);
+      updated += 1;
+    } catch (err) {
+      failures.push({
+        action: "update",
+        product_name: source.product_name,
+        error: err?.message || "Falha ao atualizar item legado."
+      });
+    }
+  }
+
+  return {
+    source_total: sourceRows.length,
+    inserted,
+    updated,
+    skipped,
+    failures_count: failures.length,
+    failures
+  };
 }
 
 export async function listProposalCppRows({ productProfileId = "", includeInactive = true } = {}) {

@@ -22,6 +22,7 @@ import {
   saveCompanyLifecycleStageOrder,
   sendSystemUserPasswordReset,
   syncRdStationCrm,
+  syncLegacyProductCatalogToProposalProfiles,
   syncOmieCustomers,
   updateCompanyLifecycleStage,
   updateProposalCommercialTerms,
@@ -438,6 +439,7 @@ export default function SettingsModule() {
   const [editProposalProductProfileForm, setEditProposalProductProfileForm] = useState(EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM);
   const [savingProposalProductProfileId, setSavingProposalProductProfileId] = useState("");
   const [deletingProposalProductProfileId, setDeletingProposalProductProfileId] = useState("");
+  const [syncingLegacyProductCatalog, setSyncingLegacyProductCatalog] = useState(false);
 
   const [proposalCppRows, setProposalCppRows] = useState([]);
   const [proposalCppRowsLoading, setProposalCppRowsLoading] = useState(false);
@@ -599,6 +601,34 @@ export default function SettingsModule() {
       setSelectedProposalCppProfileId("");
     } finally {
       setProposalProductProfilesLoading(false);
+    }
+  }
+
+  async function handleSyncLegacyProductCatalog() {
+    const confirmed = window.confirm(
+      "Reimportar o catalogo legado de produtos agora? A operação é idempotente e não duplica itens já existentes."
+    );
+    if (!confirmed) return;
+
+    setProposalProductProfilesError("");
+    setProposalProductProfilesSuccess("");
+    setSyncingLegacyProductCatalog(true);
+
+    try {
+      const result = await syncLegacyProductCatalogToProposalProfiles();
+      await loadProposalProductProfiles();
+      const summary = `Reimportação concluída: ${result.inserted} inserido(s), ${result.updated} atualizado(s), ${result.skipped} sem alteração.`;
+      setProposalProductProfilesSuccess(summary);
+      if (result.failures_count > 0) {
+        const firstFailure = result.failures[0];
+        setProposalProductProfilesError(
+          `Alguns itens falharam (${result.failures_count}). Exemplo: ${firstFailure?.product_name || "produto"} - ${firstFailure?.error || "erro desconhecido"}.`
+        );
+      }
+    } catch (err) {
+      setProposalProductProfilesError(err.message);
+    } finally {
+      setSyncingLegacyProductCatalog(false);
     }
   }
 
@@ -2484,6 +2514,14 @@ export default function SettingsModule() {
                   disabled={proposalProductProfilesLoading || creatingProposalProductProfile}
                 >
                   {proposalProductProfilesLoading ? "Atualizando..." : "Atualizar produtos"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={handleSyncLegacyProductCatalog}
+                  disabled={syncingLegacyProductCatalog || creatingProposalProductProfile || proposalProductProfilesLoading}
+                >
+                  {syncingLegacyProductCatalog ? "Reimportando..." : "Reimportar catálogo legado"}
                 </button>
               </div>
             </form>
