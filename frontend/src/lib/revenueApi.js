@@ -2179,7 +2179,7 @@ export async function searchGlobalRecords(term) {
   const seenCompanyKeys = new Set();
   for (const item of companiesRes.data || []) {
     const cnpjDigits = cleanDigits(item?.cnpj);
-    const tradeNameKey = normalizeText(item?.trade_name || "empresa").replace(/\s+/g, " ").trim();
+    const tradeNameKey = normalizeSearchAscii(item?.trade_name || "empresa").replace(/\s+/g, " ").trim();
     const dedupeKey = cnpjDigits.length === 14 ? `cnpj:${cnpjDigits}` : `name:${tradeNameKey}`;
     if (seenCompanyKeys.has(dedupeKey)) continue;
     seenCompanyKeys.add(dedupeKey);
