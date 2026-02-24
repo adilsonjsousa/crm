@@ -2088,12 +2088,28 @@ export async function sendSystemUserPasswordReset(payload) {
 
 export async function listCompanyOptions() {
   const supabase = ensureSupabase();
-  const { data, error } = await supabase
-    .from("companies")
-    .select("id,trade_name,cnpj")
-    .order("trade_name", { ascending: true });
-  if (error) throw new Error(normalizeError(error, "Falha ao listar empresas para seleção."));
-  return data || [];
+  const pageSize = 500;
+  let from = 0;
+  const rows = [];
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("companies")
+      .select("id,trade_name,cnpj")
+      .order("trade_name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+
+    if (error) throw new Error(normalizeError(error, "Falha ao listar empresas para seleção."));
+    if (!data?.length) break;
+
+    rows.push(...data);
+
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return rows;
 }
 
 export async function searchGlobalRecords(term) {
