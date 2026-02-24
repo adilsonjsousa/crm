@@ -1115,7 +1115,7 @@ function createProposalDraft({
     issue_date: today,
     validity_days: "7",
     proposal_type: proposalType,
-    category: primaryItem.title_subcategory || "",
+    category: selectedProductProfile?.product_subcategory || primaryItem.title_subcategory || "",
     product: selectedProductProfile?.product_name || primaryItem.title_product || String(opportunity?.title || "").trim(),
     opportunity_items: opportunityItems,
     commercial_items: commercialItems,
@@ -2144,6 +2144,7 @@ export default function PipelineModule({
       return {
         ...prev,
         proposal_type: nextType,
+        category: selectedProfile.product_subcategory || prev.category,
         product: nextProduct,
         template_profile_key: nextTemplateProfile.key,
         template_profile_label: nextTemplateProfile.label,
@@ -2956,6 +2957,7 @@ export default function PipelineModule({
                   {savedProposalProductProfiles.map((profile) => (
                     <option key={profile.id} value={profile.id}>
                       {profile.name}
+                      {profile.product_subcategory ? ` · ${profile.product_subcategory}` : ""}
                       {profile.product_code ? ` · ${profile.product_code}` : ""}
                     </option>
                   ))}

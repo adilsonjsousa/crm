@@ -161,6 +161,7 @@ const EMPTY_PROPOSAL_TEMPLATE_FORM = {
 const EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM = {
   name: "",
   proposal_type: "",
+  product_subcategory: "",
   product_code: "",
   product_name: "",
   headline: "",
@@ -1002,6 +1003,7 @@ export default function SettingsModule() {
     setEditProposalProductProfileForm({
       name: String(profile.name || ""),
       proposal_type: String(profile.proposal_type || ""),
+      product_subcategory: String(profile.product_subcategory || ""),
       product_code: String(profile.product_code || ""),
       product_name: String(profile.product_name || ""),
       headline: String(profile.headline || ""),
@@ -2313,6 +2315,13 @@ export default function SettingsModule() {
                 onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))}
               />
               <input
+                placeholder="Sub-categoria (ex.: PRODUÇÃO COLOR)"
+                value={proposalProductProfileForm.product_subcategory}
+                onChange={(event) =>
+                  setProposalProductProfileForm((prev) => ({ ...prev, product_subcategory: event.target.value }))
+                }
+              />
+              <input
                 placeholder="Código do produto OMIE (opcional)"
                 value={proposalProductProfileForm.product_code}
                 onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))}
@@ -2427,6 +2436,7 @@ export default function SettingsModule() {
                   <tr>
                     <th>Nome</th>
                     <th>Categoria</th>
+                    <th>Sub-categoria</th>
                     <th>Produto</th>
                     <th>Código</th>
                     <th>Valor base</th>
@@ -2439,6 +2449,7 @@ export default function SettingsModule() {
                     <tr key={profile.id}>
                       <td>{profile.name}</td>
                       <td>{proposalProductTypeLabel(profile.proposal_type)}</td>
+                      <td>{profile.product_subcategory || "-"}</td>
                       <td>{profile.product_name}</td>
                       <td>{profile.product_code || "-"}</td>
                       <td>{Number(profile.base_price || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
@@ -2478,7 +2489,7 @@ export default function SettingsModule() {
                   ))}
                   {!proposalProductProfiles.length ? (
                     <tr>
-                      <td colSpan={7} className="muted">
+                      <td colSpan={8} className="muted">
                         Nenhum perfil cadastrado.
                       </td>
                     </tr>
@@ -2502,6 +2513,13 @@ export default function SettingsModule() {
                   value={editProposalProductProfileForm.product_name}
                   onChange={(event) =>
                     setEditProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))
+                  }
+                />
+                <input
+                  placeholder="Sub-categoria"
+                  value={editProposalProductProfileForm.product_subcategory}
+                  onChange={(event) =>
+                    setEditProposalProductProfileForm((prev) => ({ ...prev, product_subcategory: event.target.value }))
                   }
                 />
                 <input

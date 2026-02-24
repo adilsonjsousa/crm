@@ -1988,7 +1988,7 @@ export async function listProposalProductProfiles({ includeInactive = true } = {
   let query = supabase
     .from("proposal_product_profiles")
     .select(
-      "id,name,proposal_type,product_code,product_name,headline,intro_text,technical_text,video_url,included_accessories,optional_accessories,base_price,notes,is_active,sort_order,created_at,updated_at"
+      "id,name,proposal_type,product_subcategory,product_code,product_name,headline,intro_text,technical_text,video_url,included_accessories,optional_accessories,base_price,notes,is_active,sort_order,created_at,updated_at"
     )
     .order("sort_order", { ascending: true })
     .order("name", { ascending: true });
@@ -2020,6 +2020,7 @@ export async function createProposalProductProfile(payload) {
     .insert({
       name,
       proposal_type: normalizeProposalTemplateType(payload?.proposal_type),
+      product_subcategory: normalizeProposalLibraryOptionalText(payload?.product_subcategory),
       product_code: normalizeProposalLibraryOptionalText(payload?.product_code),
       product_name: productName,
       headline: normalizeProposalLibraryOptionalText(payload?.headline),
@@ -2062,6 +2063,10 @@ export async function updateProposalProductProfile(profileId, payload) {
 
   if (Object.prototype.hasOwnProperty.call(payload || {}, "proposal_type")) {
     updatePayload.proposal_type = normalizeProposalTemplateType(payload?.proposal_type);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "product_subcategory")) {
+    updatePayload.product_subcategory = normalizeProposalLibraryOptionalText(payload?.product_subcategory);
   }
 
   if (Object.prototype.hasOwnProperty.call(payload || {}, "product_code")) {
