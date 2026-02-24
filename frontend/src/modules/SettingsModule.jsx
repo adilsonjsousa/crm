@@ -118,6 +118,7 @@ const PROPOSAL_PRODUCT_TYPE_OPTIONS = [
   { value: "supplies", label: "Suprimentos" },
   { value: "service", label: "Serviços" }
 ];
+const PRODUCT_REGISTRY_TYPE_OPTIONS = PROPOSAL_PRODUCT_TYPE_OPTIONS.filter((option) => Boolean(option.value));
 
 const PROPOSAL_CPP_SECTION_OPTIONS = [
   { value: "toner", label: "Toner" },
@@ -306,6 +307,36 @@ function proposalCppSectionLabel(sectionValue) {
   return found?.label || "Toner";
 }
 
+function normalizeProductRegistryLookup(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildProposalProductProfileInternalName(payload) {
+  const proposalType = String(payload?.proposal_type || "").trim() || "generic";
+  const productSubcategory = String(payload?.product_subcategory || "").trim() || "sem-subcategoria";
+  const productName = String(payload?.product_name || "").trim();
+  return `${proposalType} :: ${productSubcategory} :: ${productName}`;
+}
+
+function buildProductRegistryKey(payload) {
+  const proposalType = normalizeProductRegistryLookup(payload?.proposal_type);
+  const productSubcategory = normalizeProductRegistryLookup(payload?.product_subcategory);
+  const productName = normalizeProductRegistryLookup(payload?.product_name);
+  return `${proposalType}::${productSubcategory}::${productName}`;
+}
+
+function proposalProductDisplayLabel(profile) {
+  const productName = String(profile?.product_name || "").trim() || "Produto";
+  const categoryLabel = proposalProductTypeLabel(profile?.proposal_type);
+  const subcategoryLabel = String(profile?.product_subcategory || "").trim();
+  return subcategoryLabel ? `${productName} (${categoryLabel} · ${subcategoryLabel})` : `${productName} (${categoryLabel})`;
+}
+
 function userDeliveryMessage(delivery) {
   const map = {
     invite_email_sent: "Convite enviado para o e-mail do usuário.",
@@ -462,6 +493,46 @@ export default function SettingsModule() {
     () => getSubcategoriesByType(editProposalProductProfileForm.proposal_type),
     [editProposalProductProfileForm.proposal_type]
   );
+
+  function buildProductProfilePayloadFromForm(formValue) {
+    const proposalType = String(formValue?.proposal_type || "").trim();
+    const productSubcategory = String(formValue?.product_subcategory || "").trim();
+    const productName = String(formValue?.product_name || "").trim();
+    const technicalText = String(formValue?.technical_text || "").trim();
+
+    return {
+      name: buildProposalProductProfileInternalName({
+        proposal_type: proposalType,
+        product_subcategory: productSubcategory,
+        product_name: productName
+      }),
+      proposal_type: proposalType,
+      product_subcategory: productSubcategory,
+      product_name: productName,
+      technical_text: technicalText,
+      product_code: String(formValue?.product_code || "").trim(),
+      base_price: String(formValue?.base_price ?? "0"),
+      is_active: Boolean(formValue?.is_active),
+      sort_order: String(formValue?.sort_order || "100")
+    };
+  }
+
+  function validateProductProfilePayload(payload, { ignoreId = "" } = {}) {
+    if (!payload.proposal_type) throw new Error("Selecione a categoria do produto.");
+    if (!payload.product_subcategory) throw new Error("Selecione a sub-categoria do produto.");
+    if (!payload.product_name) throw new Error("Informe o nome do produto.");
+    if (!payload.technical_text) throw new Error("Informe o descritivo do produto.");
+
+    const candidateKey = buildProductRegistryKey(payload);
+    const duplicated = proposalProductProfiles.some((item) => {
+      const currentId = String(item?.id || "");
+      if (ignoreId && currentId === ignoreId) return false;
+      return buildProductRegistryKey(item) === candidateKey;
+    });
+    if (duplicated) {
+      throw new Error("Já existe produto cadastrado com a mesma categoria, sub-categoria e nome.");
+    }
+  }
 
   async function loadUsers() {
     setUsersLoading(true);
@@ -991,10 +1062,12 @@ export default function SettingsModule() {
     setCreatingProposalProductProfile(true);
 
     try {
-      await createProposalProductProfile(proposalProductProfileForm);
+      const payload = buildProductProfilePayloadFromForm(proposalProductProfileForm);
+      validateProductProfilePayload(payload);
+      await createProposalProductProfile(payload);
       setProposalProductProfileForm(EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM);
       await loadProposalProductProfiles();
-      setProposalProductProfilesSuccess("Perfil de produto criado.");
+      setProposalProductProfilesSuccess("Produto cadastrado.");
     } catch (err) {
       setProposalProductProfilesError(err.message);
     } finally {
@@ -1041,12 +1114,14 @@ export default function SettingsModule() {
     setProposalProductProfilesSuccess("");
     setSavingProposalProductProfileId(editingProposalProductProfileId);
     try {
-      await updateProposalProductProfile(editingProposalProductProfileId, editProposalProductProfileForm);
+      const payload = buildProductProfilePayloadFromForm(editProposalProductProfileForm);
+      validateProductProfilePayload(payload, { ignoreId: editingProposalProductProfileId });
+      await updateProposalProductProfile(editingProposalProductProfileId, payload);
       await loadProposalProductProfiles();
       if (selectedProposalCppProfileId === editingProposalProductProfileId) {
         await loadProposalCppRows(editingProposalProductProfileId);
       }
-      setProposalProductProfilesSuccess("Perfil de produto atualizado.");
+      setProposalProductProfilesSuccess("Produto atualizado.");
       cancelEditProposalProductProfile();
     } catch (err) {
       setProposalProductProfilesError(err.message);
@@ -1067,7 +1142,7 @@ export default function SettingsModule() {
         is_active: !Boolean(profile.is_active)
       });
       await loadProposalProductProfiles();
-      setProposalProductProfilesSuccess(Boolean(profile.is_active) ? "Perfil desativado." : "Perfil ativado.");
+      setProposalProductProfilesSuccess(Boolean(profile.is_active) ? "Produto desativado." : "Produto ativado.");
       if (editingProposalProductProfileId === profileId) {
         setEditProposalProductProfileForm((previous) => ({
           ...previous,
@@ -1085,7 +1160,7 @@ export default function SettingsModule() {
     const profileId = String(profile?.id || "").trim();
     if (!profileId) return;
 
-    const confirmed = window.confirm(`Excluir perfil "${profile.name}"?`);
+    const confirmed = window.confirm(`Excluir produto "${profile.product_name || profile.name}"?`);
     if (!confirmed) return;
 
     setProposalProductProfilesError("");
@@ -1094,7 +1169,7 @@ export default function SettingsModule() {
     try {
       await deleteProposalProductProfile(profileId);
       await loadProposalProductProfiles();
-      setProposalProductProfilesSuccess("Perfil excluído.");
+      setProposalProductProfilesSuccess("Produto excluído.");
       if (editingProposalProductProfileId === profileId) {
         cancelEditProposalProductProfile();
       }
@@ -1108,7 +1183,7 @@ export default function SettingsModule() {
   async function handleCreateProposalCppRow(event) {
     event.preventDefault();
     if (!selectedProposalCppProfileId) {
-      setProposalCppRowsError("Selecione um perfil de produto para cadastrar linhas CPP.");
+      setProposalCppRowsError("Selecione um produto para cadastrar linhas CPP.");
       return;
     }
 
@@ -2295,44 +2370,22 @@ export default function SettingsModule() {
       </article>
 
       <article className="panel top-gap">
-        <h2>Biblioteca da proposta</h2>
+        <h2>Cadastro de produtos</h2>
         <p className="muted">
-          Configure os blocos reutilizáveis para geração documental: perfil técnico/comercial do produto, linhas CPP e condições
-          comerciais.
+          Cadastre os produtos de forma estruturada para uso no Pipeline e na geração de propostas. Ajustes avançados de
+          proposta (CPP e condições comerciais) seguem abaixo.
         </p>
 
         <div className="settings-library-grid top-gap">
           <section className="settings-library-card">
-            <h3>Perfis de produto</h3>
+            <h3>Produtos</h3>
             <p className="muted">
-              {proposalProductProfiles.length} perfil(is) cadastrado(s) • {activeProposalProductProfilesCount} ativo(s)
+              {proposalProductProfiles.length} produto(s) cadastrado(s) • {activeProposalProductProfilesCount} ativo(s)
             </p>
             {proposalProductProfilesError ? <p className="error-text">{proposalProductProfilesError}</p> : null}
             {proposalProductProfilesSuccess ? <p className="success-text">{proposalProductProfilesSuccess}</p> : null}
 
             <form className="form-grid top-gap" onSubmit={handleCreateProposalProductProfile}>
-              <input
-                required
-                placeholder="Nome do perfil (ex.: Canon imagePRESS V700 PS + POD Deck)"
-                value={proposalProductProfileForm.name}
-                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, name: event.target.value }))}
-              />
-              <input
-                required
-                placeholder="Nome do produto/equipamento"
-                value={proposalProductProfileForm.product_name}
-                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))}
-              />
-              <input
-                placeholder="Código do produto OMIE (opcional)"
-                value={proposalProductProfileForm.product_code}
-                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))}
-              />
-              <input
-                placeholder="Headline comercial"
-                value={proposalProductProfileForm.headline}
-                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, headline: event.target.value }))}
-              />
               <div className="settings-users-selects">
                 <label className="settings-field">
                   <span>Categoria</span>
@@ -2347,9 +2400,11 @@ export default function SettingsModule() {
                         product_subcategory: nextOptions.includes(prev.product_subcategory) ? prev.product_subcategory : ""
                       }));
                     }}
+                    required
                   >
-                    {PROPOSAL_PRODUCT_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value || "generic"} value={option.value}>
+                    <option value="">Selecione a categoria</option>
+                    {PRODUCT_REGISTRY_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
                         {option.label}
                       </option>
                     ))}
@@ -2378,6 +2433,26 @@ export default function SettingsModule() {
                   </select>
                 </label>
               </div>
+              <input
+                required
+                placeholder="Nome do produto"
+                value={proposalProductProfileForm.product_name}
+                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))}
+              />
+              <textarea
+                className="settings-library-textarea"
+                required
+                placeholder="Descritivo do produto"
+                value={proposalProductProfileForm.technical_text}
+                onChange={(event) =>
+                  setProposalProductProfileForm((prev) => ({ ...prev, technical_text: event.target.value }))
+                }
+              />
+              <input
+                placeholder="Código no Omie (opcional)"
+                value={proposalProductProfileForm.product_code}
+                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))}
+              />
               <div className="settings-users-selects">
                 <label className="settings-field">
                   <span>Valor base</span>
@@ -2389,16 +2464,6 @@ export default function SettingsModule() {
                     onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, base_price: event.target.value }))}
                   />
                 </label>
-                <label className="settings-field">
-                  <span>Ordem</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={9999}
-                    value={proposalProductProfileForm.sort_order}
-                    onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, sort_order: event.target.value }))}
-                  />
-                </label>
               </div>
               <label className="checkbox-inline">
                 <input
@@ -2406,50 +2471,11 @@ export default function SettingsModule() {
                   checked={proposalProductProfileForm.is_active}
                   onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, is_active: event.target.checked }))}
                 />
-                Perfil ativo
+                Produto ativo
               </label>
-              <textarea
-                className="settings-library-textarea"
-                placeholder="Texto introdutório"
-                value={proposalProductProfileForm.intro_text}
-                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, intro_text: event.target.value }))}
-              />
-              <textarea
-                className="settings-library-textarea"
-                placeholder="Texto técnico"
-                value={proposalProductProfileForm.technical_text}
-                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, technical_text: event.target.value }))}
-              />
-              <textarea
-                className="settings-library-textarea"
-                placeholder="Acessórios inclusos"
-                value={proposalProductProfileForm.included_accessories}
-                onChange={(event) =>
-                  setProposalProductProfileForm((prev) => ({ ...prev, included_accessories: event.target.value }))
-                }
-              />
-              <textarea
-                className="settings-library-textarea"
-                placeholder="Acessórios opcionais/exclusões"
-                value={proposalProductProfileForm.optional_accessories}
-                onChange={(event) =>
-                  setProposalProductProfileForm((prev) => ({ ...prev, optional_accessories: event.target.value }))
-                }
-              />
-              <input
-                placeholder="Vídeo URL (opcional)"
-                value={proposalProductProfileForm.video_url}
-                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, video_url: event.target.value }))}
-              />
-              <textarea
-                className="settings-library-textarea"
-                placeholder="Observações internas"
-                value={proposalProductProfileForm.notes}
-                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, notes: event.target.value }))}
-              />
               <div className="inline-actions">
                 <button type="submit" className="btn-primary" disabled={creatingProposalProductProfile}>
-                  {creatingProposalProductProfile ? "Salvando..." : "Criar perfil"}
+                  {creatingProposalProductProfile ? "Salvando..." : "Cadastrar produto"}
                 </button>
                 <button
                   type="button"
@@ -2457,7 +2483,7 @@ export default function SettingsModule() {
                   onClick={loadProposalProductProfiles}
                   disabled={proposalProductProfilesLoading || creatingProposalProductProfile}
                 >
-                  {proposalProductProfilesLoading ? "Atualizando..." : "Atualizar perfis"}
+                  {proposalProductProfilesLoading ? "Atualizando..." : "Atualizar produtos"}
                 </button>
               </div>
             </form>
@@ -2466,11 +2492,11 @@ export default function SettingsModule() {
               <table>
                 <thead>
                   <tr>
-                    <th>Nome</th>
                     <th>Categoria</th>
                     <th>Sub-categoria</th>
-                    <th>Produto</th>
-                    <th>Código</th>
+                    <th>Nome do produto</th>
+                    <th>Descritivo</th>
+                    <th>Código OMIE</th>
                     <th>Valor base</th>
                     <th>Status</th>
                     <th>Ações</th>
@@ -2479,10 +2505,10 @@ export default function SettingsModule() {
                 <tbody>
                   {proposalProductProfiles.map((profile) => (
                     <tr key={profile.id}>
-                      <td>{profile.name}</td>
                       <td>{proposalProductTypeLabel(profile.proposal_type)}</td>
                       <td>{profile.product_subcategory || "-"}</td>
                       <td>{profile.product_name}</td>
+                      <td>{profile.technical_text || "-"}</td>
                       <td>{profile.product_code || "-"}</td>
                       <td>{Number(profile.base_price || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
                       <td>{profile.is_active ? "Ativo" : "Inativo"}</td>
@@ -2494,18 +2520,6 @@ export default function SettingsModule() {
                             onClick={() => startEditProposalProductProfile(profile)}
                           >
                             Editar
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-ghost btn-table-action"
-                            onClick={() => handleToggleProposalProductProfileStatus(profile)}
-                            disabled={savingProposalProductProfileId === profile.id}
-                          >
-                            {savingProposalProductProfileId === profile.id
-                              ? "Salvando..."
-                              : profile.is_active
-                                ? "Desativar"
-                                : "Ativar"}
                           </button>
                           <button
                             type="button"
@@ -2522,7 +2536,7 @@ export default function SettingsModule() {
                   {!proposalProductProfiles.length ? (
                     <tr>
                       <td colSpan={8} className="muted">
-                        Nenhum perfil cadastrado.
+                        Nenhum produto cadastrado.
                       </td>
                     </tr>
                   ) : null}
@@ -2532,28 +2546,7 @@ export default function SettingsModule() {
 
             {editingProposalProductProfileId ? (
               <form className="form-grid top-gap settings-user-edit-form" onSubmit={handleSaveProposalProductProfile}>
-                <h3>Editar perfil</h3>
-                <input
-                  required
-                  placeholder="Nome do perfil"
-                  value={editProposalProductProfileForm.name}
-                  onChange={(event) => setEditProposalProductProfileForm((prev) => ({ ...prev, name: event.target.value }))}
-                />
-                <input
-                  required
-                  placeholder="Nome do produto"
-                  value={editProposalProductProfileForm.product_name}
-                  onChange={(event) =>
-                    setEditProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))
-                  }
-                />
-                <input
-                  placeholder="Código do produto"
-                  value={editProposalProductProfileForm.product_code}
-                  onChange={(event) =>
-                    setEditProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))
-                  }
-                />
+                <h3>Editar produto</h3>
                 <div className="settings-users-selects">
                   <label className="settings-field">
                     <span>Categoria</span>
@@ -2568,9 +2561,11 @@ export default function SettingsModule() {
                           product_subcategory: nextOptions.includes(prev.product_subcategory) ? prev.product_subcategory : ""
                         }));
                       }}
+                      required
                     >
-                      {PROPOSAL_PRODUCT_TYPE_OPTIONS.map((option) => (
-                        <option key={option.value || "generic"} value={option.value}>
+                      <option value="">Selecione a categoria</option>
+                      {PRODUCT_REGISTRY_TYPE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
                           {option.label}
                         </option>
                       ))}
@@ -2599,6 +2594,30 @@ export default function SettingsModule() {
                     </select>
                   </label>
                 </div>
+                <input
+                  required
+                  placeholder="Nome do produto"
+                  value={editProposalProductProfileForm.product_name}
+                  onChange={(event) =>
+                    setEditProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))
+                  }
+                />
+                <textarea
+                  className="settings-library-textarea"
+                  required
+                  placeholder="Descritivo do produto"
+                  value={editProposalProductProfileForm.technical_text}
+                  onChange={(event) =>
+                    setEditProposalProductProfileForm((prev) => ({ ...prev, technical_text: event.target.value }))
+                  }
+                />
+                <input
+                  placeholder="Código no Omie (opcional)"
+                  value={editProposalProductProfileForm.product_code}
+                  onChange={(event) =>
+                    setEditProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))
+                  }
+                />
                 <div className="settings-users-selects">
                   <label className="settings-field">
                     <span>Valor base</span>
@@ -2613,29 +2632,23 @@ export default function SettingsModule() {
                     />
                   </label>
                 </div>
-                <textarea
-                  className="settings-library-textarea"
-                  placeholder="Texto introdutório"
-                  value={editProposalProductProfileForm.intro_text}
-                  onChange={(event) =>
-                    setEditProposalProductProfileForm((prev) => ({ ...prev, intro_text: event.target.value }))
-                  }
-                />
-                <textarea
-                  className="settings-library-textarea"
-                  placeholder="Texto técnico"
-                  value={editProposalProductProfileForm.technical_text}
-                  onChange={(event) =>
-                    setEditProposalProductProfileForm((prev) => ({ ...prev, technical_text: event.target.value }))
-                  }
-                />
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={editProposalProductProfileForm.is_active}
+                    onChange={(event) =>
+                      setEditProposalProductProfileForm((prev) => ({ ...prev, is_active: event.target.checked }))
+                    }
+                  />
+                  Produto ativo
+                </label>
                 <div className="inline-actions">
                   <button
                     type="submit"
                     className="btn-primary"
                     disabled={savingProposalProductProfileId === editingProposalProductProfileId}
                   >
-                    {savingProposalProductProfileId === editingProposalProductProfileId ? "Salvando..." : "Salvar perfil"}
+                    {savingProposalProductProfileId === editingProposalProductProfileId ? "Salvando..." : "Salvar produto"}
                   </button>
                   <button
                     type="button"
@@ -2653,23 +2666,24 @@ export default function SettingsModule() {
           <section className="settings-library-card">
             <h3>Linhas CPP por produto</h3>
             <p className="muted">
-              {proposalCppRows.length} linha(s) para {selectedProposalCppProfile?.name || "perfil selecionado"} • {activeProposalCppRowsCount}{" "}
-              ativa(s)
+              {proposalCppRows.length} linha(s) para{" "}
+              {selectedProposalCppProfile ? proposalProductDisplayLabel(selectedProposalCppProfile) : "produto selecionado"} •{" "}
+              {activeProposalCppRowsCount} ativa(s)
             </p>
             {proposalCppRowsError ? <p className="error-text">{proposalCppRowsError}</p> : null}
             {proposalCppRowsSuccess ? <p className="success-text">{proposalCppRowsSuccess}</p> : null}
 
             <label className="settings-field top-gap">
-              <span>Perfil para editar CPP</span>
+              <span>Produto para editar CPP</span>
               <select
                 value={selectedProposalCppProfileId}
                 onChange={(event) => setSelectedProposalCppProfileId(event.target.value)}
                 disabled={!proposalProductProfiles.length}
               >
-                {!proposalProductProfiles.length ? <option value="">Cadastre um perfil primeiro</option> : null}
+                {!proposalProductProfiles.length ? <option value="">Cadastre um produto primeiro</option> : null}
                 {proposalProductProfiles.map((profile) => (
                   <option key={profile.id} value={profile.id}>
-                    {profile.name}
+                    {proposalProductDisplayLabel(profile)}
                   </option>
                 ))}
               </select>
@@ -2828,7 +2842,7 @@ export default function SettingsModule() {
                   {!proposalCppRows.length ? (
                     <tr>
                       <td colSpan={8} className="muted">
-                        Nenhuma linha CPP cadastrada para este perfil.
+                        Nenhuma linha CPP cadastrada para este produto.
                       </td>
                     </tr>
                   ) : null}
