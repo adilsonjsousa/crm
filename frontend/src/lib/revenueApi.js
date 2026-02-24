@@ -196,6 +196,16 @@ function normalizeProposalCppSection(value) {
   return normalized === "components" ? "components" : "toner";
 }
 
+function normalizeProposalVersionEventType(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return PROPOSAL_VERSION_EVENT_TYPES.has(normalized) ? normalized : "manual_save";
+}
+
+function normalizeProposalVersionOutputFormat(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return PROPOSAL_VERSION_OUTPUT_FORMATS.has(normalized) ? normalized : "snapshot";
+}
+
 function normalizeStoragePart(value) {
   return String(value || "arquivo")
     .normalize("NFD")
@@ -209,6 +219,8 @@ function normalizeStoragePart(value) {
 const CRM_ACCESS_MODULES = ["dashboard", "pipeline", "companies", "contacts", "tasks", "reports", "settings"];
 const CRM_ACCESS_LEVELS = ["none", "read", "edit", "admin"];
 const OMIE_CUSTOMERS_STORAGE_KEY = "crm.settings.omie.customers.v1";
+const PROPOSAL_VERSION_EVENT_TYPES = new Set(["manual_save", "export_docx", "export_pdf", "send_email", "send_whatsapp"]);
+const PROPOSAL_VERSION_OUTPUT_FORMATS = new Set(["snapshot", "docx", "pdf", "email", "whatsapp"]);
 const CRM_ROLE_DEFAULT_PERMISSIONS = {
   admin: {
     dashboard: "admin",
@@ -322,6 +334,14 @@ function buildProposalOrderNumber(opportunityId = "") {
 function isOrderNumberConflict(error) {
   const message = String(error?.message || "").toLowerCase();
   return message.includes("sales_orders_order_number_key") || message.includes("duplicate key");
+}
+
+function isProposalVersionConflict(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    message.includes("proposal_document_versions_unique_per_opportunity_version") ||
+    (message.includes("duplicate key") && message.includes("proposal_document_versions"))
+  );
 }
 
 function normalizeDateOnly(value) {
@@ -1585,6 +1605,93 @@ export async function createAutomatedProposalFromOpportunity(opportunity) {
   }
 
   throw lastError || new Error("Falha ao gerar proposta automática.");
+}
+
+export async function listProposalDocumentVersions(opportunityId, { limit = 20 } = {}) {
+  const normalizedOpportunityId = String(opportunityId || "").trim();
+  if (!normalizedOpportunityId) return [];
+
+  const supabase = ensureSupabase();
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(50, Math.floor(limit))) : 20;
+  const { data, error } = await supabase
+    .from("proposal_document_versions")
+    .select(
+      "id,opportunity_id,company_id,sales_order_id,version_number,event_type,output_format,file_name,proposal_number,template_id,template_name,created_by_user_id,snapshot,created_at"
+    )
+    .eq("opportunity_id", normalizedOpportunityId)
+    .order("version_number", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) throw new Error(normalizeError(error, "Falha ao listar versoes da proposta."));
+  return data || [];
+}
+
+export async function createProposalDocumentVersion(payload = {}) {
+  const normalizedPayload = asObject(payload);
+  const opportunityId = String(normalizedPayload.opportunity_id || "").trim();
+  if (!opportunityId) throw new Error("Oportunidade invalida para salvar versao da proposta.");
+
+  const companyId = String(normalizedPayload.company_id || "").trim() || null;
+  const salesOrderId = String(normalizedPayload.sales_order_id || "").trim() || null;
+  const fileName = String(normalizedPayload.file_name || "").trim() || null;
+  const proposalNumber = String(normalizedPayload.proposal_number || "").trim() || null;
+  const templateId = String(normalizedPayload.template_id || "").trim() || null;
+  const templateName = String(normalizedPayload.template_name || "").trim() || null;
+  const createdByUserId = String(normalizedPayload.created_by_user_id || "").trim() || null;
+  const eventType = normalizeProposalVersionEventType(normalizedPayload.event_type);
+  const outputFormat = normalizeProposalVersionOutputFormat(normalizedPayload.output_format);
+  const snapshot = asObject(normalizedPayload.snapshot);
+
+  const supabase = ensureSupabase();
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const { data: latestVersion, error: latestError } = await supabase
+      .from("proposal_document_versions")
+      .select("version_number")
+      .eq("opportunity_id", opportunityId)
+      .order("version_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (latestError) {
+      throw new Error(normalizeError(latestError, "Falha ao calcular proxima versao da proposta."));
+    }
+
+    const nextVersionNumber = Math.max(1, Number(latestVersion?.version_number || 0) + 1);
+    const insertPayload = {
+      opportunity_id: opportunityId,
+      company_id: companyId,
+      sales_order_id: salesOrderId,
+      version_number: nextVersionNumber,
+      event_type: eventType,
+      output_format: outputFormat,
+      file_name: fileName,
+      proposal_number: proposalNumber,
+      template_id: templateId,
+      template_name: templateName,
+      created_by_user_id: createdByUserId,
+      snapshot
+    };
+
+    const { data, error } = await supabase
+      .from("proposal_document_versions")
+      .insert(insertPayload)
+      .select(
+        "id,opportunity_id,company_id,sales_order_id,version_number,event_type,output_format,file_name,proposal_number,template_id,template_name,created_by_user_id,snapshot,created_at"
+      )
+      .single();
+
+    if (!error) return data;
+    if (!isProposalVersionConflict(error)) {
+      throw new Error(normalizeError(error, "Falha ao salvar versao da proposta."));
+    }
+
+    lastError = error;
+  }
+
+  throw new Error(normalizeError(lastError, "Falha ao salvar versao da proposta."));
 }
 
 async function resequenceCompanyLifecycleStages(supabase) {

@@ -1862,6 +1862,59 @@ tbody tr:hover {
   color: var(--text-main);
 }
 
+.proposal-versions {
+  margin-top: 10px;
+  border-top: 1px dashed var(--border-soft);
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.proposal-versions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.proposal-versions-header h5 {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.proposal-versions-header span {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.proposal-versions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.proposal-version-item {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  padding: 7px 8px;
+  display: grid;
+  gap: 2px;
+}
+
+.proposal-version-item strong {
+  font-size: 0.78rem;
+  color: var(--text-main);
+}
+
+.proposal-version-item span {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  word-break: break-word;
+}
+
 .customer-popup-overlay {
   position: fixed;
   inset: 0;

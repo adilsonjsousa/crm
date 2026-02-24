@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createAutomatedProposalFromOpportunity,
   createCompanyInteraction,
+  createProposalDocumentVersion,
   createOpportunity,
   listCompanyContacts,
   listCompanyOptions,
   listLatestOrdersByOpportunity,
   listOpportunities,
   listProposalCommercialTerms,
+  listProposalDocumentVersions,
   listProposalProductProfiles,
   listProposalTemplates,
   listSystemUsers,
@@ -264,6 +266,32 @@ function formatDateBr(dateValue) {
     month: "2-digit",
     year: "numeric"
   }).format(parsed);
+}
+
+function formatDateTimeBr(dateTimeValue) {
+  if (!dateTimeValue) return "-";
+  const parsed = new Date(dateTimeValue);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return parsed.toLocaleString("pt-BR");
+}
+
+function proposalVersionEventLabel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "manual_save") return "Snapshot manual";
+  if (normalized === "export_docx") return "Exportou DOCX";
+  if (normalized === "export_pdf") return "Exportou PDF";
+  if (normalized === "send_email") return "Preparou envio e-mail";
+  if (normalized === "send_whatsapp") return "Preparou envio WhatsApp";
+  return "Atualizacao";
+}
+
+function proposalVersionFormatLabel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "docx") return "DOCX";
+  if (normalized === "pdf") return "PDF";
+  if (normalized === "email") return "E-mail";
+  if (normalized === "whatsapp") return "WhatsApp";
+  return "Snapshot";
 }
 
 function normalizeProposalLookupKey(value) {
@@ -880,8 +908,8 @@ function buildProposalDocumentHtml({
 </html>`;
 }
 
-function downloadFile({ fileName, content, mimeType }) {
-  const blob = new Blob([content], { type: mimeType });
+function downloadBlobFile({ fileName, blob }) {
+  if (!blob) return;
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -1159,6 +1187,9 @@ export default function PipelineModule({
   const [savedProposalTemplatesLoading, setSavedProposalTemplatesLoading] = useState(false);
   const [savedProposalProductProfiles, setSavedProposalProductProfiles] = useState([]);
   const [savedProposalCommercialTerms, setSavedProposalCommercialTerms] = useState([]);
+  const [proposalVersions, setProposalVersions] = useState([]);
+  const [proposalVersionsLoading, setProposalVersionsLoading] = useState(false);
+  const [proposalExporting, setProposalExporting] = useState("");
   const [proposalLogoDataUrl, setProposalLogoDataUrl] = useState("");
   const [sendingProposal, setSendingProposal] = useState(false);
   const [customerHistoryModal, setCustomerHistoryModal] = useState({
@@ -1255,6 +1286,11 @@ export default function PipelineModule({
     });
   }, [proposalEditor?.proposal_type, proposalEditor?.product]);
 
+  const proposalCompanyName = useMemo(() => {
+    if (!proposalEditor) return "";
+    return items.find((item) => item.id === proposalEditor.opportunity_id)?.companies?.trade_name || proposalEditor.client_name || "";
+  }, [items, proposalEditor]);
+
   const proposalVariables = useMemo(() => {
     if (!proposalEditor) return {};
     const itemsTotal = computeProposalCommercialItemsTotal(proposalItemsForDocument);
@@ -1263,8 +1299,7 @@ export default function PipelineModule({
     return {
       numero_proposta: proposalEditor.proposal_number,
       cliente_nome: proposalEditor.client_name,
-      empresa_nome:
-        items.find((item) => item.id === proposalEditor.opportunity_id)?.companies?.trade_name || proposalEditor.client_name,
+      empresa_nome: proposalCompanyName || proposalEditor.client_name,
       data_emissao: formatDateBr(proposalEditor.issue_date),
       validade_dias: proposalEditor.validity_days,
       categoria: proposalEditor.category,
@@ -1289,7 +1324,7 @@ export default function PipelineModule({
       perfil_acessorios_opcionais: proposalEditor.profile_optional_accessories || "-",
       observacoes: proposalEditor.notes || "Sem observacoes adicionais."
     };
-  }, [items, proposalEditor, proposalItemsForDocument]);
+  }, [proposalCompanyName, proposalEditor, proposalItemsForDocument]);
 
   const renderedProposalText = useMemo(() => {
     if (!proposalEditor) return "";
@@ -1300,8 +1335,7 @@ export default function PipelineModule({
     if (!proposalEditor) return "";
     return buildProposalDocumentHtml({
       proposalNumber: proposalEditor.proposal_number,
-      companyName:
-        items.find((item) => item.id === proposalEditor.opportunity_id)?.companies?.trade_name || proposalEditor.client_name,
+      companyName: proposalCompanyName || proposalEditor.client_name,
       renderedText: renderedProposalText,
       logoDataUrl: proposalLogoDataUrl,
       issueDate: proposalEditor.issue_date,
@@ -1311,7 +1345,24 @@ export default function PipelineModule({
       paymentTerms: proposalEditor.payment_terms,
       deliveryTerms: proposalEditor.delivery_terms
     });
-  }, [items, proposalEditor, renderedProposalText, proposalLogoDataUrl, proposalItemsForDocument]);
+  }, [proposalCompanyName, proposalEditor, renderedProposalText, proposalLogoDataUrl, proposalItemsForDocument]);
+
+  const proposalDocumentPayload = useMemo(() => {
+    if (!proposalEditor) return null;
+    return {
+      proposalNumber: proposalEditor.proposal_number,
+      companyName: proposalCompanyName || proposalEditor.client_name,
+      issueDate: formatDateBr(proposalEditor.issue_date),
+      validityDays: proposalEditor.validity_days,
+      freightTerms: proposalEditor.freight_terms,
+      paymentTerms: proposalEditor.payment_terms,
+      deliveryTerms: proposalEditor.delivery_terms,
+      renderedText: renderedProposalText,
+      logoDataUrl: proposalLogoDataUrl,
+      items: proposalItemsForDocument
+    };
+  }, [proposalCompanyName, proposalEditor, proposalItemsForDocument, proposalLogoDataUrl, renderedProposalText]);
+
   const hasArtPrinterLogo = Boolean(proposalLogoDataUrl);
 
   async function loadUsersContext() {
@@ -1402,6 +1453,72 @@ export default function PipelineModule({
       setSavedProposalCommercialTerms((terms || []).filter((entry) => Boolean(entry?.is_active)));
     } catch (_err) {
       setSavedProposalCommercialTerms([]);
+    }
+  }
+
+  async function loadProposalVersions(opportunityId, { silent = false } = {}) {
+    const normalizedOpportunityId = String(opportunityId || "").trim();
+    if (!normalizedOpportunityId) {
+      setProposalVersions([]);
+      return;
+    }
+
+    if (!silent) setProposalVersionsLoading(true);
+    try {
+      const versions = await listProposalDocumentVersions(normalizedOpportunityId, { limit: 20 });
+      setProposalVersions(versions);
+    } catch (err) {
+      if (!silent) setError(err.message);
+      setProposalVersions([]);
+    } finally {
+      if (!silent) setProposalVersionsLoading(false);
+    }
+  }
+
+  async function persistProposalDocumentVersion({ eventType, outputFormat, fileName = "", extraSnapshot = {} } = {}) {
+    if (!proposalEditor) {
+      return { warning: "Proposta nao selecionada para versionamento." };
+    }
+
+    const linkedOrder = proposalsByOpportunity[proposalEditor.opportunity_id] || null;
+    const companyName = proposalCompanyName || proposalEditor.client_name || "";
+    const itemsTotal = computeProposalCommercialItemsTotal(proposalItemsForDocument);
+    const explicitValue = toPositiveMoneyNumber(proposalEditor.estimated_value);
+    const finalValue = explicitValue > 0 ? explicitValue : itemsTotal;
+
+    try {
+      const createdVersion = await createProposalDocumentVersion({
+        opportunity_id: proposalEditor.opportunity_id,
+        company_id: proposalEditor.company_id || null,
+        sales_order_id: linkedOrder?.id || null,
+        proposal_number: proposalEditor.proposal_number || "",
+        template_id: proposalEditor.selected_template_id || null,
+        template_name:
+          proposalEditor.selected_template_name || proposalTemplateProfile?.label || proposalEditor.template_profile_label || null,
+        event_type: eventType || "manual_save",
+        output_format: outputFormat || "snapshot",
+        file_name: fileName || null,
+        created_by_user_id: viewerUserId || null,
+        snapshot: {
+          editor: proposalEditor,
+          company_name: companyName,
+          rendered_text: renderedProposalText,
+          rendered_html: renderedProposalHtml,
+          placeholders: proposalVariables,
+          commercial_items: proposalItemsForDocument,
+          totals: {
+            items_total: itemsTotal,
+            proposal_value: finalValue
+          },
+          extra: extraSnapshot || {},
+          saved_at: new Date().toISOString()
+        }
+      });
+
+      setProposalVersions((prev) => [createdVersion, ...prev.filter((entry) => entry.id !== createdVersion.id)].slice(0, 20));
+      return { version: createdVersion, warning: "" };
+    } catch (err) {
+      return { warning: err.message || "Falha ao salvar versao da proposta." };
     }
   }
 
@@ -1814,19 +1931,22 @@ export default function PipelineModule({
     setError("");
     setSuccess("");
     setProposalLoadingContacts(true);
+    setProposalVersionsLoading(true);
 
     try {
-      const [contacts, templates, profiles, terms] = await Promise.all([
+      const [contacts, templates, profiles, terms, versions] = await Promise.all([
         item.company_id ? listCompanyContacts(item.company_id) : Promise.resolve([]),
         listProposalTemplates({ includeInactive: false }),
         listProposalProductProfiles({ includeInactive: false }),
-        listProposalCommercialTerms({ includeInactive: false })
+        listProposalCommercialTerms({ includeInactive: false }),
+        listProposalDocumentVersions(item.id, { limit: 20 })
       ]);
       const linkedOrder = proposalsByOpportunity[item.id] || null;
       setSavedProposalTemplates(templates);
       setSavedProposalProductProfiles((profiles || []).filter((entry) => Boolean(entry?.is_active)));
       setSavedProposalCommercialTerms((terms || []).filter((entry) => Boolean(entry?.is_active)));
       setProposalContacts(contacts);
+      setProposalVersions(versions || []);
       setProposalEditor(
         createProposalDraft({
           opportunity: item,
@@ -1841,6 +1961,7 @@ export default function PipelineModule({
       setError(err.message);
     } finally {
       setProposalLoadingContacts(false);
+      setProposalVersionsLoading(false);
     }
   }
 
@@ -1870,6 +1991,9 @@ export default function PipelineModule({
     setProposalEditor(null);
     setProposalContacts([]);
     setProposalLoadingContacts(false);
+    setProposalVersions([]);
+    setProposalVersionsLoading(false);
+    setProposalExporting("");
   }
 
   function handleProposalField(field, value) {
@@ -2220,32 +2344,102 @@ export default function PipelineModule({
     }
   }
 
-  function handleSaveProposalDoc() {
-    if (!proposalEditor || !renderedProposalHtml) return;
-    const fileName = `${sanitizeFilePart(proposalEditor.proposal_number)}-${sanitizeFilePart(proposalEditor.client_name)}.doc`;
-    downloadFile({
-      fileName,
-      content: renderedProposalHtml,
-      mimeType: "application/msword"
-    });
-    setSuccess(`Arquivo DOC salvo (${fileName}).`);
+  async function handleSaveProposalSnapshot() {
+    if (!proposalEditor) return;
+
+    setProposalExporting("snapshot");
+    setError("");
+    setSuccess("");
+
+    try {
+      const { warning } = await persistProposalDocumentVersion({
+        eventType: "manual_save",
+        outputFormat: "snapshot",
+        fileName: "",
+        extraSnapshot: {
+          trigger: "manual_button"
+        }
+      });
+      if (warning) {
+        setError(`Snapshot nao salvo: ${warning}`);
+        return;
+      }
+      setSuccess("Snapshot da proposta salvo no historico.");
+    } finally {
+      setProposalExporting("");
+    }
   }
 
-  function handleSaveProposalPdf() {
-    if (!proposalEditor || !renderedProposalHtml) return;
-    const printWindow = window.open("", "_blank", "noopener,noreferrer");
-    if (!printWindow) {
-      setError("Permita pop-up no navegador para gerar o PDF.");
-      return;
+  async function handleSaveProposalDocx() {
+    if (!proposalEditor || !proposalDocumentPayload) return;
+
+    setProposalExporting("docx");
+    setError("");
+    setSuccess("");
+
+    try {
+      const fileName = `${sanitizeFilePart(proposalEditor.proposal_number)}-${sanitizeFilePart(proposalEditor.client_name)}.docx`;
+      const { buildProposalDocxBlob } = await import("../lib/proposalDocumentExport");
+      const documentBlob = await buildProposalDocxBlob(proposalDocumentPayload);
+      downloadBlobFile({
+        fileName,
+        blob: documentBlob
+      });
+
+      const { warning } = await persistProposalDocumentVersion({
+        eventType: "export_docx",
+        outputFormat: "docx",
+        fileName,
+        extraSnapshot: {
+          trigger: "docx_export"
+        }
+      });
+      if (warning) {
+        setSuccess(`Arquivo DOCX salvo (${fileName}), mas sem registrar versao: ${warning}`);
+        return;
+      }
+      setSuccess(`Arquivo DOCX salvo (${fileName}).`);
+    } catch (err) {
+      setError(err.message || "Falha ao gerar arquivo DOCX.");
+    } finally {
+      setProposalExporting("");
     }
+  }
 
-    printWindow.document.open();
-    printWindow.document.write(renderedProposalHtml);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
+  async function handleSaveProposalPdf() {
+    if (!proposalEditor || !proposalDocumentPayload) return;
 
-    setSuccess("Janela de impressao aberta. Selecione 'Salvar como PDF'.");
+    setProposalExporting("pdf");
+    setError("");
+    setSuccess("");
+
+    try {
+      const fileName = `${sanitizeFilePart(proposalEditor.proposal_number)}-${sanitizeFilePart(proposalEditor.client_name)}.pdf`;
+      const { buildProposalPdfBlob } = await import("../lib/proposalDocumentExport");
+      const pdfBlob = buildProposalPdfBlob(proposalDocumentPayload);
+      downloadBlobFile({
+        fileName,
+        blob: pdfBlob
+      });
+
+      const { warning } = await persistProposalDocumentVersion({
+        eventType: "export_pdf",
+        outputFormat: "pdf",
+        fileName,
+        extraSnapshot: {
+          trigger: "pdf_export"
+        }
+      });
+      if (warning) {
+        setSuccess(`Arquivo PDF salvo (${fileName}), mas sem registrar versao: ${warning}`);
+        return;
+      }
+      setSuccess(`Arquivo PDF salvo (${fileName}).`);
+    } catch (err) {
+      setError(err.message || "Falha ao gerar arquivo PDF.");
+    } finally {
+      setProposalExporting("");
+    }
   }
 
   async function handleSendProposalToClient() {
@@ -2290,9 +2484,20 @@ export default function PipelineModule({
           interactionWarning = err.message;
         }
 
+        const { warning: versionWarning } = await persistProposalDocumentVersion({
+          eventType: "send_whatsapp",
+          outputFormat: "whatsapp",
+          fileName: "",
+          extraSnapshot: {
+            channel: "whatsapp",
+            recipient: formattedWhats || normalizedWhats || ""
+          }
+        });
+        const warningMessages = [interactionWarning, versionWarning].filter(Boolean);
+
         setSuccess(
-          interactionWarning
-            ? "WhatsApp aberto, mas nao foi possivel registrar no historico do cliente."
+          warningMessages.length
+            ? "WhatsApp aberto, mas houve alerta no registro de historico/auditoria."
             : "WhatsApp aberto com a proposta pronta para envio."
         );
         return;
@@ -2305,7 +2510,7 @@ export default function PipelineModule({
       }
 
       const body = encodeURIComponent(
-        `${subject}\n\n${renderedProposalText}\n\nAnexo: incluir o arquivo PDF ou DOC gerado no CRM.`
+        `${subject}\n\n${renderedProposalText}\n\nAnexo: incluir o arquivo PDF ou DOCX gerado no CRM.`
       );
       const mailtoUrl = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${body}`;
       window.location.href = mailtoUrl;
@@ -2324,10 +2529,21 @@ export default function PipelineModule({
         interactionWarning = err.message;
       }
 
+      const { warning: versionWarning } = await persistProposalDocumentVersion({
+        eventType: "send_email",
+        outputFormat: "email",
+        fileName: "",
+        extraSnapshot: {
+          channel: "email",
+          recipient: email
+        }
+      });
+      const warningMessages = [interactionWarning, versionWarning].filter(Boolean);
+
       setSuccess(
-        interactionWarning
-          ? "Cliente de e-mail aberto, mas nao foi possivel registrar no historico do cliente."
-          : "Cliente de e-mail aberto. Anexe o PDF ou DOC antes de enviar."
+        warningMessages.length
+          ? "Cliente de e-mail aberto, mas houve alerta no registro de historico/auditoria."
+          : "Cliente de e-mail aberto. Anexe o PDF ou DOCX antes de enviar."
       );
     } finally {
       setSendingProposal(false);
@@ -2692,7 +2908,7 @@ export default function PipelineModule({
             <div>
               <h3>Modelo de proposta</h3>
               <p className="muted">
-                Personalize o texto da proposta, salve em PDF/DOC e, se desejar, habilite envio ao cliente.
+                Personalize o texto da proposta, gere DOCX/PDF real e registre versoes para auditoria.
               </p>
             </div>
             <button type="button" className="btn-ghost btn-table-action" onClick={closeProposalEditor}>
@@ -2980,7 +3196,7 @@ export default function PipelineModule({
                     type="button"
                     className="btn-ghost"
                     onClick={() => loadSavedProposalTemplates({ silent: false })}
-                    disabled={savedProposalTemplatesLoading}
+                    disabled={savedProposalTemplatesLoading || Boolean(proposalExporting)}
                   >
                     {savedProposalTemplatesLoading ? "Atualizando templates..." : "Atualizar templates"}
                   </button>
@@ -2996,11 +3212,37 @@ export default function PipelineModule({
                   <button type="button" className="btn-ghost" onClick={handleSaveProposalTemplate}>
                     Salvar modelo padrao
                   </button>
-                  <button type="button" className="btn-primary" onClick={handleSaveProposalDoc}>
-                    Salvar .DOC
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={handleSaveProposalSnapshot}
+                    disabled={Boolean(proposalExporting)}
+                  >
+                    {proposalExporting === "snapshot" ? "Salvando..." : "Salvar versao"}
                   </button>
-                  <button type="button" className="btn-primary" onClick={handleSaveProposalPdf}>
-                    Salvar .PDF
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleSaveProposalDocx}
+                    disabled={Boolean(proposalExporting)}
+                  >
+                    {proposalExporting === "docx" ? "Gerando DOCX..." : "Salvar .DOCX"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleSaveProposalPdf}
+                    disabled={Boolean(proposalExporting)}
+                  >
+                    {proposalExporting === "pdf" ? "Gerando PDF..." : "Salvar .PDF"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => loadProposalVersions(proposalEditor.opportunity_id, { silent: false })}
+                    disabled={proposalVersionsLoading || Boolean(proposalExporting)}
+                  >
+                    {proposalVersionsLoading ? "Atualizando historico..." : "Atualizar historico"}
                   </button>
                 </div>
                 {!hasArtPrinterLogo ? (
@@ -3053,6 +3295,29 @@ export default function PipelineModule({
               </div>
               <p className="muted">Itens da oportunidade: {proposalItemsForDocument.length}</p>
               <pre>{renderedProposalText}</pre>
+              <div className="proposal-versions">
+                <div className="proposal-versions-header">
+                  <h5>Historico de versoes</h5>
+                  <span>{proposalVersions.length}</span>
+                </div>
+                {proposalVersionsLoading ? (
+                  <p className="muted">Carregando versoes...</p>
+                ) : proposalVersions.length ? (
+                  <ul className="proposal-versions-list">
+                    {proposalVersions.map((version) => (
+                      <li key={version.id} className="proposal-version-item">
+                        <strong>V{version.version_number}</strong>
+                        <span>{proposalVersionEventLabel(version.event_type)}</span>
+                        <span>{proposalVersionFormatLabel(version.output_format)}</span>
+                        <span>{formatDateTimeBr(version.created_at)}</span>
+                        {version.file_name ? <span>{version.file_name}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted">Nenhuma versao salva nesta oportunidade.</p>
+                )}
+              </div>
             </aside>
           </div>
         </article>
