@@ -1775,6 +1775,58 @@ tbody tr:hover {
   align-items: center;
 }
 
+.proposal-commercial-items {
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-surface-muted);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.proposal-commercial-items-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.proposal-commercial-items-list {
+  display: grid;
+  gap: 7px;
+}
+
+.proposal-commercial-item-row {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  padding: 8px;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) minmax(180px, 1.8fr) minmax(80px, 0.6fr) minmax(120px, 0.8fr) minmax(90px, 0.6fr) minmax(120px, 0.8fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.proposal-commercial-item-row input,
+.proposal-commercial-item-row select {
+  padding: 7px 8px;
+}
+
+.proposal-commercial-item-subtotal {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-main);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.proposal-commercial-items-total {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-sub);
+}
+
 .proposal-preview {
   border: 1px solid var(--border-soft);
   border-radius: 12px;
@@ -2133,6 +2185,14 @@ tbody tr:hover {
 
   .proposal-send-grid {
     grid-template-columns: 1fr;
+  }
+
+  .proposal-commercial-item-row {
+    grid-template-columns: 1fr;
+  }
+
+  .proposal-commercial-item-subtotal {
+    text-align: left;
   }
 
   .customer-popup-overlay {

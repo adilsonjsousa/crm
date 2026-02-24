@@ -7,6 +7,8 @@ import {
   listCompanyOptions,
   listLatestOrdersByOpportunity,
   listOpportunities,
+  listProposalCommercialTerms,
+  listProposalProductProfiles,
   listProposalTemplates,
   listSystemUsers,
   updateOpportunity,
@@ -338,6 +340,59 @@ function pickSavedTemplateForOpportunity(templates = [], { proposalType = "equip
   return activeTemplates[0];
 }
 
+function pickSavedProductProfileForOpportunity(profiles = [], { proposalType = "equipment", product = "" } = {}) {
+  const activeProfiles = (profiles || [])
+    .filter((entry) => Boolean(entry?.is_active))
+    .slice()
+    .sort((a, b) => {
+      const orderA = Number(a.sort_order || 100);
+      const orderB = Number(b.sort_order || 100);
+      if (orderA !== orderB) return orderA - orderB;
+      return String(a.name || "").localeCompare(String(b.name || ""), "pt-BR");
+    });
+  if (!activeProfiles.length) return null;
+
+  const normalizedType = normalizeProposalType(proposalType);
+  const normalizedProduct = normalizeProposalLookupKey(product);
+
+  if (normalizedProduct) {
+    const byCode = activeProfiles.find((entry) => {
+      const code = normalizeProposalLookupKey(entry.product_code || "");
+      if (!code || code.length < 3) return false;
+      if (entry.proposal_type && normalizeProposalType(entry.proposal_type) !== normalizedType) return false;
+      return normalizedProduct.includes(code);
+    });
+    if (byCode) return byCode;
+
+    const byName = activeProfiles.find((entry) => {
+      const productName = normalizeProposalLookupKey(entry.product_name || "");
+      if (!productName || productName.length < 4) return false;
+      if (entry.proposal_type && normalizeProposalType(entry.proposal_type) !== normalizedType) return false;
+      return normalizedProduct.includes(productName);
+    });
+    if (byName) return byName;
+  }
+
+  const typed = activeProfiles.find((entry) => entry.proposal_type && normalizeProposalType(entry.proposal_type) === normalizedType);
+  if (typed) return typed;
+
+  return activeProfiles[0];
+}
+
+function pickDefaultCommercialTerms(terms = []) {
+  const activeTerms = (terms || [])
+    .filter((entry) => Boolean(entry?.is_active))
+    .slice()
+    .sort((a, b) => {
+      if (Boolean(a.is_default) !== Boolean(b.is_default)) return a.is_default ? -1 : 1;
+      const orderA = Number(a.sort_order || 100);
+      const orderB = Number(b.sort_order || 100);
+      if (orderA !== orderB) return orderA - orderB;
+      return String(a.name || "").localeCompare(String(b.name || ""), "pt-BR");
+    });
+  return activeTerms[0] || null;
+}
+
 function readStoredProposalTemplateProfiles() {
   if (typeof window === "undefined") return {};
   try {
@@ -469,22 +524,87 @@ function salesTypeLabel(typeValue) {
   return SALES_TYPES.find((entry) => entry.value === normalizedType)?.label || proposalTypeLabel(normalizedType);
 }
 
+function normalizeCommercialItemQuantity(value, fallback = 1) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(1, Math.round(parsed * 1000) / 1000);
+}
+
+function normalizeCommercialItemDiscount(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(parsed * 100) / 100));
+}
+
+function normalizeProposalCommercialItem(item = {}, fallbackType = "equipment") {
+  const normalizedType = normalizeProposalType(item.item_type || item.opportunity_type || fallbackType);
+  const subcategory = String(item.title_subcategory || "").trim();
+  const product = String(item.title_product || "").trim();
+  const descriptionRaw = String(item.item_description || "").trim();
+  const description =
+    descriptionRaw ||
+    (subcategory && product ? `${subcategory} - ${product}` : product || subcategory || String(item.title || "").trim());
+  const unitPrice = toPositiveMoneyNumber(item.unit_price ?? item.estimated_value);
+  const quantity = normalizeCommercialItemQuantity(item.quantity, 1);
+  const discountPercent = normalizeCommercialItemDiscount(item.discount_percent, 0);
+
+  return {
+    item_type: normalizedType,
+    item_code: String(item.item_code || item.product_code || "").trim(),
+    item_description: description,
+    quantity,
+    unit_price: unitPrice,
+    discount_percent: discountPercent,
+    title_subcategory: subcategory,
+    title_product: product
+  };
+}
+
+function computeCommercialItemSubtotal(item = {}) {
+  const quantity = normalizeCommercialItemQuantity(item.quantity, 1);
+  const unitPrice = toPositiveMoneyNumber(item.unit_price);
+  const discountPercent = normalizeCommercialItemDiscount(item.discount_percent, 0);
+  const factor = 1 - discountPercent / 100;
+  return Math.max(0, quantity * unitPrice * factor);
+}
+
+function buildCommercialItemsFromOpportunityItems(items = []) {
+  return (items || [])
+    .map((entry) => normalizeProposalCommercialItem(entry, entry.opportunity_type || "equipment"))
+    .filter((entry) => String(entry.item_description || "").trim());
+}
+
+function ensureProposalCommercialItems(items = [], fallbackItems = []) {
+  const normalized = (items || [])
+    .map((entry) => normalizeProposalCommercialItem(entry))
+    .filter((entry) => String(entry.item_description || "").trim());
+  if (normalized.length) return normalized;
+  return buildCommercialItemsFromOpportunityItems(fallbackItems);
+}
+
+function computeProposalCommercialItemsTotal(items = []) {
+  return (items || []).reduce((acc, entry) => acc + computeCommercialItemSubtotal(entry), 0);
+}
+
 function buildProposalItemsListText(items = []) {
   if (!items.length) return "Nenhum item cadastrado.";
   return items
     .map((entry, index) => {
-      const typeLabel = salesTypeLabel(entry.opportunity_type);
-      const estimatedValue = Number(entry.estimated_value || 0);
-      return `${index + 1}. ${typeLabel} | ${entry.title_subcategory} | ${entry.title_product} (${brl(estimatedValue)})`;
+      const normalized = normalizeProposalCommercialItem(entry);
+      const typeLabel = salesTypeLabel(normalized.item_type);
+      const subtotal = computeCommercialItemSubtotal(normalized);
+      const discount = normalizeCommercialItemDiscount(normalized.discount_percent, 0);
+      const discountLabel = discount > 0 ? `, desconto ${discount.toLocaleString("pt-BR")} %` : "";
+      return `${index + 1}. ${typeLabel} | ${normalized.item_description} | qtd ${normalized.quantity.toLocaleString("pt-BR")} x ${brl(
+        normalized.unit_price
+      )}${discountLabel} = ${brl(subtotal)}`;
     })
     .join("\n");
 }
 
 function buildProposalItemsSummaryText(items = []) {
   if (!items.length) return "";
-  return items
-    .map((entry) => `${entry.title_subcategory} - ${entry.title_product}`)
-    .join(" | ");
+  return items.map((entry) => normalizeProposalCommercialItem(entry).item_description).join(" | ");
 }
 
 function buildProposalItemsTableHtml(items = []) {
@@ -494,38 +614,53 @@ function buildProposalItemsTableHtml(items = []) {
 
   const rowsHtml = items
     .map((entry, index) => {
-      const estimatedValue = Number(entry.estimated_value || 0);
+      const normalized = normalizeProposalCommercialItem(entry);
+      const subtotal = computeCommercialItemSubtotal(normalized);
+      const discount = normalizeCommercialItemDiscount(normalized.discount_percent, 0);
       return `<tr>
         <td>${index + 1}</td>
-        <td>${escapeHtml(salesTypeLabel(entry.opportunity_type))}</td>
-        <td>${escapeHtml(entry.title_subcategory || "-")}</td>
-        <td>${escapeHtml(entry.title_product || "-")}</td>
-        <td class="is-right">${escapeHtml(brl(estimatedValue))}</td>
+        <td>${escapeHtml(normalized.item_description || "-")}</td>
+        <td class="is-right">${escapeHtml(normalized.quantity.toLocaleString("pt-BR"))}</td>
+        <td class="is-right">${escapeHtml(brl(normalized.unit_price))}</td>
+        <td class="is-right">${escapeHtml(discount > 0 ? `${discount.toLocaleString("pt-BR")} %` : "-")}</td>
+        <td class="is-right">${escapeHtml(brl(subtotal))}</td>
       </tr>`;
     })
     .join("");
-  const totalValue = items.reduce((acc, entry) => acc + Number(entry.estimated_value || 0), 0);
+  const totalValue = computeProposalCommercialItemsTotal(items);
   return `<table class="items-table" cellspacing="0" cellpadding="0">
     <thead>
       <tr>
         <th>#</th>
-        <th>Categoria</th>
-        <th>Sub-categoria</th>
-        <th>Produto</th>
-        <th>Valor</th>
+        <th>Produto ou servico</th>
+        <th class="is-right">Qtd.</th>
+        <th class="is-right">Preco unit.</th>
+        <th class="is-right">Desconto</th>
+        <th class="is-right">Sub-total</th>
       </tr>
     </thead>
     <tbody>${rowsHtml}</tbody>
     <tfoot>
       <tr>
-        <td colspan="4">Total da oportunidade</td>
+        <td colspan="4">Valor total do pedido</td>
         <td class="is-right">${escapeHtml(brl(totalValue))}</td>
       </tr>
     </tfoot>
   </table>`;
 }
 
-function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText, logoDataUrl, issueDate, validityDays, items }) {
+function buildProposalDocumentHtml({
+  proposalNumber,
+  companyName,
+  renderedText,
+  logoDataUrl,
+  issueDate,
+  validityDays,
+  items,
+  freightTerms = "",
+  paymentTerms = "",
+  deliveryTerms = ""
+}) {
   const textHtml = escapeHtml(renderedText).replace(/\n/g, "<br />");
   const logoHtml = logoDataUrl
     ? `<img class="brand-logo" src="${escapeHtml(logoDataUrl)}" alt="Art Printer" />`
@@ -533,6 +668,9 @@ function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText, 
   const safeIssueDate = escapeHtml(formatDateBr(issueDate) || "-");
   const safeValidity = escapeHtml(String(validityDays || "-"));
   const itemsTableHtml = buildProposalItemsTableHtml(items);
+  const safeFreightTerms = escapeHtml(String(freightTerms || "-"));
+  const safePaymentTerms = escapeHtml(String(paymentTerms || "-"));
+  const safeDeliveryTerms = escapeHtml(String(deliveryTerms || "-"));
   return `<!doctype html>
 <html lang="pt-BR">
   <head>
@@ -615,6 +753,31 @@ function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText, 
         color: #4b5563;
         font-size: 13px;
       }
+      .conditions-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .condition-card {
+        border: 1px solid #e4e7f2;
+        border-radius: 10px;
+        background: #faf8ff;
+        padding: 8px 10px;
+      }
+      .condition-card strong {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #5b21b6;
+      }
+      .condition-card span {
+        display: block;
+        font-size: 12px;
+        color: #2f3645;
+        line-height: 1.45;
+      }
       .section-title {
         margin: 14px 0 8px;
         font-size: 13px;
@@ -688,6 +851,25 @@ function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText, 
       <div class="proposal-content">
         <h1>${escapeHtml(proposalNumber || "Proposta Comercial")}</h1>
         <p class="company-name">${escapeHtml(companyName || "Cliente")}</p>
+        <h2 class="section-title">Condicoes gerais</h2>
+        <div class="conditions-grid">
+          <div class="condition-card">
+            <strong>Frete</strong>
+            <span>${safeFreightTerms}</span>
+          </div>
+          <div class="condition-card">
+            <strong>Prazo de entrega</strong>
+            <span>${safeDeliveryTerms}</span>
+          </div>
+          <div class="condition-card">
+            <strong>Prazo de pagamento</strong>
+            <span>${safePaymentTerms}</span>
+          </div>
+          <div class="condition-card">
+            <strong>Validade da proposta</strong>
+            <span>${safeValidity} dias</span>
+          </div>
+        </div>
         <h2 class="section-title">Itens da oportunidade</h2>
         ${itemsTableHtml}
         <h2 class="section-title">Texto da proposta</h2>
@@ -829,7 +1011,14 @@ function ensureProposalItems(items = [], fallbackItem = null) {
   return isOpportunityItemComplete(fallbackNormalized) ? [fallbackNormalized] : [];
 }
 
-function createProposalDraft({ opportunity, linkedOrder, contacts, templates = [] }) {
+function createProposalDraft({
+  opportunity,
+  linkedOrder,
+  contacts,
+  templates = [],
+  productProfiles = [],
+  commercialTerms = []
+}) {
   const parsedTitle = parseOpportunityTitle(opportunity?.title || "");
   const parsedItems = parseOpportunityLineItems(opportunity);
   const fallbackPrimaryItem = normalizeOpportunityItem({
@@ -845,14 +1034,51 @@ function createProposalDraft({ opportunity, linkedOrder, contacts, templates = [
     proposalType,
     product: primaryItem.title_product
   });
+  const selectedProductProfile = pickSavedProductProfileForOpportunity(productProfiles, {
+    proposalType,
+    product: primaryItem.title_product
+  });
+  const selectedCommercialTerms = pickDefaultCommercialTerms(commercialTerms);
   const selectedTemplate = pickSavedTemplateForOpportunity(templates, {
     proposalType,
     product: primaryItem.title_product
   });
   const preferredContact = pickPreferredContact(contacts);
   const today = new Date().toISOString().slice(0, 10);
-  const itemsTotalValue = opportunityItems.reduce((acc, entry) => acc + Number(entry.estimated_value || 0), 0);
-  const totalValue = Number(linkedOrder?.total_amount ?? opportunity?.estimated_value ?? itemsTotalValue ?? 0);
+  let commercialItems = buildCommercialItemsFromOpportunityItems(opportunityItems);
+  if (!commercialItems.length && selectedProductProfile) {
+    commercialItems = [
+      normalizeProposalCommercialItem({
+        item_type: selectedProductProfile.proposal_type || proposalType,
+        item_code: selectedProductProfile.product_code || "",
+        item_description: selectedProductProfile.product_name || primaryItem.title_product || "Produto",
+        quantity: 1,
+        unit_price: toPositiveMoneyNumber(selectedProductProfile.base_price),
+        discount_percent: 0
+      })
+    ];
+  }
+  if (selectedProductProfile && commercialItems.length) {
+    commercialItems = commercialItems.map((entry, index) =>
+      index === 0
+        ? normalizeProposalCommercialItem({
+            ...entry,
+            item_type: selectedProductProfile.proposal_type || entry.item_type,
+            item_code: entry.item_code || selectedProductProfile.product_code || "",
+            item_description: entry.item_description || selectedProductProfile.product_name || "",
+            unit_price:
+              toPositiveMoneyNumber(entry.unit_price) > 0
+                ? toPositiveMoneyNumber(entry.unit_price)
+                : toPositiveMoneyNumber(selectedProductProfile.base_price)
+          })
+        : entry
+    );
+  }
+
+  const commercialItemsTotal = computeProposalCommercialItemsTotal(commercialItems);
+  const fallbackTotal = Number(opportunity?.estimated_value ?? commercialItemsTotal ?? 0);
+  const linkedOrderTotal = Number(linkedOrder?.total_amount ?? 0);
+  const totalValue = linkedOrderTotal > 0 ? linkedOrderTotal : fallbackTotal > 0 ? fallbackTotal : commercialItemsTotal;
 
   return {
     opportunity_id: opportunity?.id || "",
@@ -862,16 +1088,34 @@ function createProposalDraft({ opportunity, linkedOrder, contacts, templates = [
     validity_days: "7",
     proposal_type: proposalType,
     category: primaryItem.title_subcategory || "",
-    product: primaryItem.title_product || String(opportunity?.title || "").trim(),
+    product: selectedProductProfile?.product_name || primaryItem.title_product || String(opportunity?.title || "").trim(),
     opportunity_items: opportunityItems,
+    commercial_items: commercialItems,
     selected_template_id: selectedTemplate?.id || "",
     selected_template_name: selectedTemplate?.name || "",
     template_profile_key: templateProfile.key,
     template_profile_label: templateProfile.label,
     estimated_value: Number.isFinite(totalValue) ? totalValue : 0,
-    payment_terms: "50% de entrada e 50% na entrega/instalacao.",
+    selected_product_profile_id: selectedProductProfile?.id || "",
+    selected_product_profile_name: selectedProductProfile?.name || "",
+    profile_product_code: selectedProductProfile?.product_code || "",
+    profile_headline: selectedProductProfile?.headline || "",
+    profile_intro_text: selectedProductProfile?.intro_text || "",
+    profile_technical_text: selectedProductProfile?.technical_text || "",
+    profile_video_url: selectedProductProfile?.video_url || "",
+    profile_included_accessories: selectedProductProfile?.included_accessories || "",
+    profile_optional_accessories: selectedProductProfile?.optional_accessories || "",
+    selected_commercial_terms_id: selectedCommercialTerms?.id || "",
+    selected_commercial_terms_name: selectedCommercialTerms?.name || "",
+    payment_terms:
+      selectedCommercialTerms?.payment_terms || "50% de entrada e 50% na entrega/instalacao.",
+    freight_terms: "FOB Blumenau / SC (frete por conta do destinatario).",
     delivery_terms: "Entrega em ate 15 dias uteis apos aprovacao.",
     warranty_terms: "Garantia de 12 meses contra defeitos de fabricacao.",
+    included_offer: selectedCommercialTerms?.included_offer || "",
+    excluded_offer: selectedCommercialTerms?.excluded_offer || "",
+    financing_terms: selectedCommercialTerms?.financing_terms || "",
+    closing_text: selectedCommercialTerms?.closing_text || "",
     notes: "",
     contact_id: preferredContact?.id || "",
     client_name: preferredContact?.full_name || opportunity?.companies?.trade_name || "Cliente",
@@ -913,6 +1157,8 @@ export default function PipelineModule({
   const [proposalLoadingContacts, setProposalLoadingContacts] = useState(false);
   const [savedProposalTemplates, setSavedProposalTemplates] = useState([]);
   const [savedProposalTemplatesLoading, setSavedProposalTemplatesLoading] = useState(false);
+  const [savedProposalProductProfiles, setSavedProposalProductProfiles] = useState([]);
+  const [savedProposalCommercialTerms, setSavedProposalCommercialTerms] = useState([]);
   const [proposalLogoDataUrl, setProposalLogoDataUrl] = useState("");
   const [sendingProposal, setSendingProposal] = useState(false);
   const [customerHistoryModal, setCustomerHistoryModal] = useState({
@@ -992,13 +1238,13 @@ export default function PipelineModule({
 
   const proposalItemsForDocument = useMemo(() => {
     if (!proposalEditor) return [];
-    const fallbackItem = normalizeOpportunityItem({
+    const fallbackItems = ensureProposalItems(proposalEditor.opportunity_items, {
       opportunity_type: proposalEditor.proposal_type,
       title_subcategory: proposalEditor.category,
       title_product: proposalEditor.product,
       estimated_value: proposalEditor.estimated_value
     });
-    return ensureProposalItems(proposalEditor.opportunity_items, fallbackItem);
+    return ensureProposalCommercialItems(proposalEditor.commercial_items, fallbackItems);
   }, [proposalEditor]);
 
   const proposalTemplateProfile = useMemo(() => {
@@ -1011,7 +1257,7 @@ export default function PipelineModule({
 
   const proposalVariables = useMemo(() => {
     if (!proposalEditor) return {};
-    const itemsTotal = proposalItemsForDocument.reduce((acc, entry) => acc + Number(entry.estimated_value || 0), 0);
+    const itemsTotal = computeProposalCommercialItemsTotal(proposalItemsForDocument);
     const explicitValue = toPositiveMoneyNumber(proposalEditor.estimated_value);
     const totalValue = explicitValue > 0 ? explicitValue : itemsTotal;
     return {
@@ -1024,12 +1270,23 @@ export default function PipelineModule({
       categoria: proposalEditor.category,
       produto: proposalEditor.product,
       valor_total: brl(totalValue),
+      frete: proposalEditor.freight_terms || "-",
       itens_oportunidade: buildProposalItemsListText(proposalItemsForDocument),
       resumo_itens: buildProposalItemsSummaryText(proposalItemsForDocument) || "Sem itens detalhados.",
       quantidade_itens: String(proposalItemsForDocument.length),
       condicoes_pagamento: proposalEditor.payment_terms,
       prazo_entrega: proposalEditor.delivery_terms,
       garantia: proposalEditor.warranty_terms,
+      inclui_oferta: proposalEditor.included_offer || "-",
+      nao_inclui_oferta: proposalEditor.excluded_offer || "-",
+      financiamento: proposalEditor.financing_terms || "-",
+      texto_fechamento: proposalEditor.closing_text || "-",
+      perfil_titulo: proposalEditor.profile_headline || "-",
+      perfil_intro: proposalEditor.profile_intro_text || "-",
+      perfil_tecnico: proposalEditor.profile_technical_text || "-",
+      perfil_codigo_produto: proposalEditor.profile_product_code || "-",
+      perfil_acessorios_inclusos: proposalEditor.profile_included_accessories || "-",
+      perfil_acessorios_opcionais: proposalEditor.profile_optional_accessories || "-",
       observacoes: proposalEditor.notes || "Sem observacoes adicionais."
     };
   }, [items, proposalEditor, proposalItemsForDocument]);
@@ -1049,7 +1306,10 @@ export default function PipelineModule({
       logoDataUrl: proposalLogoDataUrl,
       issueDate: proposalEditor.issue_date,
       validityDays: proposalEditor.validity_days,
-      items: proposalItemsForDocument
+      items: proposalItemsForDocument,
+      freightTerms: proposalEditor.freight_terms,
+      paymentTerms: proposalEditor.payment_terms,
+      deliveryTerms: proposalEditor.delivery_terms
     });
   }, [items, proposalEditor, renderedProposalText, proposalLogoDataUrl, proposalItemsForDocument]);
   const hasArtPrinterLogo = Boolean(proposalLogoDataUrl);
@@ -1127,6 +1387,24 @@ export default function PipelineModule({
     }
   }
 
+  async function loadSavedProposalProductProfiles() {
+    try {
+      const profiles = await listProposalProductProfiles({ includeInactive: false });
+      setSavedProposalProductProfiles((profiles || []).filter((entry) => Boolean(entry?.is_active)));
+    } catch (_err) {
+      setSavedProposalProductProfiles([]);
+    }
+  }
+
+  async function loadSavedProposalCommercialTerms() {
+    try {
+      const terms = await listProposalCommercialTerms({ includeInactive: false });
+      setSavedProposalCommercialTerms((terms || []).filter((entry) => Boolean(entry?.is_active)));
+    } catch (_err) {
+      setSavedProposalCommercialTerms([]);
+    }
+  }
+
   useEffect(() => {
     loadUsersContext();
   }, []);
@@ -1137,6 +1415,8 @@ export default function PipelineModule({
 
   useEffect(() => {
     loadSavedProposalTemplates({ silent: true });
+    loadSavedProposalProductProfiles();
+    loadSavedProposalCommercialTerms();
   }, []);
 
   useEffect(() => {
@@ -1536,19 +1816,25 @@ export default function PipelineModule({
     setProposalLoadingContacts(true);
 
     try {
-      const [contacts, templates] = await Promise.all([
+      const [contacts, templates, profiles, terms] = await Promise.all([
         item.company_id ? listCompanyContacts(item.company_id) : Promise.resolve([]),
-        listProposalTemplates({ includeInactive: false })
+        listProposalTemplates({ includeInactive: false }),
+        listProposalProductProfiles({ includeInactive: false }),
+        listProposalCommercialTerms({ includeInactive: false })
       ]);
       const linkedOrder = proposalsByOpportunity[item.id] || null;
       setSavedProposalTemplates(templates);
+      setSavedProposalProductProfiles((profiles || []).filter((entry) => Boolean(entry?.is_active)));
+      setSavedProposalCommercialTerms((terms || []).filter((entry) => Boolean(entry?.is_active)));
       setProposalContacts(contacts);
       setProposalEditor(
         createProposalDraft({
           opportunity: item,
           linkedOrder,
           contacts,
-          templates
+          templates,
+          productProfiles: profiles,
+          commercialTerms: terms
         })
       );
     } catch (err) {
@@ -1600,6 +1886,190 @@ export default function PipelineModule({
       }
       return next;
     });
+  }
+
+  function handleProposalCommercialItemChange(index, field, value) {
+    const safeIndex = Number(index);
+    if (!Number.isFinite(safeIndex) || safeIndex < 0) return;
+
+    setProposalEditor((prev) => {
+      if (!prev) return prev;
+      const currentItems = ensureProposalCommercialItems(prev.commercial_items, prev.opportunity_items);
+      if (!currentItems[safeIndex]) return prev;
+
+      const nextItems = currentItems.map((entry, itemIndex) => {
+        if (itemIndex !== safeIndex) return entry;
+        const current = { ...entry };
+        if (field === "item_type") current.item_type = normalizeProposalType(value);
+        if (field === "item_code") current.item_code = String(value || "").trim();
+        if (field === "item_description") current.item_description = String(value || "").trim();
+        if (field === "quantity") current.quantity = normalizeCommercialItemQuantity(value, 1);
+        if (field === "unit_price") current.unit_price = toPositiveMoneyNumber(value);
+        if (field === "discount_percent") current.discount_percent = normalizeCommercialItemDiscount(value, 0);
+        return normalizeProposalCommercialItem(current, current.item_type);
+      });
+
+      const nextTotal = computeProposalCommercialItemsTotal(nextItems);
+      return {
+        ...prev,
+        commercial_items: nextItems,
+        estimated_value: nextTotal
+      };
+    });
+  }
+
+  function handleAddProposalCommercialItem() {
+    setProposalEditor((prev) => {
+      if (!prev) return prev;
+      const currentItems = ensureProposalCommercialItems(prev.commercial_items, prev.opportunity_items);
+      const nextItems = [
+        ...currentItems,
+        normalizeProposalCommercialItem({
+          item_type: prev.proposal_type || "equipment",
+          item_code: "",
+          item_description: "",
+          quantity: 1,
+          unit_price: 0,
+          discount_percent: 0
+        })
+      ];
+      const nextTotal = computeProposalCommercialItemsTotal(nextItems);
+      return {
+        ...prev,
+        commercial_items: nextItems,
+        estimated_value: nextTotal
+      };
+    });
+  }
+
+  function handleRemoveProposalCommercialItem(index) {
+    const safeIndex = Number(index);
+    if (!Number.isFinite(safeIndex) || safeIndex < 0) return;
+
+    setProposalEditor((prev) => {
+      if (!prev) return prev;
+      const currentItems = ensureProposalCommercialItems(prev.commercial_items, prev.opportunity_items);
+      const nextItems = currentItems.filter((_, itemIndex) => itemIndex !== safeIndex);
+      const nextTotal = computeProposalCommercialItemsTotal(nextItems);
+      return {
+        ...prev,
+        commercial_items: nextItems,
+        estimated_value: nextTotal
+      };
+    });
+  }
+
+  function handleProposalProductProfileSelection(profileId) {
+    const selectedId = String(profileId || "").trim();
+    const selectedProfile = savedProposalProductProfiles.find((item) => String(item.id || "") === selectedId) || null;
+
+    setProposalEditor((prev) => {
+      if (!prev) return prev;
+      if (!selectedProfile) {
+        return {
+          ...prev,
+          selected_product_profile_id: "",
+          selected_product_profile_name: "",
+          profile_product_code: "",
+          profile_headline: "",
+          profile_intro_text: "",
+          profile_technical_text: "",
+          profile_video_url: "",
+          profile_included_accessories: "",
+          profile_optional_accessories: ""
+        };
+      }
+
+      const currentItems = ensureProposalCommercialItems(prev.commercial_items, prev.opportunity_items);
+      const nextItems = currentItems.length
+        ? currentItems.map((entry, itemIndex) =>
+            itemIndex === 0
+              ? normalizeProposalCommercialItem({
+                  ...entry,
+                  item_type: selectedProfile.proposal_type || entry.item_type,
+                  item_code: selectedProfile.product_code || entry.item_code,
+                  item_description: selectedProfile.product_name || entry.item_description,
+                  unit_price:
+                    toPositiveMoneyNumber(entry.unit_price) > 0
+                      ? toPositiveMoneyNumber(entry.unit_price)
+                      : toPositiveMoneyNumber(selectedProfile.base_price)
+                })
+              : entry
+          )
+        : [
+            normalizeProposalCommercialItem({
+              item_type: selectedProfile.proposal_type || prev.proposal_type,
+              item_code: selectedProfile.product_code || "",
+              item_description: selectedProfile.product_name || "Produto",
+              quantity: 1,
+              unit_price: toPositiveMoneyNumber(selectedProfile.base_price),
+              discount_percent: 0
+            })
+          ];
+
+      const nextType = selectedProfile.proposal_type
+        ? normalizeProposalType(selectedProfile.proposal_type)
+        : normalizeProposalType(prev.proposal_type);
+      const nextProduct = selectedProfile.product_name || prev.product;
+      const nextTemplateProfile = resolveProposalTemplateProfile({
+        proposalType: nextType,
+        product: nextProduct
+      });
+      const nextTotal = computeProposalCommercialItemsTotal(nextItems);
+
+      return {
+        ...prev,
+        proposal_type: nextType,
+        product: nextProduct,
+        template_profile_key: nextTemplateProfile.key,
+        template_profile_label: nextTemplateProfile.label,
+        selected_product_profile_id: selectedProfile.id,
+        selected_product_profile_name: selectedProfile.name || "",
+        profile_product_code: selectedProfile.product_code || "",
+        profile_headline: selectedProfile.headline || "",
+        profile_intro_text: selectedProfile.intro_text || "",
+        profile_technical_text: selectedProfile.technical_text || "",
+        profile_video_url: selectedProfile.video_url || "",
+        profile_included_accessories: selectedProfile.included_accessories || "",
+        profile_optional_accessories: selectedProfile.optional_accessories || "",
+        commercial_items: nextItems,
+        estimated_value: nextTotal
+      };
+    });
+
+    if (selectedProfile) {
+      setSuccess(`Perfil aplicado: ${selectedProfile.name}.`);
+    }
+  }
+
+  function handleProposalCommercialTermsSelection(termsId) {
+    const selectedId = String(termsId || "").trim();
+    const selectedTerms = savedProposalCommercialTerms.find((item) => String(item.id || "") === selectedId) || null;
+
+    setProposalEditor((prev) => {
+      if (!prev) return prev;
+      if (!selectedTerms) {
+        return {
+          ...prev,
+          selected_commercial_terms_id: "",
+          selected_commercial_terms_name: ""
+        };
+      }
+      return {
+        ...prev,
+        selected_commercial_terms_id: selectedTerms.id,
+        selected_commercial_terms_name: selectedTerms.name || "",
+        payment_terms: selectedTerms.payment_terms || prev.payment_terms,
+        included_offer: selectedTerms.included_offer || "",
+        excluded_offer: selectedTerms.excluded_offer || "",
+        financing_terms: selectedTerms.financing_terms || "",
+        closing_text: selectedTerms.closing_text || prev.closing_text
+      };
+    });
+
+    if (selectedTerms) {
+      setSuccess(`Condições comerciais aplicadas: ${selectedTerms.name}.`);
+    }
   }
 
   function handleProposalTemplateSelection(templateId) {
@@ -2263,6 +2733,30 @@ export default function PipelineModule({
                   ))}
                 </select>
                 <select
+                  value={proposalEditor.selected_product_profile_id || ""}
+                  onChange={(event) => handleProposalProductProfileSelection(event.target.value)}
+                >
+                  <option value="">Perfil de produto (opcional)</option>
+                  {savedProposalProductProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                      {profile.product_code ? ` · ${profile.product_code}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={proposalEditor.selected_commercial_terms_id || ""}
+                  onChange={(event) => handleProposalCommercialTermsSelection(event.target.value)}
+                >
+                  <option value="">Condições comerciais (opcional)</option>
+                  {savedProposalCommercialTerms.map((term) => (
+                    <option key={term.id} value={term.id}>
+                      {term.name}
+                      {term.is_default ? " · Padrão" : ""}
+                    </option>
+                  ))}
+                </select>
+                <select
                   value={proposalEditor.selected_template_id || ""}
                   onChange={(event) => handleProposalTemplateSelection(event.target.value)}
                 >
@@ -2324,6 +2818,11 @@ export default function PipelineModule({
                   onChange={(event) => handleProposalField("payment_terms", event.target.value)}
                 />
                 <textarea
+                  placeholder="Frete"
+                  value={proposalEditor.freight_terms}
+                  onChange={(event) => handleProposalField("freight_terms", event.target.value)}
+                />
+                <textarea
                   placeholder="Prazo de entrega"
                   value={proposalEditor.delivery_terms}
                   onChange={(event) => handleProposalField("delivery_terms", event.target.value)}
@@ -2334,10 +2833,107 @@ export default function PipelineModule({
                   onChange={(event) => handleProposalField("warranty_terms", event.target.value)}
                 />
                 <textarea
+                  placeholder="Incluso na oferta"
+                  value={proposalEditor.included_offer}
+                  onChange={(event) => handleProposalField("included_offer", event.target.value)}
+                />
+                <textarea
+                  placeholder="Nao incluso na oferta"
+                  value={proposalEditor.excluded_offer}
+                  onChange={(event) => handleProposalField("excluded_offer", event.target.value)}
+                />
+                <textarea
+                  placeholder="Condições de financiamento"
+                  value={proposalEditor.financing_terms}
+                  onChange={(event) => handleProposalField("financing_terms", event.target.value)}
+                />
+                <textarea
+                  placeholder="Texto de fechamento"
+                  value={proposalEditor.closing_text}
+                  onChange={(event) => handleProposalField("closing_text", event.target.value)}
+                />
+                <textarea
                   placeholder="Observacoes"
                   value={proposalEditor.notes}
                   onChange={(event) => handleProposalField("notes", event.target.value)}
                 />
+                <div className="proposal-commercial-items">
+                  <div className="proposal-commercial-items-header">
+                    <strong>Itens comerciais da proposta</strong>
+                    <button type="button" className="btn-ghost btn-table-action" onClick={handleAddProposalCommercialItem}>
+                      + Adicionar item
+                    </button>
+                  </div>
+                  <div className="proposal-commercial-items-list">
+                    {(proposalEditor.commercial_items || []).map((entry, index) => {
+                      const subtotal = computeCommercialItemSubtotal(entry);
+                      return (
+                        <div className="proposal-commercial-item-row" key={`${entry.item_code || "item"}-${index}`}>
+                          <select
+                            value={entry.item_type || "equipment"}
+                            onChange={(event) => handleProposalCommercialItemChange(index, "item_type", event.target.value)}
+                          >
+                            {SALES_TYPES.map((type) => (
+                              <option key={type.value} value={type.value}>
+                                {type.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            placeholder="Código"
+                            value={entry.item_code || ""}
+                            onChange={(event) => handleProposalCommercialItemChange(index, "item_code", event.target.value)}
+                          />
+                          <input
+                            placeholder="Produto ou serviço"
+                            value={entry.item_description || ""}
+                            onChange={(event) =>
+                              handleProposalCommercialItemChange(index, "item_description", event.target.value)
+                            }
+                          />
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            placeholder="Qtd"
+                            value={entry.quantity ?? 1}
+                            onChange={(event) => handleProposalCommercialItemChange(index, "quantity", event.target.value)}
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="Preço unit."
+                            value={entry.unit_price ?? 0}
+                            onChange={(event) => handleProposalCommercialItemChange(index, "unit_price", event.target.value)}
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.01"
+                            placeholder="Desc. %"
+                            value={entry.discount_percent ?? 0}
+                            onChange={(event) =>
+                              handleProposalCommercialItemChange(index, "discount_percent", event.target.value)
+                            }
+                          />
+                          <div className="proposal-commercial-item-subtotal">{brl(subtotal)}</div>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action"
+                            onClick={() => handleRemoveProposalCommercialItem(index)}
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="proposal-commercial-items-total">
+                    Total dos itens: <strong>{brl(computeProposalCommercialItemsTotal(proposalEditor.commercial_items || []))}</strong>
+                  </p>
+                </div>
                 <textarea
                   className="proposal-template-input"
                   placeholder="Modelo da proposta"
@@ -2355,6 +2951,10 @@ export default function PipelineModule({
                   {" · "}
                   {proposalItemsForDocument.length} item(ns) na oportunidade.
                 </p>
+                <p className="proposal-placeholder-help">
+                  Perfil: <strong>{proposalEditor.selected_product_profile_name || "Nao selecionado"}</strong>
+                  {" · "}Condições: <strong>{proposalEditor.selected_commercial_terms_name || "Nao selecionadas"}</strong>
+                </p>
                 {!savedProposalTemplates.length ? (
                   <p className="warning-text proposal-warning">
                     Nenhum template salvo em Configurações. Você pode criar templates e depois aplicar por oportunidade.
@@ -2368,8 +2968,12 @@ export default function PipelineModule({
                   <code>{"{{produto}}"}</code>, <code>{"{{valor_total}}"}</code>,{" "}
                   <code>{"{{itens_oportunidade}}"}</code>, <code>{"{{resumo_itens}}"}</code>,{" "}
                   <code>{"{{quantidade_itens}}"}</code>,{" "}
-                  <code>{"{{condicoes_pagamento}}"}</code>, <code>{"{{prazo_entrega}}"}</code>,{" "}
-                  <code>{"{{garantia}}"}</code>, <code>{"{{observacoes}}"}</code>
+                  <code>{"{{frete}}"}</code>, <code>{"{{condicoes_pagamento}}"}</code>,{" "}
+                  <code>{"{{prazo_entrega}}"}</code>, <code>{"{{garantia}}"}</code>,{" "}
+                  <code>{"{{inclui_oferta}}"}</code>, <code>{"{{nao_inclui_oferta}}"}</code>,{" "}
+                  <code>{"{{financiamento}}"}</code>, <code>{"{{texto_fechamento}}"}</code>,{" "}
+                  <code>{"{{perfil_titulo}}"}</code>, <code>{"{{perfil_intro}}"}</code>,{" "}
+                  <code>{"{{perfil_tecnico}}"}</code>, <code>{"{{observacoes}}"}</code>
                 </p>
                 <div className="inline-actions">
                   <button
