@@ -569,15 +569,6 @@ export default function PipelineModule({
       }),
     [form.estimated_value, form.opportunity_type, form.title_product, form.title_subcategory]
   );
-  const draftItemHasAnyValue = useMemo(
-    () =>
-      Boolean(
-        String(form.title_subcategory || "").trim() ||
-          String(form.title_product || "").trim() ||
-          String(form.estimated_value || "").trim()
-      ),
-    [form.estimated_value, form.title_product, form.title_subcategory]
-  );
   const draftItemIsComplete = useMemo(() => isOpportunityItemComplete(draftOpportunityItem), [draftOpportunityItem]);
   const allOpportunityItems = useMemo(
     () => (draftItemIsComplete ? [...opportunityItems, draftOpportunityItem] : opportunityItems),
@@ -847,10 +838,6 @@ export default function PipelineModule({
     let postSaveSuccessMessage = "";
 
     try {
-      if (draftItemHasAnyValue && !draftItemIsComplete) {
-        setError("Finalize o item em edição (sub-categoria e produto) ou limpe-o antes de salvar.");
-        return;
-      }
       if (!form.company_id) {
         setError("Selecione uma empresa cadastrada.");
         return;
