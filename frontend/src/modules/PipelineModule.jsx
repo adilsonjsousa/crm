@@ -25,6 +25,8 @@ import { formatBrazilPhone, toWhatsAppBrazilNumber } from "../lib/phone";
 import CustomerHistoryModal from "../components/CustomerHistoryModal";
 
 const PROPOSAL_TEMPLATE_STORAGE_KEY = "crm.pipeline.proposal-template.v1";
+const PROPOSAL_TEMPLATE_PROFILES_STORAGE_KEY = "crm.pipeline.proposal-template-profiles.v1";
+const PROPOSAL_LOGO_STORAGE_KEY = "crm.pipeline.proposal-logo.v1";
 const PIPELINE_VIEWER_STORAGE_KEY = "crm.pipeline.viewer-user-id.v1";
 const PIPELINE_FORM_DEFAULTS_STORAGE_KEY = "crm.pipeline.form-defaults.v1";
 const ART_PRINTER_LOGO_CANDIDATES = [
@@ -181,6 +183,56 @@ const RD_TEMPLATE_BY_TYPE = {
   ].join("\n")
 };
 
+const PRODUCT_TEMPLATE_BY_PRODUCT = [
+  {
+    key: "canon-imagepress-v700",
+    label: "Canon imagePRESS V700",
+    match_tokens: ["imagepress v700", "canon imagepress v700"],
+    template: [
+      "PROPOSTA COMERCIAL {{numero_proposta}}",
+      "",
+      "Empresa: {{empresa_nome}}",
+      "Contato: {{cliente_nome}}",
+      "Data de emissao: {{data_emissao}}",
+      "Validade: {{validade_dias}} dias",
+      "",
+      "A QUALIDADE CANON",
+      "Lider mundial em sistemas de impressao, a Canon entrega robustez, estabilidade, qualidade de cor e produtividade para operacoes graficas exigentes.",
+      "",
+      "SUPORTE PREMIUM ARTPRINTER",
+      "A ArtPrinter combina tecnologia mundial e suporte local especializado para garantir implantacao segura, treinamento e acompanhamento de performance.",
+      "",
+      "SOLUCAO RECOMENDADA",
+      "- Produto principal: {{produto}}",
+      "- Categoria: {{categoria}}",
+      "- Itens da oportunidade:",
+      "{{itens_oportunidade}}",
+      "",
+      "DETALHAMENTO TECNICO INICIAL",
+      "Plataforma color de alta produtividade para operacao grafica, com ampla compatibilidade de midias e foco em repetibilidade de cor.",
+      "Ajuste este bloco conforme configuracao final, acessorios e escopo negociado com o cliente.",
+      "",
+      "INVESTIMENTO",
+      "- Valor total da proposta: {{valor_total}}",
+      "",
+      "CONDICOES COMERCIAIS",
+      "- Condicoes de pagamento: {{condicoes_pagamento}}",
+      "- Prazo de entrega/instalacao: {{prazo_entrega}}",
+      "- Garantia e suporte: {{garantia}}",
+      "",
+      "OBSERVACOES",
+      "{{observacoes}}",
+      "",
+      "ACEITE",
+      "Responsavel cliente: __________________________________________",
+      "Data de aceite: ____/____/________",
+      "",
+      "Atenciosamente,",
+      "Equipe Comercial ArtPrinter"
+    ].join("\n")
+  }
+];
+
 function normalizeProposalType(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "supplies" || normalized === "service" ? normalized : "equipment";
@@ -211,10 +263,91 @@ function formatDateBr(dateValue) {
   }).format(parsed);
 }
 
-function getStoredProposalTemplate(opportunityType = "equipment") {
-  if (typeof window === "undefined") return getRdTemplateByType(opportunityType);
-  const saved = window.localStorage.getItem(PROPOSAL_TEMPLATE_STORAGE_KEY);
-  return saved || getRdTemplateByType(opportunityType);
+function normalizeProposalLookupKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findTemplateByProduct(productValue = "") {
+  const normalizedProduct = normalizeProposalLookupKey(productValue);
+  if (!normalizedProduct) return null;
+
+  return (
+    PRODUCT_TEMPLATE_BY_PRODUCT.find((entry) =>
+      (entry.match_tokens || []).some((token) => normalizedProduct.includes(normalizeProposalLookupKey(token)))
+    ) || null
+  );
+}
+
+function resolveProposalTemplateProfile({ proposalType = "equipment", product = "" } = {}) {
+  const productTemplate = findTemplateByProduct(product);
+  if (productTemplate?.template) {
+    return {
+      key: `product:${productTemplate.key}`,
+      label: `Produto: ${productTemplate.label}`,
+      template: productTemplate.template
+    };
+  }
+
+  const normalizedType = normalizeProposalType(proposalType);
+  return {
+    key: `type:${normalizedType}`,
+    label: `Tipo: ${proposalTypeLabel(normalizedType)}`,
+    template: getRdTemplateByType(normalizedType)
+  };
+}
+
+function readStoredProposalTemplateProfiles() {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(PROPOSAL_TEMPLATE_PROFILES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function getStoredProposalTemplate(profile) {
+  if (!profile?.template) return DEFAULT_PROPOSAL_TEMPLATE;
+  if (typeof window === "undefined") return profile.template;
+
+  const profileKey = String(profile.key || "").trim();
+  const storedByProfile = readStoredProposalTemplateProfiles();
+  const storedProfileTemplate =
+    profileKey && typeof storedByProfile[profileKey] === "string" ? storedByProfile[profileKey] : "";
+  if (String(storedProfileTemplate || "").trim()) return storedProfileTemplate;
+
+  const legacyTemplate = window.localStorage.getItem(PROPOSAL_TEMPLATE_STORAGE_KEY);
+  if (String(legacyTemplate || "").trim()) return legacyTemplate;
+
+  return profile.template;
+}
+
+function saveStoredProposalTemplate(profileKey, templateBody) {
+  if (typeof window === "undefined") return;
+  const safeTemplate = String(templateBody || "").trim();
+  if (!safeTemplate) return;
+
+  const safeKey = String(profileKey || "").trim();
+  if (safeKey) {
+    const current = readStoredProposalTemplateProfiles();
+    window.localStorage.setItem(
+      PROPOSAL_TEMPLATE_PROFILES_STORAGE_KEY,
+      JSON.stringify({
+        ...current,
+        [safeKey]: safeTemplate
+      })
+    );
+  }
+
+  window.localStorage.setItem(PROPOSAL_TEMPLATE_STORAGE_KEY, safeTemplate);
 }
 
 function buildDraftProposalNumber(opportunityId = "") {
@@ -271,12 +404,21 @@ function blobToDataUrl(blob) {
 async function loadArtPrinterLogoAsDataUrl() {
   if (typeof window === "undefined") return "";
 
+  const storedLogo = window.localStorage.getItem(PROPOSAL_LOGO_STORAGE_KEY);
+  if (String(storedLogo || "").startsWith("data:image/")) {
+    return String(storedLogo);
+  }
+
   for (const logoPath of ART_PRINTER_LOGO_CANDIDATES) {
     try {
       const response = await fetch(logoPath, { cache: "no-store" });
       const contentType = String(response.headers.get("content-type") || "").toLowerCase();
       if (!response.ok || !contentType.startsWith("image/")) continue;
-      return await blobToDataUrl(await response.blob());
+      const loadedLogo = await blobToDataUrl(await response.blob());
+      if (loadedLogo.startsWith("data:image/")) {
+        window.localStorage.setItem(PROPOSAL_LOGO_STORAGE_KEY, loadedLogo);
+      }
+      return loadedLogo;
     } catch (_err) {
       continue;
     }
@@ -285,30 +427,106 @@ async function loadArtPrinterLogoAsDataUrl() {
   return "";
 }
 
-function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText, logoDataUrl }) {
+function salesTypeLabel(typeValue) {
+  const normalizedType = normalizeProposalType(typeValue);
+  return SALES_TYPES.find((entry) => entry.value === normalizedType)?.label || proposalTypeLabel(normalizedType);
+}
+
+function buildProposalItemsListText(items = []) {
+  if (!items.length) return "Nenhum item cadastrado.";
+  return items
+    .map((entry, index) => {
+      const typeLabel = salesTypeLabel(entry.opportunity_type);
+      const estimatedValue = Number(entry.estimated_value || 0);
+      return `${index + 1}. ${typeLabel} | ${entry.title_subcategory} | ${entry.title_product} (${brl(estimatedValue)})`;
+    })
+    .join("\n");
+}
+
+function buildProposalItemsSummaryText(items = []) {
+  if (!items.length) return "";
+  return items
+    .map((entry) => `${entry.title_subcategory} - ${entry.title_product}`)
+    .join(" | ");
+}
+
+function buildProposalItemsTableHtml(items = []) {
+  if (!items.length) {
+    return `<p class="items-empty">Nenhum item da oportunidade foi informado.</p>`;
+  }
+
+  const rowsHtml = items
+    .map((entry, index) => {
+      const estimatedValue = Number(entry.estimated_value || 0);
+      return `<tr>
+        <td>${index + 1}</td>
+        <td>${escapeHtml(salesTypeLabel(entry.opportunity_type))}</td>
+        <td>${escapeHtml(entry.title_subcategory || "-")}</td>
+        <td>${escapeHtml(entry.title_product || "-")}</td>
+        <td class="is-right">${escapeHtml(brl(estimatedValue))}</td>
+      </tr>`;
+    })
+    .join("");
+  const totalValue = items.reduce((acc, entry) => acc + Number(entry.estimated_value || 0), 0);
+  return `<table class="items-table" cellspacing="0" cellpadding="0">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Categoria</th>
+        <th>Sub-categoria</th>
+        <th>Produto</th>
+        <th>Valor</th>
+      </tr>
+    </thead>
+    <tbody>${rowsHtml}</tbody>
+    <tfoot>
+      <tr>
+        <td colspan="4">Total da oportunidade</td>
+        <td class="is-right">${escapeHtml(brl(totalValue))}</td>
+      </tr>
+    </tfoot>
+  </table>`;
+}
+
+function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText, logoDataUrl, issueDate, validityDays, items }) {
   const textHtml = escapeHtml(renderedText).replace(/\n/g, "<br />");
   const logoHtml = logoDataUrl
     ? `<img class="brand-logo" src="${escapeHtml(logoDataUrl)}" alt="Art Printer" />`
     : `<p class="brand-fallback">art printer</p>`;
+  const safeIssueDate = escapeHtml(formatDateBr(issueDate) || "-");
+  const safeValidity = escapeHtml(String(validityDays || "-"));
+  const itemsTableHtml = buildProposalItemsTableHtml(items);
   return `<!doctype html>
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
     <title>${escapeHtml(proposalNumber || "Proposta Comercial")}</title>
     <style>
+      @page {
+        size: A4;
+        margin: 16mm 14mm;
+      }
       body {
         font-family: Arial, Helvetica, sans-serif;
-        margin: 24px;
+        margin: 0;
         color: #1f2937;
+        background: #ffffff;
       }
-      .header {
-        margin-bottom: 20px;
+      .sheet {
+        border: 1px solid #d8dbeb;
+        border-radius: 14px;
+        overflow: hidden;
       }
-      .brand {
+      .letterhead {
+        padding: 16px 18px 12px;
+        background: linear-gradient(180deg, #f8f5ff 0%, #f3edff 100%);
+        border-bottom: 2px solid #7c3aed;
+      }
+      .brand-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 12px;
+        gap: 16px;
       }
       .brand-logo {
         max-width: 280px;
@@ -323,14 +541,49 @@ function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText, 
         font-weight: 800;
         letter-spacing: 0.02em;
       }
-      .header h1 {
+      .meta-row {
+        margin-top: 12px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .meta-pill {
+        border: 1px solid #d8dbeb;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 8px 10px;
+      }
+      .meta-pill strong {
+        display: block;
+        margin-bottom: 2px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #6b7280;
+      }
+      .meta-pill span {
+        font-size: 13px;
+        font-weight: 700;
+        color: #1f2937;
+      }
+      .proposal-content {
+        padding: 14px 18px 18px;
+      }
+      .proposal-content h1 {
         margin: 0 0 6px;
         font-size: 22px;
       }
-      .header p {
+      .proposal-content .company-name {
         margin: 0;
         color: #4b5563;
-        font-size: 14px;
+        font-size: 13px;
+      }
+      .section-title {
+        margin: 14px 0 8px;
+        font-size: 13px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #5b21b6;
       }
       .content {
         border: 1px solid #d1d5db;
@@ -338,16 +591,72 @@ function buildProposalDocumentHtml({ proposalNumber, companyName, renderedText, 
         padding: 16px;
         line-height: 1.55;
         font-size: 13px;
+        background: #ffffff;
+      }
+      .items-table {
+        width: 100%;
+        border-collapse: collapse;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        overflow: hidden;
+        font-size: 12px;
+      }
+      .items-table th,
+      .items-table td {
+        border-bottom: 1px solid #e4e7f2;
+        padding: 8px 10px;
+        text-align: left;
+      }
+      .items-table thead th {
+        background: #f4f1ff;
+        color: #5b21b6;
+        font-weight: 700;
+      }
+      .items-table tfoot td {
+        font-weight: 700;
+        background: #faf8ff;
+      }
+      .items-table .is-right {
+        text-align: right;
+      }
+      .items-empty {
+        margin: 0;
+        border: 1px dashed #d1d5db;
+        border-radius: 8px;
+        padding: 8px 10px;
+        color: #6b7280;
+        font-size: 12px;
       }
     </style>
   </head>
   <body>
-    <div class="header">
-      <div class="brand">${logoHtml}</div>
-      <h1>${escapeHtml(proposalNumber || "Proposta Comercial")}</h1>
-      <p>${escapeHtml(companyName || "Cliente")}</p>
+    <div class="sheet">
+      <div class="letterhead">
+        <div class="brand-row">${logoHtml}</div>
+        <div class="meta-row">
+          <div class="meta-pill">
+            <strong>Data de emissao</strong>
+            <span>${safeIssueDate}</span>
+          </div>
+          <div class="meta-pill">
+            <strong>Validade</strong>
+            <span>${safeValidity} dias</span>
+          </div>
+          <div class="meta-pill">
+            <strong>Documento</strong>
+            <span>${escapeHtml(proposalNumber || "Proposta Comercial")}</span>
+          </div>
+        </div>
+      </div>
+      <div class="proposal-content">
+        <h1>${escapeHtml(proposalNumber || "Proposta Comercial")}</h1>
+        <p class="company-name">${escapeHtml(companyName || "Cliente")}</p>
+        <h2 class="section-title">Itens da oportunidade</h2>
+        ${itemsTableHtml}
+        <h2 class="section-title">Texto da proposta</h2>
+        <div class="content">${textHtml}</div>
+      </div>
     </div>
-    <div class="content">${textHtml}</div>
   </body>
 </html>`;
 }
@@ -457,12 +766,52 @@ function isOpportunityItemComplete(item = {}) {
   return Boolean(String(item.title_subcategory || "").trim() && String(item.title_product || "").trim());
 }
 
+function parseOpportunityLineItems(opportunity = {}) {
+  const dbItems = Array.isArray(opportunity?.line_items)
+    ? opportunity.line_items.map((entry) => normalizeOpportunityItem(entry)).filter((entry) => isOpportunityItemComplete(entry))
+    : [];
+  if (dbItems.length) return dbItems;
+
+  return parseOpportunityItems(opportunity?.title || "")
+    .map((entry) =>
+      normalizeOpportunityItem({
+        opportunity_type: entry.opportunity_type,
+        title_subcategory: entry.title_subcategory,
+        title_product: entry.title_product,
+        estimated_value: resolveEstimatedValueByProduct(entry.title_subcategory, entry.title_product)
+      })
+    )
+    .filter((entry) => isOpportunityItemComplete(entry));
+}
+
+function ensureProposalItems(items = [], fallbackItem = null) {
+  const normalizedItems = (items || []).map((entry) => normalizeOpportunityItem(entry)).filter((entry) => isOpportunityItemComplete(entry));
+  if (normalizedItems.length) return normalizedItems;
+  if (!fallbackItem) return [];
+  const fallbackNormalized = normalizeOpportunityItem(fallbackItem);
+  return isOpportunityItemComplete(fallbackNormalized) ? [fallbackNormalized] : [];
+}
+
 function createProposalDraft({ opportunity, linkedOrder, contacts }) {
   const parsedTitle = parseOpportunityTitle(opportunity?.title || "");
-  const proposalType = normalizeProposalType(parsedTitle.opportunity_type);
+  const parsedItems = parseOpportunityLineItems(opportunity);
+  const fallbackPrimaryItem = normalizeOpportunityItem({
+    opportunity_type: parsedTitle.opportunity_type,
+    title_subcategory: parsedTitle.title_subcategory,
+    title_product: parsedTitle.title_product || String(opportunity?.title || "").trim(),
+    estimated_value: opportunity?.estimated_value
+  });
+  const opportunityItems = ensureProposalItems(parsedItems, fallbackPrimaryItem);
+  const primaryItem = opportunityItems[0] || fallbackPrimaryItem;
+  const proposalType = normalizeProposalType(primaryItem.opportunity_type || parsedTitle.opportunity_type);
+  const templateProfile = resolveProposalTemplateProfile({
+    proposalType,
+    product: primaryItem.title_product
+  });
   const preferredContact = pickPreferredContact(contacts);
   const today = new Date().toISOString().slice(0, 10);
-  const totalValue = Number(linkedOrder?.total_amount ?? opportunity?.estimated_value ?? 0);
+  const itemsTotalValue = opportunityItems.reduce((acc, entry) => acc + Number(entry.estimated_value || 0), 0);
+  const totalValue = Number(linkedOrder?.total_amount ?? opportunity?.estimated_value ?? itemsTotalValue ?? 0);
 
   return {
     opportunity_id: opportunity?.id || "",
@@ -471,8 +820,11 @@ function createProposalDraft({ opportunity, linkedOrder, contacts }) {
     issue_date: today,
     validity_days: "7",
     proposal_type: proposalType,
-    category: parsedTitle.title_subcategory || "",
-    product: parsedTitle.title_product || String(opportunity?.title || "").trim(),
+    category: primaryItem.title_subcategory || "",
+    product: primaryItem.title_product || String(opportunity?.title || "").trim(),
+    opportunity_items: opportunityItems,
+    template_profile_key: templateProfile.key,
+    template_profile_label: templateProfile.label,
     estimated_value: Number.isFinite(totalValue) ? totalValue : 0,
     payment_terms: "50% de entrada e 50% na entrega/instalacao.",
     delivery_terms: "Entrega em ate 15 dias uteis apos aprovacao.",
@@ -484,7 +836,7 @@ function createProposalDraft({ opportunity, linkedOrder, contacts }) {
     client_whatsapp: formatBrazilPhone(preferredContact?.whatsapp || preferredContact?.phone || opportunity?.companies?.phone || ""),
     send_channel: "whatsapp",
     enable_send: false,
-    template_body: getStoredProposalTemplate(proposalType)
+    template_body: getStoredProposalTemplate(templateProfile)
   };
 }
 
@@ -593,8 +945,30 @@ export default function PipelineModule({
     return grouped;
   }, [items]);
 
+  const proposalItemsForDocument = useMemo(() => {
+    if (!proposalEditor) return [];
+    const fallbackItem = normalizeOpportunityItem({
+      opportunity_type: proposalEditor.proposal_type,
+      title_subcategory: proposalEditor.category,
+      title_product: proposalEditor.product,
+      estimated_value: proposalEditor.estimated_value
+    });
+    return ensureProposalItems(proposalEditor.opportunity_items, fallbackItem);
+  }, [proposalEditor]);
+
+  const proposalTemplateProfile = useMemo(() => {
+    if (!proposalEditor) return null;
+    return resolveProposalTemplateProfile({
+      proposalType: proposalEditor.proposal_type,
+      product: proposalEditor.product
+    });
+  }, [proposalEditor?.proposal_type, proposalEditor?.product]);
+
   const proposalVariables = useMemo(() => {
     if (!proposalEditor) return {};
+    const itemsTotal = proposalItemsForDocument.reduce((acc, entry) => acc + Number(entry.estimated_value || 0), 0);
+    const explicitValue = toPositiveMoneyNumber(proposalEditor.estimated_value);
+    const totalValue = explicitValue > 0 ? explicitValue : itemsTotal;
     return {
       numero_proposta: proposalEditor.proposal_number,
       cliente_nome: proposalEditor.client_name,
@@ -604,13 +978,16 @@ export default function PipelineModule({
       validade_dias: proposalEditor.validity_days,
       categoria: proposalEditor.category,
       produto: proposalEditor.product,
-      valor_total: brl(proposalEditor.estimated_value),
+      valor_total: brl(totalValue),
+      itens_oportunidade: buildProposalItemsListText(proposalItemsForDocument),
+      resumo_itens: buildProposalItemsSummaryText(proposalItemsForDocument) || "Sem itens detalhados.",
+      quantidade_itens: String(proposalItemsForDocument.length),
       condicoes_pagamento: proposalEditor.payment_terms,
       prazo_entrega: proposalEditor.delivery_terms,
       garantia: proposalEditor.warranty_terms,
       observacoes: proposalEditor.notes || "Sem observacoes adicionais."
     };
-  }, [items, proposalEditor]);
+  }, [items, proposalEditor, proposalItemsForDocument]);
 
   const renderedProposalText = useMemo(() => {
     if (!proposalEditor) return "";
@@ -624,9 +1001,12 @@ export default function PipelineModule({
       companyName:
         items.find((item) => item.id === proposalEditor.opportunity_id)?.companies?.trade_name || proposalEditor.client_name,
       renderedText: renderedProposalText,
-      logoDataUrl: proposalLogoDataUrl
+      logoDataUrl: proposalLogoDataUrl,
+      issueDate: proposalEditor.issue_date,
+      validityDays: proposalEditor.validity_days,
+      items: proposalItemsForDocument
     });
-  }, [items, proposalEditor, renderedProposalText, proposalLogoDataUrl]);
+  }, [items, proposalEditor, renderedProposalText, proposalLogoDataUrl, proposalItemsForDocument]);
   const hasArtPrinterLogo = Boolean(proposalLogoDataUrl);
 
   async function loadUsersContext() {
@@ -1135,7 +1515,19 @@ export default function PipelineModule({
   }
 
   function handleProposalField(field, value) {
-    setProposalEditor((prev) => (prev ? { ...prev, [field]: value } : prev));
+    setProposalEditor((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, [field]: value };
+      if (field === "proposal_type" || field === "product") {
+        const nextProfile = resolveProposalTemplateProfile({
+          proposalType: next.proposal_type,
+          product: next.product
+        });
+        next.template_profile_key = nextProfile.key;
+        next.template_profile_label = nextProfile.label;
+      }
+      return next;
+    });
   }
 
   function handleProposalContactChange(contactId) {
@@ -1153,21 +1545,88 @@ export default function PipelineModule({
   }
 
   function handleSaveProposalTemplate() {
-    if (!proposalEditor || typeof window === "undefined") return;
-    window.localStorage.setItem(PROPOSAL_TEMPLATE_STORAGE_KEY, proposalEditor.template_body || DEFAULT_PROPOSAL_TEMPLATE);
-    setSuccess("Modelo de proposta salvo como padrao neste navegador.");
+    if (!proposalEditor) return;
+    const profile = resolveProposalTemplateProfile({
+      proposalType: proposalEditor.proposal_type,
+      product: proposalEditor.product
+    });
+    saveStoredProposalTemplate(profile.key, proposalEditor.template_body || profile.template);
+    setSuccess(`Modelo salvo como padrao para ${profile.label.toLowerCase()}.`);
+  }
+
+  function handleApplyRecommendedTemplate() {
+    if (!proposalEditor) return;
+    const profile = resolveProposalTemplateProfile({
+      proposalType: proposalEditor.proposal_type,
+      product: proposalEditor.product
+    });
+    setProposalEditor((prev) =>
+      prev
+        ? {
+            ...prev,
+            template_profile_key: profile.key,
+            template_profile_label: profile.label,
+            template_body: getStoredProposalTemplate(profile)
+          }
+        : prev
+    );
+    setSuccess(`Template recomendado aplicado (${profile.label}).`);
   }
 
   function handleApplyRdTemplate() {
     if (!proposalEditor) return;
     const typeLabel = proposalTypeLabel(proposalEditor.proposal_type);
-    setProposalEditor((prev) => (prev ? { ...prev, template_body: getRdTemplateByType(prev.proposal_type) } : prev));
+    setProposalEditor((prev) =>
+      prev
+        ? {
+            ...prev,
+            template_profile_key: `type:${normalizeProposalType(prev.proposal_type)}`,
+            template_profile_label: `Tipo: ${typeLabel}`,
+            template_body: getRdTemplateByType(prev.proposal_type)
+          }
+        : prev
+    );
     setSuccess(`Template RD (${typeLabel}) aplicado nesta proposta.`);
   }
 
   function handleApplyBasicTemplate() {
-    setProposalEditor((prev) => (prev ? { ...prev, template_body: BASIC_PROPOSAL_TEMPLATE } : prev));
+    setProposalEditor((prev) =>
+      prev
+        ? {
+            ...prev,
+            template_profile_key: "basic",
+            template_profile_label: "Basico",
+            template_body: BASIC_PROPOSAL_TEMPLATE
+          }
+        : prev
+    );
     setSuccess("Template basico aplicado nesta proposta.");
+  }
+
+  async function handleProposalLogoUpload(event) {
+    const file = event?.target?.files?.[0];
+    if (!file) return;
+    if (!String(file.type || "").startsWith("image/")) {
+      setError("Selecione um arquivo de imagem valido para o logo.");
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      const dataUrl = await blobToDataUrl(file);
+      if (!String(dataUrl || "").startsWith("data:image/")) {
+        throw new Error("Arquivo de imagem invalido.");
+      }
+      setProposalLogoDataUrl(dataUrl);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(PROPOSAL_LOGO_STORAGE_KEY, dataUrl);
+      }
+      setSuccess("Logo do papel timbrado atualizado para esta proposta.");
+    } catch (err) {
+      setError(err.message || "Falha ao carregar logo.");
+    } finally {
+      event.target.value = "";
+    }
   }
 
   function handleSaveProposalDoc() {
@@ -1751,15 +2210,26 @@ export default function PipelineModule({
                   onChange={(event) => handleProposalField("template_body", event.target.value)}
                 />
                 <p className="proposal-placeholder-help">
+                  Template recomendado:{" "}
+                  <strong>{proposalTemplateProfile?.label || proposalEditor.template_profile_label || "Tipo padrao"}</strong>
+                  {" · "}
+                  {proposalItemsForDocument.length} item(ns) na oportunidade.
+                </p>
+                <p className="proposal-placeholder-help">
                   Placeholders:{" "}
                   <code>{"{{numero_proposta}}"}</code>, <code>{"{{cliente_nome}}"}</code>,{" "}
                   <code>{"{{empresa_nome}}"}</code>, <code>{"{{data_emissao}}"}</code>,{" "}
                   <code>{"{{validade_dias}}"}</code>, <code>{"{{categoria}}"}</code>,{" "}
                   <code>{"{{produto}}"}</code>, <code>{"{{valor_total}}"}</code>,{" "}
+                  <code>{"{{itens_oportunidade}}"}</code>, <code>{"{{resumo_itens}}"}</code>,{" "}
+                  <code>{"{{quantidade_itens}}"}</code>,{" "}
                   <code>{"{{condicoes_pagamento}}"}</code>, <code>{"{{prazo_entrega}}"}</code>,{" "}
                   <code>{"{{garantia}}"}</code>, <code>{"{{observacoes}}"}</code>
                 </p>
                 <div className="inline-actions">
+                  <button type="button" className="btn-ghost" onClick={handleApplyRecommendedTemplate}>
+                    Aplicar recomendado
+                  </button>
                   <button type="button" className="btn-ghost" onClick={handleApplyRdTemplate}>
                     Aplicar template RD
                   </button>
@@ -1778,10 +2248,13 @@ export default function PipelineModule({
                 </div>
                 {!hasArtPrinterLogo ? (
                   <p className="warning-text proposal-warning">
-                    Logo da Art Printer nao encontrado. Adicione em{" "}
-                    <code>frontend/public/logo-art-printer.jpeg</code> ou <code>logo-art-printer.png</code>.
+                    Logo da Art Printer nao encontrado. Envie abaixo o logo para aplicar no papel timbrado.
                   </p>
                 ) : null}
+                <label className="settings-field">
+                  <span>Logo timbrado (JPG/PNG)</span>
+                  <input type="file" accept="image/png,image/jpeg,image/jpg,image/webp" onChange={handleProposalLogoUpload} />
+                </label>
                 <label className="checkbox-inline">
                   <input
                     type="checkbox"
@@ -1821,6 +2294,7 @@ export default function PipelineModule({
                   <strong>art printer</strong>
                 )}
               </div>
+              <p className="muted">Itens da oportunidade: {proposalItemsForDocument.length}</p>
               <pre>{renderedProposalText}</pre>
             </aside>
           </div>
