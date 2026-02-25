@@ -53,6 +53,16 @@ const RD_SOUTH_STATE_SCOPE_OPTIONS = [
   { value: "PR", label: "Apenas PR", states: ["PR"] },
   { value: "RS", label: "Apenas RS", states: ["RS"] }
 ];
+const RD_DEAL_STAGE_FILTER_OPTIONS = [
+  { value: "", label: "Todas as etapas" },
+  { value: "lead", label: "LEAD" },
+  { value: "qualificacao", label: "QUALIFICAÇÃO" },
+  { value: "proposta", label: "PROPOSTA" },
+  { value: "follow_up", label: "FOLLOW-UP" },
+  { value: "stand_by", label: "STAND-BY" },
+  { value: "ganho", label: "GANHO" },
+  { value: "perdido", label: "PERDIDO" }
+];
 
 const EMPTY_STAGE_FORM = {
   name: "",
@@ -76,7 +86,9 @@ const EMPTY_RD_FORM = {
   dry_run: false,
   south_cnpj_only: true,
   south_state_scope: "SC_PR_RS",
-  sync_customers_only: true
+  sync_customers_only: true,
+  deal_stage_filter: "",
+  deals_limit: "0"
 };
 
 const USER_ROLE_OPTIONS = [
@@ -378,6 +390,8 @@ function readRdFormStorage() {
     const parsed = asObject(JSON.parse(raw));
     const southStateScopeRaw = String(parsed.south_state_scope || EMPTY_RD_FORM.south_state_scope);
     const southStateScopeValid = RD_SOUTH_STATE_SCOPE_OPTIONS.some((item) => item.value === southStateScopeRaw);
+    const dealStageFilterRaw = String(parsed.deal_stage_filter || EMPTY_RD_FORM.deal_stage_filter);
+    const dealStageFilterValid = RD_DEAL_STAGE_FILTER_OPTIONS.some((item) => item.value === dealStageFilterRaw);
     return {
       access_token: String(parsed.access_token || ""),
       api_url: String(parsed.api_url || EMPTY_RD_FORM.api_url),
@@ -388,7 +402,9 @@ function readRdFormStorage() {
         parsed.south_cnpj_only === undefined ? Boolean(EMPTY_RD_FORM.south_cnpj_only) : Boolean(parsed.south_cnpj_only),
       south_state_scope: southStateScopeValid ? southStateScopeRaw : EMPTY_RD_FORM.south_state_scope,
       sync_customers_only:
-        parsed.sync_customers_only === undefined ? Boolean(EMPTY_RD_FORM.sync_customers_only) : Boolean(parsed.sync_customers_only)
+        parsed.sync_customers_only === undefined ? Boolean(EMPTY_RD_FORM.sync_customers_only) : Boolean(parsed.sync_customers_only),
+      deal_stage_filter: dealStageFilterValid ? dealStageFilterRaw : EMPTY_RD_FORM.deal_stage_filter,
+      deals_limit: String(parsed.deals_limit || EMPTY_RD_FORM.deals_limit)
     };
   } catch {
     return EMPTY_RD_FORM;
@@ -1638,6 +1654,8 @@ export default function SettingsModule() {
     const southStateScope = String(rdForm.south_state_scope || EMPTY_RD_FORM.south_state_scope);
     const selectedSouthStates = southCnpjOnly ? resolveSouthStates(southStateScope) : [];
     const syncScope = southCnpjOnly ? "south_cnpj_only" : rdForm.sync_customers_only ? "customers_whatsapp_only" : "full";
+    const dealStageFilter = syncScope === "full" ? String(rdForm.deal_stage_filter || "").trim() : "";
+    const dealsLimit = syncScope === "full" ? clampInteger(rdForm.deals_limit, 0, 500, 0) : 0;
     const estimatedResources = syncScope === "full" ? 3 : syncScope === "customers_whatsapp_only" ? 2 : 1;
     const maxRoundsBudget = Math.min(
       900,
@@ -1651,6 +1669,8 @@ export default function SettingsModule() {
       page_chunk_size: dryRun ? RD_SYNC_PAGE_CHUNK_DRY_RUN : RD_SYNC_PAGE_CHUNK_LIVE,
       dry_run: dryRun,
       sync_scope: syncScope,
+      deal_stage_filter: dealStageFilter || null,
+      deals_limit: dealsLimit || null,
       allowed_states: selectedSouthStates
     };
 
@@ -1676,6 +1696,7 @@ export default function SettingsModule() {
         opportunities_created: 0,
         opportunities_updated: 0,
         opportunities_skipped_by_scope: 0,
+        opportunities_skipped_by_stage_filter: 0,
         links_updated: 0,
         skipped_without_identifier: 0,
         skipped_without_cnpj: 0,
@@ -1689,6 +1710,8 @@ export default function SettingsModule() {
         records_per_page: payload.records_per_page,
         dry_run: payload.dry_run,
         sync_scope: payload.sync_scope,
+        deal_stage_filter: payload.deal_stage_filter,
+        deals_limit: payload.deals_limit,
         allowed_states: payload.allowed_states
       };
 
@@ -1751,12 +1774,19 @@ export default function SettingsModule() {
         aggregate.opportunities_created += Number(safeResult.opportunities_created || 0);
         aggregate.opportunities_updated += Number(safeResult.opportunities_updated || 0);
         aggregate.opportunities_skipped_by_scope += Number(safeResult.opportunities_skipped_by_scope || 0);
+        aggregate.opportunities_skipped_by_stage_filter += Number(safeResult.opportunities_skipped_by_stage_filter || 0);
         aggregate.links_updated += Number(safeResult.links_updated || 0);
         aggregate.skipped_without_identifier += Number(safeResult.skipped_without_identifier || 0);
         aggregate.skipped_without_cnpj += Number(safeResult.skipped_without_cnpj || 0);
         aggregate.skipped_invalid_payload += Number(safeResult.skipped_invalid_payload || 0);
         if (safeResult.sync_scope) {
           aggregate.sync_scope = String(safeResult.sync_scope || aggregate.sync_scope);
+        }
+        if (safeResult.deal_stage_filter !== undefined) {
+          aggregate.deal_stage_filter = safeResult.deal_stage_filter || null;
+        }
+        if (safeResult.deals_limit !== undefined) {
+          aggregate.deals_limit = safeResult.deals_limit || null;
         }
         const resultAllowedStates = sanitizeAllowedStates(safeResult.allowed_states);
         if (resultAllowedStates.length) {
@@ -1848,6 +1878,7 @@ export default function SettingsModule() {
 
   const rdSouthOnlySelected = Boolean(rdForm.south_cnpj_only);
   const rdCustomersOnlySelected = Boolean(rdForm.sync_customers_only);
+  const rdFullSyncSelected = !rdSouthOnlySelected && !rdCustomersOnlySelected;
   const rdScopeValue = String(rdResultSummary.sync_scope || "").trim().toLowerCase();
   const rdScopeSouthOnly = rdScopeValue === "south_cnpj_only";
   const rdScopeCustomersOnly = rdScopeValue === "customers_whatsapp_only";
@@ -3396,6 +3427,59 @@ export default function SettingsModule() {
             Sincronizar apenas clientes por CNPJ + contatos com WhatsApp vinculado (ignora duplicados)
           </label>
 
+          {rdFullSyncSelected ? (
+            <>
+              <div className="settings-omie-grid">
+                <label className="settings-field">
+                  <span>Filtrar oportunidades por etapa (opcional)</span>
+                  <select
+                    value={String(rdForm.deal_stage_filter || EMPTY_RD_FORM.deal_stage_filter)}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setRdForm((prev) => ({ ...prev, deal_stage_filter: value }));
+                      setRdResumeCursor(null);
+                    }}
+                  >
+                    {RD_DEAL_STAGE_FILTER_OPTIONS.map((option) => (
+                      <option key={option.value || "all"} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="settings-field">
+                  <span>Limite de oportunidades processadas (0 = sem limite)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={500}
+                    value={String(rdForm.deals_limit || EMPTY_RD_FORM.deals_limit)}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setRdForm((prev) => ({ ...prev, deals_limit: value }));
+                      setRdResumeCursor(null);
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div className="inline-actions">
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => {
+                    setRdForm((prev) => ({ ...prev, deal_stage_filter: "follow_up", deals_limit: "6", dry_run: true }));
+                    setRdResumeCursor(null);
+                    setRdSuccess("Modo teste curto preparado: FOLLOW-UP com limite de 6 oportunidades.");
+                  }}
+                  disabled={rdSyncing}
+                >
+                  Preparar teste curto (FOLLOW-UP, 6)
+                </button>
+              </div>
+            </>
+          ) : null}
+
           <div className="inline-actions">
             <button type="submit" className="btn-primary" disabled={rdSyncing}>
               {rdSyncing ? "Sincronizando..." : "Sincronizar RD Station CRM"}
@@ -3439,6 +3523,12 @@ export default function SettingsModule() {
               <span className="kpi-label">Empresas já existentes</span>
               <strong className="kpi-value">{Number(rdResultSummary.companies_skipped_existing || 0)}</strong>
             </article>
+            {Number(rdResultSummary.opportunities_skipped_by_stage_filter || 0) > 0 ? (
+              <article className="kpi-card">
+                <span className="kpi-label">Oportunidades fora do filtro</span>
+                <strong className="kpi-value">{Number(rdResultSummary.opportunities_skipped_by_stage_filter || 0)}</strong>
+              </article>
+            ) : null}
           </div>
         ) : null}
         {rdResult && rdResultSummary.dry_run ? (
@@ -3469,6 +3559,11 @@ export default function SettingsModule() {
                 const errorMessage = String(job.error_message || "").trim();
                 const dryRunFlag = Boolean(result.dry_run ?? payload.dry_run);
                 const syncScopeValue = String(result.sync_scope || payload.sync_scope || "").trim().toLowerCase();
+                const dealStageFilterValue = String(result.deal_stage_filter || payload.deal_stage_filter || "").trim();
+                const dealStageFilterLabel = RD_DEAL_STAGE_FILTER_OPTIONS.find(
+                  (option) => option.value === dealStageFilterValue
+                )?.label;
+                const dealsLimitValue = Number(result.deals_limit ?? payload.deals_limit ?? 0);
                 const allowedStatesValue = sanitizeAllowedStates(result.allowed_states ?? payload.allowed_states);
                 const allowedStatesLabel = formatAllowedStatesLabel(allowedStatesValue);
                 const hasMoreFlag = parseBoolean(result.has_more ?? payload.has_more, false);
@@ -3484,7 +3579,9 @@ export default function SettingsModule() {
                         : "";
                 const syncScopeLabel =
                   syncScopeValue === "full"
-                    ? "Importação completa"
+                    ? `Importação completa${
+                        dealStageFilterValue ? ` · etapa ${dealStageFilterLabel || dealStageFilterValue}` : ""
+                      }${dealsLimitValue > 0 ? ` · limite ${dealsLimitValue}` : ""}`
                     : syncScopeValue === "south_cnpj_only"
                       ? `CNPJ novos ${allowedStatesLabel}`
                       : "Clientes + WhatsApp";

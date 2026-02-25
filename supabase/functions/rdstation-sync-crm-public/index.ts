@@ -1321,6 +1321,21 @@ function mapOpportunityStage(stage: unknown, status: string) {
   return "lead";
 }
 
+function resolveDealStageFilter(value: unknown) {
+  const normalized = normalizeText(value).replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!normalized || normalized === "all" || normalized === "todas" || normalized === "todas as etapas") {
+    return "";
+  }
+  if (normalized.includes("lead")) return "lead";
+  if (normalized.includes("qualif")) return "qualificacao";
+  if (normalized.includes("propost") || normalized.includes("proposal")) return "proposta";
+  if (normalized.includes("follow")) return "follow_up";
+  if (normalized.includes("stand") || normalized.includes("espera")) return "stand_by";
+  if (normalized.includes("ganh") || normalized.includes("won")) return "ganho";
+  if (normalized.includes("perd") || normalized.includes("lost")) return "perdido";
+  return "";
+}
+
 function isRetriableHttpStatus(status: number) {
   return [408, 425, 429, 500, 502, 503, 504].includes(status);
 }
@@ -2248,6 +2263,25 @@ Deno.serve(async (request: Request) => {
   const syncScope = resolveSyncScope(body.sync_scope ?? body.syncScope);
   const includeContacts = syncScope !== "south_cnpj_only";
   const includeDeals = syncScope === "full";
+  const dealStageFilter = includeDeals
+    ? resolveDealStageFilter(
+        body.deal_stage_filter ??
+          body.dealStageFilter ??
+          body.opportunity_stage_filter ??
+          body.opportunityStageFilter
+      )
+    : "";
+  const dealsLimit = includeDeals
+    ? clampNumber(
+        body.deals_limit ??
+          body.dealsLimit ??
+          body.opportunities_limit ??
+          body.opportunitiesLimit,
+        0,
+        500,
+        0
+      )
+    : 0;
   const allowedStates = parseUfFilter(
     body.allowed_states ?? body.allowedStates,
     syncScope === "south_cnpj_only" ? DEFAULT_SOUTH_UF_FILTER : []
@@ -2290,6 +2324,8 @@ Deno.serve(async (request: Request) => {
           api_url: apiUrl,
           auth_mode: authState.mode,
           sync_scope: syncScope,
+          deal_stage_filter: dealStageFilter || null,
+          deals_limit: dealsLimit || null,
           allowed_states: Array.from(allowedStates),
           dry_run: dryRun,
         records_per_page: recordsPerPage,
@@ -2335,6 +2371,7 @@ Deno.serve(async (request: Request) => {
       opportunities_created: 0,
       opportunities_updated: 0,
       opportunities_skipped_by_scope: 0,
+      opportunities_skipped_by_stage_filter: 0,
       links_updated: 0,
       skipped_without_identifier: 0,
       skipped_without_cnpj: 0,
@@ -2365,6 +2402,8 @@ Deno.serve(async (request: Request) => {
         ...summary,
         operation: "enrich_missing_companies_only",
         sync_scope: syncScope,
+        deal_stage_filter: dealStageFilter || null,
+        deals_limit: dealsLimit || null,
         allowed_states: Array.from(allowedStates),
         api_url: apiUrl,
         api_url_used: null,
@@ -2443,6 +2482,7 @@ Deno.serve(async (request: Request) => {
       pagesProcessedInRun += 1;
       summary.pages_processed = getResourceCount(summary, "pages_processed") + 1;
       summary.records_received = getResourceCount(summary, "records_received") + pageResult.items.length;
+      let stopAfterDealsLimit = false;
 
       for (const rawItem of pageResult.items) {
         try {
@@ -2474,7 +2514,22 @@ Deno.serve(async (request: Request) => {
             continue;
           }
 
+          if (dealsLimit > 0 && getResourceCount(summary, "opportunities_processed") >= dealsLimit) {
+            stopReason = "deals_limit";
+            state.resource_index = RESOURCE_ORDER.length;
+            stopAfterDealsLimit = true;
+            break;
+          }
+
           const parsed = parseDeal(rawItem);
+          const mappedStatus = mapOpportunityStatus(parsed.statusRaw);
+          const mappedStage = mapOpportunityStage(parsed.stageRaw, mappedStatus);
+          if (dealStageFilter && mappedStage !== dealStageFilter) {
+            summary.opportunities_skipped_by_stage_filter =
+              getResourceCount(summary, "opportunities_skipped_by_stage_filter") + 1;
+            continue;
+          }
+
           await upsertOpportunityFromDeal({
             supabase,
             deal: parsed,
@@ -2483,11 +2538,22 @@ Deno.serve(async (request: Request) => {
             companyMap
           });
           summary.processed = getResourceCount(summary, "processed") + 1;
+
+          if (dealsLimit > 0 && getResourceCount(summary, "opportunities_processed") >= dealsLimit) {
+            stopReason = "deals_limit";
+            state.resource_index = RESOURCE_ORDER.length;
+            stopAfterDealsLimit = true;
+            break;
+          }
         } catch (itemError) {
           const message = itemError instanceof Error ? itemError.message : "Falha ao processar item do RD Station.";
           appendError(summary, `${resource}: ${message}`);
           summary.skipped_invalid_payload = getResourceCount(summary, "skipped_invalid_payload") + 1;
         }
+      }
+
+      if (stopAfterDealsLimit) {
+        break;
       }
 
       if (pageResult.hasNext && page < requestedMaxPages) {
@@ -2526,6 +2592,8 @@ Deno.serve(async (request: Request) => {
     const resultPayload: AnyRecord = {
       ...summary,
       sync_scope: syncScope,
+      deal_stage_filter: dealStageFilter || null,
+      deals_limit: dealsLimit || null,
       allowed_states: Array.from(allowedStates),
       api_url: apiUrl,
       api_url_used: authState.apiUrl,
