@@ -1305,6 +1305,10 @@ function parseDeal(itemRaw: unknown) {
     contactExternalId = pickFirstNonEmpty(asObject(contacts[0]), ["id", "uuid", "contact_id"]);
   }
 
+  const pipelineIdRaw =
+    pickFirstNonEmpty(row, ["pipeline_id", "funnel_id", "deal_pipeline_id", "deal_funnel_id"]) ||
+    pickFirstNonEmpty(pipelineObject, ["id", "uuid", "pipeline_id", "funnel_id"]);
+
   const amount = parseNumber(
     row.amount ??
       row.value ??
@@ -1434,6 +1438,7 @@ function parseDeal(itemRaw: unknown) {
     statusRaw,
     stageRaw,
     pipelineRaw,
+    pipelineIdRaw,
     expectedCloseDate
   };
 }
@@ -1770,6 +1775,15 @@ async function fetchResourcePage({
 
 function getResourceCount(summary: AnyRecord, key: string) {
   return Number(summary[key] || 0);
+}
+
+function appendUniqueSummarySample(summary: AnyRecord, key: string, value: unknown, maxItems = 20) {
+  const sample = safeString(value);
+  if (!sample) return;
+  const current = Array.isArray(summary[key]) ? (summary[key] as unknown[]).map((item) => safeString(item)) : [];
+  if (current.includes(sample)) return;
+  current.push(sample);
+  summary[key] = current.slice(0, Math.max(1, maxItems));
 }
 
 async function upsertIntegrationLink({
@@ -2855,6 +2869,7 @@ Deno.serve(async (request: Request) => {
       opportunities_skipped_by_scope: 0,
       opportunities_skipped_by_pipeline_filter: 0,
       opportunities_skipped_by_stage_filter: 0,
+      opportunities_pipeline_samples: [],
       links_updated: 0,
       skipped_without_identifier: 0,
       skipped_without_cnpj: 0,
@@ -3007,6 +3022,12 @@ Deno.serve(async (request: Request) => {
           }
 
           const parsed = parseDeal(rawItem);
+          appendUniqueSummarySample(
+            summary,
+            "opportunities_pipeline_samples",
+            `pipeline_id=${safeString(parsed.pipelineIdRaw) || "-"} | pipeline=${safeString(parsed.pipelineRaw) || "-"} | stage=${safeString(parsed.stageRaw) || "-"}`,
+            30
+          );
           if (dealPipelineFilter && !matchDealPipelineFilter(parsed.pipelineRaw, dealPipelineFilter, parsed.stageRaw)) {
             summary.opportunities_skipped_by_pipeline_filter =
               getResourceCount(summary, "opportunities_skipped_by_pipeline_filter") + 1;
