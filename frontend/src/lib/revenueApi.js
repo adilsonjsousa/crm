@@ -2735,6 +2735,36 @@ export async function syncOmieCustomers(payload) {
   return data || {};
 }
 
+async function readFunctionInvokeErrorDetails(error) {
+  const statusFromContext = Number(error?.context?.status || 0);
+  const statusFromError = Number(error?.status || 0);
+  const status = Number.isFinite(statusFromContext) && statusFromContext > 0 ? statusFromContext : statusFromError;
+  const message = String(error?.message || "").trim();
+  let payloadMessage = "";
+
+  const context = error?.context;
+  if (context && typeof context === "object") {
+    try {
+      const response = typeof context.clone === "function" ? context.clone() : context;
+      if (response && typeof response.json === "function") {
+        const parsed = asObject(await response.json());
+        payloadMessage = String(parsed.message || parsed.error || "").trim();
+      }
+      if (!payloadMessage && response && typeof response.text === "function") {
+        payloadMessage = String((await response.text()) || "").trim();
+      }
+    } catch {
+      payloadMessage = "";
+    }
+  }
+
+  return {
+    status: Number.isFinite(status) ? status : 0,
+    message,
+    payloadMessage
+  };
+}
+
 export async function syncRdStationCrm(payload) {
   const supabase = ensureSupabase();
   const body = asObject(payload);
@@ -2744,8 +2774,20 @@ export async function syncRdStationCrm(payload) {
   });
 
   if (error) {
-    const message = String(error?.message || "");
-    if (message.toLowerCase().includes("non-2xx")) {
+    const details = await readFunctionInvokeErrorDetails(error);
+    const message = String(details.message || "").toLowerCase();
+    const payloadMessage = String(details.payloadMessage || "");
+
+    if (details.status === 401 || details.status === 403) {
+      throw new Error("Sua sessão expirou ou não tem permissão para sincronizar RD. Faça login novamente e tente de novo.");
+    }
+
+    if (payloadMessage) {
+      throw new Error(payloadMessage);
+    }
+
+    const isTimeoutStatus = [408, 502, 503, 504, 524, 546].includes(Number(details.status || 0));
+    if (message.includes("non-2xx") && isTimeoutStatus) {
       throw new Error(
         "A sincronização RD Station excedeu o tempo limite deste lote. O sistema fará nova tentativa em lotes menores."
       );

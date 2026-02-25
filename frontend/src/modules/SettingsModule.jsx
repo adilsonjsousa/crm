@@ -1695,6 +1695,7 @@ export default function SettingsModule() {
         contacts_skipped_by_scope: 0,
         opportunities_created: 0,
         opportunities_updated: 0,
+        opportunities_matched_by_similarity: 0,
         opportunities_skipped_by_scope: 0,
         opportunities_skipped_by_stage_filter: 0,
         links_updated: 0,
@@ -1773,6 +1774,7 @@ export default function SettingsModule() {
         aggregate.contacts_skipped_by_scope += Number(safeResult.contacts_skipped_by_scope || 0);
         aggregate.opportunities_created += Number(safeResult.opportunities_created || 0);
         aggregate.opportunities_updated += Number(safeResult.opportunities_updated || 0);
+        aggregate.opportunities_matched_by_similarity += Number(safeResult.opportunities_matched_by_similarity || 0);
         aggregate.opportunities_skipped_by_scope += Number(safeResult.opportunities_skipped_by_scope || 0);
         aggregate.opportunities_skipped_by_stage_filter += Number(safeResult.opportunities_skipped_by_stage_filter || 0);
         aggregate.links_updated += Number(safeResult.links_updated || 0);
@@ -3527,6 +3529,12 @@ export default function SettingsModule() {
               <article className="kpi-card">
                 <span className="kpi-label">Oportunidades fora do filtro</span>
                 <strong className="kpi-value">{Number(rdResultSummary.opportunities_skipped_by_stage_filter || 0)}</strong>
+              </article>
+            ) : null}
+            {Number(rdResultSummary.opportunities_matched_by_similarity || 0) > 0 ? (
+              <article className="kpi-card">
+                <span className="kpi-label">Conciliação por similaridade</span>
+                <strong className="kpi-value">{Number(rdResultSummary.opportunities_matched_by_similarity || 0)}</strong>
               </article>
             ) : null}
           </div>

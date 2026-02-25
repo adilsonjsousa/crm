@@ -85,6 +85,42 @@ const BRAZIL_UF_BY_NAME: Record<string, string> = {
   sergipe: "SE",
   tocantins: "TO"
 };
+const OPPORTUNITY_TITLE_STOPWORDS = new Set([
+  "a",
+  "as",
+  "o",
+  "os",
+  "da",
+  "das",
+  "de",
+  "do",
+  "dos",
+  "e",
+  "em",
+  "na",
+  "nas",
+  "no",
+  "nos",
+  "para",
+  "por",
+  "com",
+  "sem",
+  "novo",
+  "nova",
+  "novos",
+  "novas",
+  "equipamento",
+  "equipamentos",
+  "maquina",
+  "maquinas",
+  "impressora",
+  "impressoras",
+  "proposta",
+  "comercial"
+]);
+const OPPORTUNITY_MATCH_SCORE_THRESHOLD = 0.74;
+const OPPORTUNITY_MATCH_SCORE_STAGE_ASSISTED = 0.64;
+const OPPORTUNITY_MATCH_AMBIGUITY_GAP = 0.06;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1336,6 +1372,83 @@ function resolveDealStageFilter(value: unknown) {
   return "";
 }
 
+function normalizeLooseOpportunityTitle(value: unknown) {
+  return normalizeText(value)
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeOpportunityTitle(value: unknown) {
+  const normalized = normalizeLooseOpportunityTitle(value);
+  if (!normalized) return [];
+  return normalized
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token && (token.length > 1 || /\d/.test(token)))
+    .filter((token) => !OPPORTUNITY_TITLE_STOPWORDS.has(token));
+}
+
+function computeTokenDiceScore(aTokens: string[], bTokens: string[]) {
+  if (!aTokens.length || !bTokens.length) return 0;
+  const counts = new Map<string, number>();
+  for (const token of aTokens) {
+    counts.set(token, (counts.get(token) || 0) + 1);
+  }
+  let shared = 0;
+  for (const token of bTokens) {
+    const current = counts.get(token) || 0;
+    if (current > 0) {
+      shared += 1;
+      counts.set(token, current - 1);
+    }
+  }
+  return (2 * shared) / (aTokens.length + bTokens.length);
+}
+
+function computeOpportunityAmountSimilarity(left: unknown, right: unknown) {
+  const leftValue = parseNumber(left);
+  const rightValue = parseNumber(right);
+  if (!(leftValue > 0) || !(rightValue > 0)) return 0;
+  const minValue = Math.min(leftValue, rightValue);
+  const maxValue = Math.max(leftValue, rightValue);
+  if (maxValue <= 0) return 0;
+  return minValue / maxValue;
+}
+
+function computeOpportunityTitleSimilarity(left: unknown, right: unknown) {
+  const normalizedLeft = normalizeLooseOpportunityTitle(left);
+  const normalizedRight = normalizeLooseOpportunityTitle(right);
+  if (!normalizedLeft || !normalizedRight) return 0;
+  if (normalizedLeft === normalizedRight) return 1;
+
+  const leftTokens = tokenizeOpportunityTitle(normalizedLeft);
+  const rightTokens = tokenizeOpportunityTitle(normalizedRight);
+  const tokenDice = computeTokenDiceScore(leftTokens, rightTokens);
+
+  const compactLeft = normalizedLeft.replace(/\s+/g, "");
+  const compactRight = normalizedRight.replace(/\s+/g, "");
+  let containmentScore = 0;
+  if (compactLeft && compactRight && (compactLeft.includes(compactRight) || compactRight.includes(compactLeft))) {
+    const minLength = Math.min(compactLeft.length, compactRight.length);
+    const maxLength = Math.max(compactLeft.length, compactRight.length);
+    if (minLength >= 4 && maxLength > 0) {
+      containmentScore = minLength / maxLength;
+    }
+  }
+
+  const leftCodeTokens = new Set(
+    leftTokens.filter((token) => token.length >= 3 && /[a-z]/.test(token) && /\d/.test(token))
+  );
+  let sharedCodeTokens = 0;
+  for (const token of rightTokens) {
+    if (leftCodeTokens.has(token)) sharedCodeTokens += 1;
+  }
+  const codeBonus = sharedCodeTokens > 0 ? Math.min(0.18, 0.08 + sharedCodeTokens * 0.05) : 0;
+
+  return Math.min(1, Math.max(tokenDice, containmentScore * 0.92) + codeBonus);
+}
+
 function isRetriableHttpStatus(status: number) {
   return [408, 425, 429, 500, 502, 503, 504].includes(status);
 }
@@ -1580,6 +1693,131 @@ async function findLocalEntityIdByExternal({
     .maybeSingle();
   if (error) throw new Error(error.message || "Falha ao buscar vínculo de integração.");
   return safeString(data?.local_entity_id);
+}
+
+async function listCompanyOpportunityCandidates({
+  supabase,
+  companyId,
+  cache
+}: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  cache: Map<string, AnyRecord[]>;
+}) {
+  const normalizedCompanyId = safeString(companyId);
+  if (!normalizedCompanyId) return [];
+  if (cache.has(normalizedCompanyId)) {
+    return cache.get(normalizedCompanyId) || [];
+  }
+
+  const { data, error } = await supabase
+    .from("opportunities")
+    .select("id,title,stage,status,estimated_value,expected_close_date,company_id,primary_contact_id,created_at,updated_at")
+    .eq("company_id", normalizedCompanyId)
+    .order("updated_at", { ascending: false })
+    .limit(200);
+  if (error) throw new Error(error.message || "Falha ao listar oportunidades da empresa para conciliação.");
+
+  const rows = Array.isArray(data) ? data.map((row) => asObject(row)).filter((row) => safeString(row.id)) : [];
+  cache.set(normalizedCompanyId, rows);
+  return rows;
+}
+
+function findBestOpportunityCandidateBySimilarity({
+  dealTitle,
+  dealStage,
+  dealStatus,
+  dealAmount,
+  candidates
+}: {
+  dealTitle: string;
+  dealStage: string;
+  dealStatus: string;
+  dealAmount: number;
+  candidates: AnyRecord[];
+}) {
+  const normalizedDealTitle = safeString(dealTitle);
+  if (!normalizedDealTitle) return null;
+
+  const normalizedDealStage = safeString(dealStage);
+  const normalizedDealStatus = safeString(dealStatus);
+  const ranked: Array<{
+    row: AnyRecord;
+    score: number;
+    titleScore: number;
+    amountScore: number;
+  }> = [];
+
+  for (const candidate of candidates) {
+    const candidateTitle = safeString(candidate.title);
+    if (!candidateTitle) continue;
+
+    const titleScore = computeOpportunityTitleSimilarity(normalizedDealTitle, candidateTitle);
+    if (titleScore <= 0) continue;
+
+    const amountScore = computeOpportunityAmountSimilarity(dealAmount, candidate.estimated_value);
+    const stageBonus = safeString(candidate.stage) === normalizedDealStage ? 0.08 : 0;
+    const statusBonus = safeString(candidate.status) === normalizedDealStatus ? 0.04 : 0;
+    const score = Math.min(1, titleScore * 0.74 + amountScore * 0.14 + stageBonus + statusBonus);
+
+    ranked.push({
+      row: candidate,
+      score,
+      titleScore,
+      amountScore
+    });
+  }
+
+  ranked.sort((left, right) => right.score - left.score);
+  const best = ranked[0];
+  const secondBest = ranked[1];
+  if (!best) return null;
+
+  const stageAligned = safeString(best.row.stage) === normalizedDealStage;
+  const strongEnough =
+    best.score >= OPPORTUNITY_MATCH_SCORE_THRESHOLD ||
+    (best.score >= OPPORTUNITY_MATCH_SCORE_STAGE_ASSISTED && stageAligned && best.titleScore >= 0.6) ||
+    (best.titleScore >= 0.82 && best.amountScore >= 0.55);
+  if (!strongEnough) return null;
+
+  if (secondBest && best.score - secondBest.score < OPPORTUNITY_MATCH_AMBIGUITY_GAP) {
+    return null;
+  }
+
+  return best;
+}
+
+async function findExistingOpportunityBySimilarity({
+  supabase,
+  companyId,
+  dealTitle,
+  dealStage,
+  dealStatus,
+  dealAmount,
+  cache
+}: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  dealTitle: string;
+  dealStage: string;
+  dealStatus: string;
+  dealAmount: number;
+  cache: Map<string, AnyRecord[]>;
+}) {
+  const candidates = await listCompanyOpportunityCandidates({
+    supabase,
+    companyId,
+    cache
+  });
+  if (!candidates.length) return null;
+
+  return findBestOpportunityCandidateBySimilarity({
+    dealTitle,
+    dealStage,
+    dealStatus,
+    dealAmount,
+    candidates
+  });
 }
 
 async function findCompanyByCnpj({
@@ -2026,13 +2264,15 @@ async function upsertOpportunityFromDeal({
   deal,
   dryRun,
   summary,
-  companyMap
+  companyMap,
+  opportunityMatchCache
 }: {
   supabase: ReturnType<typeof createClient>;
   deal: AnyRecord;
   dryRun: boolean;
   summary: AnyRecord;
   companyMap: Map<string, string>;
+  opportunityMatchCache: Map<string, AnyRecord[]>;
 }) {
   const externalId = safeString(deal.externalId);
   const title = safeString(deal.title) || `Oportunidade RD ${externalId || "sem-id"}`;
@@ -2117,6 +2357,26 @@ async function upsertOpportunityFromDeal({
   };
 
   if (!existingOpportunity) {
+    const matched = await findExistingOpportunityBySimilarity({
+      supabase,
+      companyId,
+      dealTitle: title,
+      dealStage: stage,
+      dealStatus: status,
+      dealAmount: parseNumber(deal.amount),
+      cache: opportunityMatchCache
+    });
+    if (matched?.row) {
+      existingOpportunity = matched.row;
+      opportunityId = safeString(existingOpportunity.id);
+      if (opportunityId) {
+        summary.opportunities_matched_by_similarity =
+          getResourceCount(summary, "opportunities_matched_by_similarity") + 1;
+      }
+    }
+  }
+
+  if (!existingOpportunity) {
     const { data, error } = await supabase
       .from("opportunities")
       .insert(payload)
@@ -2125,6 +2385,22 @@ async function upsertOpportunityFromDeal({
     if (error) throw new Error(error.message || "Falha ao inserir oportunidade.");
     opportunityId = safeString(data?.id);
     summary.opportunities_created = getResourceCount(summary, "opportunities_created") + 1;
+    const cacheKey = safeString(companyId);
+    if (cacheKey && opportunityId) {
+      const currentRows = opportunityMatchCache.get(cacheKey) || [];
+      opportunityMatchCache.set(
+        cacheKey,
+        [
+          {
+            id: opportunityId,
+            ...payload,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          },
+          ...currentRows
+        ].slice(0, 200)
+      );
+    }
   } else {
     opportunityId = safeString(existingOpportunity.id);
     const patch = {
@@ -2370,6 +2646,7 @@ Deno.serve(async (request: Request) => {
       contacts_skipped_by_scope: 0,
       opportunities_created: 0,
       opportunities_updated: 0,
+      opportunities_matched_by_similarity: 0,
       opportunities_skipped_by_scope: 0,
       opportunities_skipped_by_stage_filter: 0,
       links_updated: 0,
@@ -2432,6 +2709,7 @@ Deno.serve(async (request: Request) => {
 
     const state = parseCursorState(cursorState, requestedMaxPages);
     const companyMap = new Map<string, string>();
+    const opportunityMatchCache = new Map<string, AnyRecord[]>();
     const deadline = Date.now() + executionGuardMs;
     let pagesProcessedInRun = 0;
     let stopReason = "completed";
@@ -2535,7 +2813,8 @@ Deno.serve(async (request: Request) => {
             deal: parsed,
             dryRun,
             summary,
-            companyMap
+            companyMap,
+            opportunityMatchCache
           });
           summary.processed = getResourceCount(summary, "processed") + 1;
 
