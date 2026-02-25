@@ -355,7 +355,7 @@ export default function TasksModule({
     status: taskDefaultsRef.current.status,
     scheduled_start_local: "",
     scheduled_end_local: "",
-    due_date: "",
+    due_date: todayYmd(),
     description: ""
   });
 
@@ -757,7 +757,7 @@ export default function TasksModule({
           description: "",
           scheduled_start_local: "",
           scheduled_end_local: "",
-          due_date: ""
+          due_date: todayYmd()
         }));
       } else {
         setForm((prev) => ({
@@ -770,7 +770,7 @@ export default function TasksModule({
           description: "",
           scheduled_start_local: "",
           scheduled_end_local: "",
-          due_date: ""
+          due_date: todayYmd()
         }));
         setCompanySearchTerm("");
       }
@@ -952,7 +952,7 @@ export default function TasksModule({
     const taskId = String(task?.id || "").trim();
     if (!taskId) return;
 
-    const confirmed = confirmStrongDelete({
+    const confirmed = await confirmStrongDelete({
       entityLabel: "a tarefa",
       itemLabel: task?.title || "Sem título"
     });

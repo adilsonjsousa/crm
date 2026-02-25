@@ -16,6 +16,10 @@ function orderTypeLabel(value) {
   return SALES_TYPES.find((item) => item.value === value)?.label || value;
 }
 
+function todayYmd() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export default function OrdersModule() {
   const [orders, setOrders] = useState([]);
   const [companies, setCompanies] = useState([]);
@@ -30,7 +34,7 @@ export default function OrdersModule() {
     title_subcategory: "",
     title_product: "",
     total_amount: "",
-    order_date: ""
+    order_date: todayYmd()
   });
 
   async function load() {
@@ -80,7 +84,7 @@ export default function OrdersModule() {
         order_type: form.order_type,
         status: form.status,
         total_amount: totalAmount,
-        order_date: form.order_date || new Date().toISOString().slice(0, 10),
+        order_date: form.order_date || todayYmd(),
         items: [
           {
             item_description: itemDescription,
@@ -96,7 +100,7 @@ export default function OrdersModule() {
         title_subcategory: "",
         title_product: "",
         total_amount: "",
-        order_date: ""
+        order_date: todayYmd()
       }));
       await load();
       setSuccess("Pedido salvo com sucesso.");
@@ -109,7 +113,7 @@ export default function OrdersModule() {
     const orderId = String(order?.id || "").trim();
     if (!orderId) return;
 
-    const confirmed = confirmStrongDelete({
+    const confirmed = await confirmStrongDelete({
       entityLabel: "o pedido",
       itemLabel: order?.order_number || orderId
     });

@@ -1013,6 +1013,10 @@ function readPipelineFormDefaults() {
   }
 }
 
+function todayYmd() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function emptyOpportunityForm(defaultCompanyId = "", defaultOwnerUserId = "", rawDefaults = null) {
   const defaults = normalizePipelineFormDefaults(rawDefaults || {});
   return {
@@ -1023,7 +1027,7 @@ function emptyOpportunityForm(defaultCompanyId = "", defaultOwnerUserId = "", ra
     title_product: "",
     stage: defaults.stage,
     estimated_value: "",
-    expected_close_date: ""
+    expected_close_date: todayYmd()
   };
 }
 
@@ -1807,7 +1811,7 @@ export default function PipelineModule({
           title_subcategory: "",
           title_product: "",
           estimated_value: "",
-          expected_close_date: ""
+          expected_close_date: todayYmd()
         }));
         setOpportunityItems([]);
         postSaveSuccessMessage = "Oportunidade salva. Formulário mantido para cadastrar a próxima.";
@@ -1952,7 +1956,7 @@ export default function PipelineModule({
     const opportunityId = String(item?.id || "").trim();
     if (!opportunityId) return;
 
-    const confirmed = confirmStrongDelete({
+    const confirmed = await confirmStrongDelete({
       entityLabel: "a oportunidade",
       itemLabel: String(item?.title || "").trim() || "Sem título"
     });

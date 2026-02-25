@@ -126,7 +126,6 @@ const PROPOSAL_CPP_SECTION_OPTIONS = [
   { value: "toner", label: "Toner" },
   { value: "components", label: "Componentes" }
 ];
-const PRODUCT_DELETE_CONFIRM_WORD = "EXCLUIR";
 
 const DEFAULT_PROPOSAL_TEMPLATE_BODY = [
   "PROPOSTA COMERCIAL {{numero_proposta}}",
@@ -441,8 +440,6 @@ export default function SettingsModule() {
   const [editProposalProductProfileForm, setEditProposalProductProfileForm] = useState(EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM);
   const [savingProposalProductProfileId, setSavingProposalProductProfileId] = useState("");
   const [deletingProposalProductProfileId, setDeletingProposalProductProfileId] = useState("");
-  const [pendingDeleteProposalProductProfile, setPendingDeleteProposalProductProfile] = useState(null);
-  const [proposalProductDeleteConfirmation, setProposalProductDeleteConfirmation] = useState("");
   const [syncingLegacyProductCatalog, setSyncingLegacyProductCatalog] = useState(false);
 
   const [proposalCppRows, setProposalCppRows] = useState([]);
@@ -960,7 +957,7 @@ export default function SettingsModule() {
       return;
     }
 
-    const confirmed = confirmStrongDelete({
+    const confirmed = await confirmStrongDelete({
       entityLabel: "a fase do ciclo de vida",
       itemLabel: stage.name
     });
@@ -1071,7 +1068,7 @@ export default function SettingsModule() {
     const templateId = String(template?.id || "").trim();
     if (!templateId) return;
 
-    const confirmed = confirmStrongDelete({
+    const confirmed = await confirmStrongDelete({
       entityLabel: "o template",
       itemLabel: template.name
     });
@@ -1146,21 +1143,6 @@ export default function SettingsModule() {
     setEditProposalProductProfileForm(EMPTY_PROPOSAL_PRODUCT_PROFILE_FORM);
   }
 
-  function requestDeleteProposalProductProfile(profile) {
-    const profileId = String(profile?.id || "").trim();
-    if (!profileId) return;
-    setProposalProductProfilesError("");
-    setProposalProductProfilesSuccess("");
-    setPendingDeleteProposalProductProfile(profile);
-    setProposalProductDeleteConfirmation("");
-  }
-
-  function cancelDeleteProposalProductProfile() {
-    if (deletingProposalProductProfileId) return;
-    setPendingDeleteProposalProductProfile(null);
-    setProposalProductDeleteConfirmation("");
-  }
-
   async function handleSaveProposalProductProfile(event) {
     event.preventDefault();
     if (!editingProposalProductProfileId) return;
@@ -1211,14 +1193,15 @@ export default function SettingsModule() {
     }
   }
 
-  async function handleDeleteProposalProductProfile() {
-    const profile = pendingDeleteProposalProductProfile;
+  async function handleDeleteProposalProductProfile(profile) {
     const profileId = String(profile?.id || "").trim();
     if (!profileId) return;
-    if (proposalProductDeleteConfirmation.trim().toUpperCase() !== PRODUCT_DELETE_CONFIRM_WORD) {
-      setProposalProductProfilesError(`Digite ${PRODUCT_DELETE_CONFIRM_WORD} para confirmar a exclusão.`);
-      return;
-    }
+
+    const confirmed = await confirmStrongDelete({
+      entityLabel: "o produto",
+      itemLabel: proposalProductDisplayLabel(profile)
+    });
+    if (!confirmed) return;
 
     setProposalProductProfilesError("");
     setProposalProductProfilesSuccess("");
@@ -1230,8 +1213,6 @@ export default function SettingsModule() {
       if (editingProposalProductProfileId === profileId) {
         cancelEditProposalProductProfile();
       }
-      setPendingDeleteProposalProductProfile(null);
-      setProposalProductDeleteConfirmation("");
     } catch (err) {
       setProposalProductProfilesError(err.message);
     } finally {
@@ -1341,7 +1322,7 @@ export default function SettingsModule() {
     const rowId = String(row?.id || "").trim();
     if (!rowId) return;
 
-    const confirmed = confirmStrongDelete({
+    const confirmed = await confirmStrongDelete({
       entityLabel: "a linha CPP",
       itemLabel: row.item_name
     });
@@ -1480,7 +1461,7 @@ export default function SettingsModule() {
     const termId = String(term?.id || "").trim();
     if (!termId) return;
 
-    const confirmed = confirmStrongDelete({
+    const confirmed = await confirmStrongDelete({
       entityLabel: "as condições comerciais",
       itemLabel: term.name
     });
@@ -2597,7 +2578,7 @@ export default function SettingsModule() {
                           <button
                             type="button"
                             className="btn-ghost btn-table-action"
-                            onClick={() => requestDeleteProposalProductProfile(profile)}
+                            onClick={() => handleDeleteProposalProductProfile(profile)}
                             disabled={deletingProposalProductProfileId === profile.id}
                           >
                             {deletingProposalProductProfileId === profile.id ? "Excluindo..." : "Excluir"}
@@ -2755,63 +2736,6 @@ export default function SettingsModule() {
               </div>
             ) : null}
 
-            {pendingDeleteProposalProductProfile ? (
-              <div className="edit-company-modal-overlay" role="presentation" onClick={cancelDeleteProposalProductProfile}>
-                <article
-                  className="edit-company-modal-card"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-label="Confirmar exclusão de produto"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <div className="edit-company-modal-header">
-                    <h2>Confirmar exclusão</h2>
-                    <button
-                      type="button"
-                      className="btn-ghost btn-table-action"
-                      onClick={cancelDeleteProposalProductProfile}
-                      disabled={Boolean(deletingProposalProductProfileId)}
-                    >
-                      Fechar
-                    </button>
-                  </div>
-                  <p className="muted">
-                    Esta ação exclui o produto de forma permanente. Para continuar, digite{" "}
-                    <strong>{PRODUCT_DELETE_CONFIRM_WORD}</strong>.
-                  </p>
-                  <p>
-                    <strong>Produto:</strong> {proposalProductDisplayLabel(pendingDeleteProposalProductProfile)}
-                  </p>
-                  <input
-                    placeholder={`Digite ${PRODUCT_DELETE_CONFIRM_WORD}`}
-                    value={proposalProductDeleteConfirmation}
-                    onChange={(event) => setProposalProductDeleteConfirmation(event.target.value)}
-                    disabled={Boolean(deletingProposalProductProfileId)}
-                  />
-                  <div className="inline-actions top-gap">
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={cancelDeleteProposalProductProfile}
-                      disabled={Boolean(deletingProposalProductProfileId)}
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={handleDeleteProposalProductProfile}
-                      disabled={
-                        Boolean(deletingProposalProductProfileId) ||
-                        proposalProductDeleteConfirmation.trim().toUpperCase() !== PRODUCT_DELETE_CONFIRM_WORD
-                      }
-                    >
-                      {deletingProposalProductProfileId ? "Excluindo..." : "Confirmar exclusão"}
-                    </button>
-                  </div>
-                </article>
-              </div>
-            ) : null}
           </section>
 
           <section className="settings-library-card">

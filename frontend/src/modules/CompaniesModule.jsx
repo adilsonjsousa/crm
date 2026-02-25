@@ -1050,7 +1050,7 @@ export default function CompaniesModule({
     const companyId = String(company?.id || "").trim();
     if (!companyId) return;
 
-    const confirmed = confirmStrongDelete({
+    const confirmed = await confirmStrongDelete({
       entityLabel: "a empresa",
       itemLabel: company?.trade_name || maskCnpj(company?.cnpj)
     });
@@ -1189,7 +1189,7 @@ export default function CompaniesModule({
     const contactId = String(contact?.id || "").trim();
     if (!contactId) return;
 
-    const confirmed = confirmStrongDelete({
+    const confirmed = await confirmStrongDelete({
       entityLabel: "o contato",
       itemLabel: contact?.full_name || "Contato"
     });

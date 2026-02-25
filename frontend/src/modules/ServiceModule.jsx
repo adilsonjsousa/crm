@@ -41,6 +41,18 @@ function readServiceFormDefaults() {
   }
 }
 
+function todayYmd() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function toIsoFromDateInput(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return new Date().toISOString();
+  const parsed = new Date(`${normalized}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString();
+  return parsed.toISOString();
+}
+
 export default function ServiceModule({ onRequestCreateCompany = null }) {
   const initialDefaults = useMemo(() => readServiceFormDefaults(), []);
   const [tickets, setTickets] = useState([]);
@@ -55,6 +67,7 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
     ticket_type: initialDefaults.ticket_type,
     priority: initialDefaults.priority,
     status: "open",
+    opened_date: todayYmd(),
     description: ""
   });
 
@@ -117,11 +130,12 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
         priority: form.priority,
         status: form.status,
         description: form.description,
-        opened_at: new Date().toISOString()
+        opened_at: toIsoFromDateInput(form.opened_date)
       });
       if (createAnotherAfterSave) {
         setForm((prev) => ({
           ...prev,
+          opened_date: todayYmd(),
           description: ""
         }));
         setSuccess("Chamado aberto. Formulário mantido para registrar o próximo.");
@@ -129,6 +143,7 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
         setForm((prev) => ({
           ...prev,
           company_id: "",
+          opened_date: todayYmd(),
           description: ""
         }));
         setCompanySearchTerm("");
@@ -200,7 +215,7 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
     const ticketId = String(ticket?.id || "").trim();
     if (!ticketId) return;
 
-    const confirmed = confirmStrongDelete({
+    const confirmed = await confirmStrongDelete({
       entityLabel: "o chamado",
       itemLabel: ticket?.companies?.trade_name || ticket?.id
     });
@@ -282,6 +297,11 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
             <option value="high">Alta</option>
             <option value="critical">Crítica</option>
           </select>
+          <input
+            type="date"
+            value={form.opened_date}
+            onChange={(e) => setForm((prev) => ({ ...prev, opened_date: e.target.value }))}
+          />
           <textarea
             required
             placeholder="Descrição técnica"
