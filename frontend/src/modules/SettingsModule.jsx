@@ -1720,10 +1720,13 @@ export default function SettingsModule() {
       const previousResult = asObject(rdResult);
       const previousWasDryRun = Boolean(previousResult.dry_run);
       const previousScope = String(previousResult.sync_scope || "").trim().toLowerCase();
+      const forceFreshCursorForDealSampling =
+        !dryRun && syncScope === "full" && (Boolean(dealStageFilter) || Number(dealsLimit) > 0);
       let cursor =
         !dryRun &&
         !previousWasDryRun &&
         previousScope === syncScope &&
+        !forceFreshCursorForDealSampling &&
         rdResumeCursor &&
         typeof rdResumeCursor === "object"
           ? rdResumeCursor

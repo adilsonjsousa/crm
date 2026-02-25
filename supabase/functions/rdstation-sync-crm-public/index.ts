@@ -441,8 +441,17 @@ function parseDateOnly(value: unknown) {
 }
 
 function pickFirstNonEmpty(source: AnyRecord, keys: string[]) {
+  const toScalarString = (value: unknown) => {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string") return value.trim();
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value).trim();
+    }
+    return "";
+  };
+
   for (const key of keys) {
-    const value = safeString(source[key]);
+    const value = toScalarString(source[key]);
     if (value) return value;
   }
   return "";
@@ -1273,6 +1282,15 @@ function parseDeal(itemRaw: unknown) {
   const organization = pickFirstObject(row, ["organization", "company", "account"]);
   const contact = pickFirstObject(row, ["contact", "person"]);
   const contacts = pickFirstArray(row, ["contacts", "people"]);
+  const stageObject = pickFirstObject(row, [
+    "deal_stage",
+    "stage",
+    "pipeline_stage",
+    "funnel_stage",
+    "current_stage"
+  ]);
+  const pipelineObject = pickFirstObject(row, ["pipeline", "funnel"]);
+  const statusObject = pickFirstObject(row, ["deal_status", "status", "outcome", "state"]);
 
   const externalId = pickFirstNonEmpty(row, ["id", "uuid", "deal_id", "dealId", "code"]);
   const title = pickFirstNonEmpty(row, ["name", "title", "deal_name"]);
@@ -1292,10 +1310,69 @@ function parseDeal(itemRaw: unknown) {
       row.value ??
       row.deal_value ??
       row.total_value ??
+      row.total ??
       row.revenue
   );
-  const statusRaw = pickFirstNonEmpty(row, ["status", "deal_status", "outcome", "state"]);
-  const stageRaw = pickFirstNonEmpty(row, ["stage", "stage_name", "pipeline_stage", "funnel_stage"]);
+  const statusRaw =
+    pickFirstNonEmpty(row, [
+      "status_name",
+      "deal_status_name",
+      "status",
+      "deal_status",
+      "outcome",
+      "state",
+      "result"
+    ]) ||
+    pickFirstNonEmpty(statusObject, ["name", "label", "title", "status", "state", "value", "description"]) ||
+    extractCustomFieldValue(row, ["status", "situacao", "situação", "resultado", "outcome"]);
+
+  let stageRaw =
+    pickFirstNonEmpty(row, [
+      "stage_name",
+      "deal_stage_name",
+      "pipeline_stage_name",
+      "funnel_stage_name",
+      "stage",
+      "pipeline_stage",
+      "funnel_stage",
+      "deal_stage",
+      "deal_pipeline_stage",
+      "deal_funnel_stage"
+    ]) ||
+    pickFirstNonEmpty(stageObject, ["name", "label", "title", "stage_name", "stage", "value", "description"]) ||
+    pickFirstNonEmpty(pipelineObject, ["stage_name", "current_stage", "name", "label", "title"]) ||
+    extractCustomFieldValue(row, ["etapa", "fase", "pipeline", "funil", "stage", "follow up", "follow-up"]);
+
+  if (!stageRaw) {
+    const inferredStageCandidates = extractScalarStrings([
+      row.stage,
+      row.deal_stage,
+      row.pipeline_stage,
+      row.funnel_stage,
+      row.current_stage,
+      stageObject,
+      pipelineObject,
+      row.pipeline,
+      row.funnel
+    ]);
+    for (const candidate of inferredStageCandidates) {
+      if (mapOpportunityStage(candidate, "open") !== "lead") {
+        stageRaw = candidate;
+        break;
+      }
+    }
+  }
+
+  const organizationCnpj = normalizeCnpj(
+    row.organization_cnpj ??
+      row.company_cnpj ??
+      row.cnpj ??
+      organization.cnpj ??
+      organization.tax_id ??
+      organization.document ??
+      organization.cpf_cnpj ??
+      extractCustomFieldValue(row, ["cnpj", "cpf cnpj", "cpf_cnpj", "documento", "tax id"])
+  );
   const expectedCloseDate = parseDateOnly(
     row.expected_close_date ??
       row.close_date ??
@@ -1307,6 +1384,7 @@ function parseDeal(itemRaw: unknown) {
     externalId,
     title,
     organizationExternalId,
+    organizationCnpj,
     contactExternalId,
     amount,
     statusRaw,
@@ -1349,8 +1427,11 @@ function mapOpportunityStage(stage: unknown, status: string) {
   const normalized = normalizeText(stage);
   if (!normalized) return "lead";
   if (normalized.includes("propost") || normalized.includes("proposal")) return "proposta";
+  if (normalized.includes("orcament") || normalized.includes("budget")) return "proposta";
   if (normalized.includes("qualif")) return "qualificacao";
   if (normalized.includes("follow")) return "follow_up";
+  if (normalized.includes("acompanh")) return "follow_up";
+  if (normalized.includes("negoci")) return "follow_up";
   if (normalized.includes("stand") || normalized.includes("espera")) return "stand_by";
   if (normalized.includes("ganh") || normalized.includes("won")) return "ganho";
   if (normalized.includes("perd") || normalized.includes("lost")) return "perdido";
@@ -2288,8 +2369,27 @@ async function upsertOpportunityFromDeal({
 
   let companyId = "";
   const organizationExternalId = safeString(deal.organizationExternalId);
+  const organizationCnpj = normalizeCnpj(deal.organizationCnpj);
   if (organizationExternalId) {
     companyId = companyMap.get(organizationExternalId) || "";
+    if (!companyId && organizationCnpj) {
+      companyId = await findCompanyByCnpj({
+        supabase,
+        cnpj: organizationCnpj
+      });
+      if (companyId) {
+        await upsertIntegrationLink({
+          supabase,
+          provider: "rdstation",
+          localEntityType: "company",
+          localEntityId: companyId,
+          externalId: organizationExternalId,
+          syncedAt: new Date().toISOString()
+        });
+        summary.links_updated = getResourceCount(summary, "links_updated") + 1;
+        companyMap.set(organizationExternalId, companyId);
+      }
+    }
     if (!companyId) {
       companyId = await findOrCreateCompanyByExternal({
         supabase,
@@ -2299,6 +2399,13 @@ async function upsertOpportunityFromDeal({
       });
       if (companyId) companyMap.set(organizationExternalId, companyId);
     }
+  }
+
+  if (!companyId && organizationCnpj) {
+    companyId = await findCompanyByCnpj({
+      supabase,
+      cnpj: organizationCnpj
+    });
   }
 
   if (!companyId) {
