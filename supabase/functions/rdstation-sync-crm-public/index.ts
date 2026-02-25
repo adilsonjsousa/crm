@@ -1363,6 +1363,50 @@ function parseDeal(itemRaw: unknown) {
     }
   }
 
+  let pipelineRaw =
+    pickFirstNonEmpty(row, [
+      "pipeline_name",
+      "funnel_name",
+      "deal_pipeline_name",
+      "deal_funnel_name",
+      "pipeline_label",
+      "funnel_label",
+      "deal_pipeline",
+      "deal_funnel",
+      "pipeline",
+      "funnel"
+    ]) ||
+    pickFirstNonEmpty(pipelineObject, [
+      "name",
+      "label",
+      "title",
+      "pipeline_name",
+      "funnel_name",
+      "pipeline",
+      "funnel",
+      "slug"
+    ]) ||
+    pickFirstNonEmpty(stageObject, ["pipeline_name", "funnel_name", "pipeline", "funnel"]) ||
+    extractCustomFieldValue(row, ["nome do funil", "funil de vendas", "pipeline", "funil"]);
+
+  if (!pipelineRaw) {
+    const inferredPipelineCandidates = extractScalarStrings([
+      row.pipeline_name,
+      row.funnel_name,
+      row.pipeline,
+      row.funnel,
+      row.deal_pipeline,
+      row.deal_funnel,
+      pipelineObject
+    ]);
+    for (const candidate of inferredPipelineCandidates) {
+      if (normalizeDealPipelineName(candidate)) {
+        pipelineRaw = candidate;
+        break;
+      }
+    }
+  }
+
   const organizationCnpj = normalizeCnpj(
     row.organization_cnpj ??
       row.company_cnpj ??
@@ -1389,6 +1433,7 @@ function parseDeal(itemRaw: unknown) {
     amount,
     statusRaw,
     stageRaw,
+    pipelineRaw,
     expectedCloseDate
   };
 }
@@ -1451,6 +1496,44 @@ function resolveDealStageFilter(value: unknown) {
   if (normalized.includes("ganh") || normalized.includes("won")) return "ganho";
   if (normalized.includes("perd") || normalized.includes("lost")) return "perdido";
   return "";
+}
+
+function normalizeDealPipelineName(value: unknown) {
+  return normalizeText(value)
+    .replace(/[_-]+/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function resolveDealPipelineFilter(value: unknown) {
+  const normalized = normalizeDealPipelineName(value);
+  if (
+    !normalized ||
+    [
+      "all",
+      "todos",
+      "todas",
+      "todos os funis",
+      "todas as etapas",
+      "todos os pipelines",
+      "todos os funis de vendas"
+    ].includes(normalized)
+  ) {
+    return "";
+  }
+  return normalized;
+}
+
+function matchDealPipelineFilter(pipelineRaw: unknown, filterNormalized: string) {
+  if (!filterNormalized) return true;
+  const normalizedPipeline = normalizeDealPipelineName(pipelineRaw);
+  if (!normalizedPipeline) return false;
+  return (
+    normalizedPipeline === filterNormalized ||
+    normalizedPipeline.includes(filterNormalized) ||
+    filterNormalized.includes(normalizedPipeline)
+  );
 }
 
 function normalizeLooseOpportunityTitle(value: unknown) {
@@ -2654,6 +2737,16 @@ Deno.serve(async (request: Request) => {
           body.opportunityStageFilter
       )
     : "";
+  const dealPipelineFilter = includeDeals
+    ? resolveDealPipelineFilter(
+        body.deal_pipeline_filter ??
+          body.dealPipelineFilter ??
+          body.pipeline_filter ??
+          body.pipelineFilter ??
+          body.funnel_filter ??
+          body.funnelFilter
+      )
+    : "";
   const dealsLimit = includeDeals
     ? clampNumber(
         body.deals_limit ??
@@ -2708,6 +2801,7 @@ Deno.serve(async (request: Request) => {
           auth_mode: authState.mode,
           sync_scope: syncScope,
           deal_stage_filter: dealStageFilter || null,
+          deal_pipeline_filter: dealPipelineFilter || null,
           deals_limit: dealsLimit || null,
           allowed_states: Array.from(allowedStates),
           dry_run: dryRun,
@@ -2755,6 +2849,7 @@ Deno.serve(async (request: Request) => {
       opportunities_updated: 0,
       opportunities_matched_by_similarity: 0,
       opportunities_skipped_by_scope: 0,
+      opportunities_skipped_by_pipeline_filter: 0,
       opportunities_skipped_by_stage_filter: 0,
       links_updated: 0,
       skipped_without_identifier: 0,
@@ -2787,6 +2882,7 @@ Deno.serve(async (request: Request) => {
         operation: "enrich_missing_companies_only",
         sync_scope: syncScope,
         deal_stage_filter: dealStageFilter || null,
+        deal_pipeline_filter: dealPipelineFilter || null,
         deals_limit: dealsLimit || null,
         allowed_states: Array.from(allowedStates),
         api_url: apiUrl,
@@ -2907,6 +3003,11 @@ Deno.serve(async (request: Request) => {
           }
 
           const parsed = parseDeal(rawItem);
+          if (dealPipelineFilter && !matchDealPipelineFilter(parsed.pipelineRaw, dealPipelineFilter)) {
+            summary.opportunities_skipped_by_pipeline_filter =
+              getResourceCount(summary, "opportunities_skipped_by_pipeline_filter") + 1;
+            continue;
+          }
           const mappedStatus = mapOpportunityStatus(parsed.statusRaw);
           const mappedStage = mapOpportunityStage(parsed.stageRaw, mappedStatus);
           if (dealStageFilter && mappedStage !== dealStageFilter) {
@@ -2979,6 +3080,7 @@ Deno.serve(async (request: Request) => {
       ...summary,
       sync_scope: syncScope,
       deal_stage_filter: dealStageFilter || null,
+      deal_pipeline_filter: dealPipelineFilter || null,
       deals_limit: dealsLimit || null,
       allowed_states: Array.from(allowedStates),
       api_url: apiUrl,

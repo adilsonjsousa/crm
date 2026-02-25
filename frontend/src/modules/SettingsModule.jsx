@@ -86,6 +86,7 @@ const EMPTY_RD_FORM = {
   south_cnpj_only: true,
   south_state_scope: "SC_PR_RS",
   sync_customers_only: true,
+  deal_pipeline_filter: "",
   deal_stage_filter: "",
   deals_limit: "0"
 };
@@ -402,6 +403,7 @@ function readRdFormStorage() {
       south_state_scope: southStateScopeValid ? southStateScopeRaw : EMPTY_RD_FORM.south_state_scope,
       sync_customers_only:
         parsed.sync_customers_only === undefined ? Boolean(EMPTY_RD_FORM.sync_customers_only) : Boolean(parsed.sync_customers_only),
+      deal_pipeline_filter: String(parsed.deal_pipeline_filter || EMPTY_RD_FORM.deal_pipeline_filter),
       deal_stage_filter: dealStageFilterValid ? dealStageFilterRaw : EMPTY_RD_FORM.deal_stage_filter,
       deals_limit: String(parsed.deals_limit || EMPTY_RD_FORM.deals_limit)
     };
@@ -1653,6 +1655,7 @@ export default function SettingsModule() {
     const southStateScope = String(rdForm.south_state_scope || EMPTY_RD_FORM.south_state_scope);
     const selectedSouthStates = southCnpjOnly ? resolveSouthStates(southStateScope) : [];
     const syncScope = southCnpjOnly ? "south_cnpj_only" : rdForm.sync_customers_only ? "customers_whatsapp_only" : "full";
+    const dealPipelineFilter = syncScope === "full" ? String(rdForm.deal_pipeline_filter || "").trim() : "";
     const dealStageFilter = syncScope === "full" ? String(rdForm.deal_stage_filter || "").trim() : "";
     const dealsLimit = syncScope === "full" ? clampInteger(rdForm.deals_limit, 0, 500, 0) : 0;
     const estimatedResources = syncScope === "full" ? 3 : syncScope === "customers_whatsapp_only" ? 2 : 1;
@@ -1668,6 +1671,7 @@ export default function SettingsModule() {
       page_chunk_size: dryRun ? RD_SYNC_PAGE_CHUNK_DRY_RUN : RD_SYNC_PAGE_CHUNK_LIVE,
       dry_run: dryRun,
       sync_scope: syncScope,
+      deal_pipeline_filter: dealPipelineFilter || null,
       deal_stage_filter: dealStageFilter || null,
       deals_limit: dealsLimit || null,
       allowed_states: selectedSouthStates
@@ -1696,6 +1700,7 @@ export default function SettingsModule() {
         opportunities_updated: 0,
         opportunities_matched_by_similarity: 0,
         opportunities_skipped_by_scope: 0,
+        opportunities_skipped_by_pipeline_filter: 0,
         opportunities_skipped_by_stage_filter: 0,
         links_updated: 0,
         skipped_without_identifier: 0,
@@ -1710,6 +1715,7 @@ export default function SettingsModule() {
         records_per_page: payload.records_per_page,
         dry_run: payload.dry_run,
         sync_scope: payload.sync_scope,
+        deal_pipeline_filter: payload.deal_pipeline_filter,
         deal_stage_filter: payload.deal_stage_filter,
         deals_limit: payload.deals_limit,
         allowed_states: payload.allowed_states
@@ -1720,7 +1726,7 @@ export default function SettingsModule() {
       const previousWasDryRun = Boolean(previousResult.dry_run);
       const previousScope = String(previousResult.sync_scope || "").trim().toLowerCase();
       const forceFreshCursorForDealSampling =
-        !dryRun && syncScope === "full" && (Boolean(dealStageFilter) || Number(dealsLimit) > 0);
+        !dryRun && syncScope === "full" && (Boolean(dealPipelineFilter) || Boolean(dealStageFilter) || Number(dealsLimit) > 0);
       let cursor =
         !dryRun &&
         !previousWasDryRun &&
@@ -1778,6 +1784,7 @@ export default function SettingsModule() {
         aggregate.opportunities_updated += Number(safeResult.opportunities_updated || 0);
         aggregate.opportunities_matched_by_similarity += Number(safeResult.opportunities_matched_by_similarity || 0);
         aggregate.opportunities_skipped_by_scope += Number(safeResult.opportunities_skipped_by_scope || 0);
+        aggregate.opportunities_skipped_by_pipeline_filter += Number(safeResult.opportunities_skipped_by_pipeline_filter || 0);
         aggregate.opportunities_skipped_by_stage_filter += Number(safeResult.opportunities_skipped_by_stage_filter || 0);
         aggregate.links_updated += Number(safeResult.links_updated || 0);
         aggregate.skipped_without_identifier += Number(safeResult.skipped_without_identifier || 0);
@@ -1785,6 +1792,9 @@ export default function SettingsModule() {
         aggregate.skipped_invalid_payload += Number(safeResult.skipped_invalid_payload || 0);
         if (safeResult.sync_scope) {
           aggregate.sync_scope = String(safeResult.sync_scope || aggregate.sync_scope);
+        }
+        if (safeResult.deal_pipeline_filter !== undefined) {
+          aggregate.deal_pipeline_filter = safeResult.deal_pipeline_filter || null;
         }
         if (safeResult.deal_stage_filter !== undefined) {
           aggregate.deal_stage_filter = safeResult.deal_stage_filter || null;
@@ -3434,6 +3444,18 @@ export default function SettingsModule() {
           {rdFullSyncSelected ? (
             <>
               <div className="settings-omie-grid">
+                <label className="settings-field settings-field-wide">
+                  <span>Filtrar oportunidades por funil do RD (opcional)</span>
+                  <input
+                    value={String(rdForm.deal_pipeline_filter || EMPTY_RD_FORM.deal_pipeline_filter)}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setRdForm((prev) => ({ ...prev, deal_pipeline_filter: value }));
+                      setRdResumeCursor(null);
+                    }}
+                    placeholder="Ex.: Gráficas Novos Contatos"
+                  />
+                </label>
                 <label className="settings-field">
                   <span>Filtrar oportunidades por etapa (opcional)</span>
                   <select
@@ -3472,13 +3494,19 @@ export default function SettingsModule() {
                   type="button"
                   className="btn-ghost"
                   onClick={() => {
-                    setRdForm((prev) => ({ ...prev, deal_stage_filter: "follow_up", deals_limit: "6", dry_run: true }));
+                    setRdForm((prev) => ({
+                      ...prev,
+                      deal_pipeline_filter: "Gráficas Novos Contatos",
+                      deal_stage_filter: "",
+                      deals_limit: "0",
+                      dry_run: true
+                    }));
                     setRdResumeCursor(null);
-                    setRdSuccess("Modo teste curto preparado: FOLLOW-UP com limite de 6 oportunidades.");
+                    setRdSuccess("Modo teste preparado: funil 'Gráficas Novos Contatos' em todas as etapas.");
                   }}
                   disabled={rdSyncing}
                 >
-                  Preparar teste curto (FOLLOW-UP, 6)
+                  Preparar teste (Funil Gráficas Novos Contatos)
                 </button>
               </div>
             </>
@@ -3533,6 +3561,12 @@ export default function SettingsModule() {
                 <strong className="kpi-value">{Number(rdResultSummary.opportunities_skipped_by_stage_filter || 0)}</strong>
               </article>
             ) : null}
+            {Number(rdResultSummary.opportunities_skipped_by_pipeline_filter || 0) > 0 ? (
+              <article className="kpi-card">
+                <span className="kpi-label">Oportunidades fora do funil</span>
+                <strong className="kpi-value">{Number(rdResultSummary.opportunities_skipped_by_pipeline_filter || 0)}</strong>
+              </article>
+            ) : null}
             {Number(rdResultSummary.opportunities_matched_by_similarity || 0) > 0 ? (
               <article className="kpi-card">
                 <span className="kpi-label">Conciliação por similaridade</span>
@@ -3569,6 +3603,7 @@ export default function SettingsModule() {
                 const errorMessage = String(job.error_message || "").trim();
                 const dryRunFlag = Boolean(result.dry_run ?? payload.dry_run);
                 const syncScopeValue = String(result.sync_scope || payload.sync_scope || "").trim().toLowerCase();
+                const dealPipelineFilterValue = String(result.deal_pipeline_filter || payload.deal_pipeline_filter || "").trim();
                 const dealStageFilterValue = String(result.deal_stage_filter || payload.deal_stage_filter || "").trim();
                 const dealStageFilterLabel = RD_DEAL_STAGE_FILTER_OPTIONS.find(
                   (option) => option.value === dealStageFilterValue
@@ -3590,6 +3625,8 @@ export default function SettingsModule() {
                 const syncScopeLabel =
                   syncScopeValue === "full"
                     ? `Importação completa${
+                        dealPipelineFilterValue ? ` · funil ${dealPipelineFilterValue}` : ""
+                      }${
                         dealStageFilterValue ? ` · etapa ${dealStageFilterLabel || dealStageFilterValue}` : ""
                       }${dealsLimitValue > 0 ? ` · limite ${dealsLimitValue}` : ""}`
                     : syncScopeValue === "south_cnpj_only"
