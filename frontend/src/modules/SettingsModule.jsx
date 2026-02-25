@@ -31,6 +31,7 @@ import {
   updateProposalTemplate,
   updateSystemUser
 } from "../lib/revenueApi";
+import { confirmStrongDelete } from "../lib/confirmDelete";
 import { getSubcategoriesByType } from "../lib/productCatalog";
 
 const OMIE_STORAGE_KEY = "crm.settings.omie.customers.v1";
@@ -959,7 +960,10 @@ export default function SettingsModule() {
       return;
     }
 
-    const confirmed = window.confirm(`Excluir a fase "${stage.name}" do ciclo de vida?`);
+    const confirmed = confirmStrongDelete({
+      entityLabel: "a fase do ciclo de vida",
+      itemLabel: stage.name
+    });
     if (!confirmed) return;
 
     setLifecycleError("");
@@ -1067,7 +1071,10 @@ export default function SettingsModule() {
     const templateId = String(template?.id || "").trim();
     if (!templateId) return;
 
-    const confirmed = window.confirm(`Excluir template "${template.name}"?`);
+    const confirmed = confirmStrongDelete({
+      entityLabel: "o template",
+      itemLabel: template.name
+    });
     if (!confirmed) return;
 
     setProposalTemplatesError("");
@@ -1334,7 +1341,10 @@ export default function SettingsModule() {
     const rowId = String(row?.id || "").trim();
     if (!rowId) return;
 
-    const confirmed = window.confirm(`Excluir linha CPP "${row.item_name}"?`);
+    const confirmed = confirmStrongDelete({
+      entityLabel: "a linha CPP",
+      itemLabel: row.item_name
+    });
     if (!confirmed) return;
 
     setProposalCppRowsError("");
@@ -1470,7 +1480,10 @@ export default function SettingsModule() {
     const termId = String(term?.id || "").trim();
     if (!termId) return;
 
-    const confirmed = window.confirm(`Excluir condições comerciais "${term.name}"?`);
+    const confirmed = confirmStrongDelete({
+      entityLabel: "as condições comerciais",
+      itemLabel: term.name
+    });
     if (!confirmed) return;
 
     setProposalCommercialTermsError("");

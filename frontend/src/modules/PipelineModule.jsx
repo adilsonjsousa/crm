@@ -4,6 +4,7 @@ import {
   createCompanyInteraction,
   createProposalDocumentVersion,
   createOpportunity,
+  deleteOpportunity,
   listCompanyContacts,
   listCompanyOptions,
   listLatestOrdersByOpportunity,
@@ -16,6 +17,7 @@ import {
   updateOpportunity,
   updateOpportunityStage
 } from "../lib/revenueApi";
+import { confirmStrongDelete } from "../lib/confirmDelete";
 import { PIPELINE_STAGES, canMoveToStage, stageLabel, stageStatus } from "../lib/pipelineStages";
 import {
   PRODUCTS_BY_SUBCATEGORY,
@@ -1216,6 +1218,7 @@ export default function PipelineModule({
   const [dragOverStage, setDragOverStage] = useState("");
   const [editingOpportunityId, setEditingOpportunityId] = useState("");
   const [savingOpportunity, setSavingOpportunity] = useState(false);
+  const [deletingOpportunityId, setDeletingOpportunityId] = useState("");
   const [creatingProposalId, setCreatingProposalId] = useState("");
   const [proposalsByOpportunity, setProposalsByOpportunity] = useState({});
   const [autoProposalMode, setAutoProposalMode] = useState(() => {
@@ -1942,6 +1945,45 @@ export default function PipelineModule({
     setOpportunityItems([]);
     setCompanySearchTerm("");
     setCompanySuggestionsOpen(false);
+  }
+
+  async function handleDeleteOpportunity(event, item) {
+    event.stopPropagation();
+    const opportunityId = String(item?.id || "").trim();
+    if (!opportunityId) return;
+
+    const confirmed = confirmStrongDelete({
+      entityLabel: "a oportunidade",
+      itemLabel: String(item?.title || "").trim() || "Sem título"
+    });
+    if (!confirmed) return;
+
+    setError("");
+    setSuccess("");
+    setDeletingOpportunityId(opportunityId);
+
+    try {
+      await deleteOpportunity(opportunityId);
+      if (editingOpportunityId === opportunityId) {
+        cancelEditOpportunity();
+      }
+      if (proposalEditor?.opportunity_id === opportunityId) {
+        setProposalEditor(null);
+        setProposalContacts([]);
+        setProposalVersions([]);
+      }
+      setProposalsByOpportunity((prev) => {
+        const next = { ...prev };
+        delete next[opportunityId];
+        return next;
+      });
+      await load();
+      setSuccess("Oportunidade excluída com sucesso.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeletingOpportunityId("");
+    }
   }
 
   function handleViewerChange(nextUserId) {
@@ -2973,6 +3015,15 @@ export default function PipelineModule({
                           }}
                         >
                           {editingOpportunityId === item.id ? "Editando" : "Editar"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          disabled={deletingOpportunityId === item.id}
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onClick={(event) => handleDeleteOpportunity(event, item)}
+                        >
+                          {deletingOpportunityId === item.id ? "Excluindo..." : "Excluir"}
                         </button>
                       </div>
                     </article>

@@ -24,6 +24,9 @@ function normalizeError(error, fallback) {
   if (fingerprint.includes("opportunities_open_owner_company_title_stage_unique_idx")) {
     return "Já existe oportunidade aberta com este título nesta etapa para este responsável.";
   }
+  if (fingerprint.includes("sales_orders_company_id_fkey")) {
+    return "Não é possível excluir a empresa porque há pedidos vinculados.";
+  }
 
   return message || fallback;
 }
@@ -678,6 +681,15 @@ export async function updateCompany(companyId, payload) {
   if (error) throw new Error(normalizeError(error, "Falha ao atualizar empresa."));
 }
 
+export async function deleteCompany(companyId) {
+  const normalizedCompanyId = String(companyId || "").trim();
+  if (!normalizedCompanyId) throw new Error("Empresa inválida para exclusão.");
+
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("companies").delete().eq("id", normalizedCompanyId);
+  if (error) throw new Error(normalizeError(error, "Falha ao excluir empresa."));
+}
+
 export async function listContacts() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
@@ -829,6 +841,15 @@ export async function updateContact(contactId, payload) {
   if (error) throw new Error(normalizeError(error, "Falha ao atualizar contato."));
 }
 
+export async function deleteContact(contactId) {
+  const normalizedContactId = String(contactId || "").trim();
+  if (!normalizedContactId) throw new Error("Contato inválido para exclusão.");
+
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("contacts").delete().eq("id", normalizedContactId);
+  if (error) throw new Error(normalizeError(error, "Falha ao excluir contato."));
+}
+
 export async function listOpportunities(options = {}) {
   const supabase = ensureSupabase();
   const viewerUserId = String(options?.viewerUserId || "").trim();
@@ -929,6 +950,15 @@ export async function updateOpportunity(opportunityId, payload) {
       console.warn("Falha ao registrar histórico de etapa:", historyError.message);
     }
   }
+}
+
+export async function deleteOpportunity(opportunityId) {
+  const normalizedOpportunityId = String(opportunityId || "").trim();
+  if (!normalizedOpportunityId) throw new Error("Oportunidade inválida para exclusão.");
+
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("opportunities").delete().eq("id", normalizedOpportunityId);
+  if (error) throw new Error(normalizeError(error, "Falha ao excluir oportunidade."));
 }
 
 export async function updateOpportunityStage({ opportunityId, fromStage, toStage }) {

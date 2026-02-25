@@ -3,6 +3,8 @@ import {
   createCompanyInteraction,
   createCompany,
   createContact,
+  deleteCompany,
+  deleteContact,
   findCompanyByCnpj,
   getCompanyById,
   getContactById,
@@ -20,6 +22,7 @@ import {
   updateCompany,
   updateContact
 } from "../lib/revenueApi";
+import { confirmStrongDelete } from "../lib/confirmDelete";
 import { stageLabel } from "../lib/pipelineStages";
 import { formatBrazilPhone, toTelDigits, toWhatsAppBrazilNumber, validateBrazilPhoneOrEmpty } from "../lib/phone";
 import CustomerHistoryModal from "../components/CustomerHistoryModal";
@@ -383,10 +386,12 @@ export default function CompaniesModule({
   const [editForm, setEditForm] = useState(EMPTY_EDIT_COMPANY_FORM);
   const [editError, setEditError] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
+  const [deletingCompanyId, setDeletingCompanyId] = useState("");
   const [editingContactId, setEditingContactId] = useState("");
   const [editContactForm, setEditContactForm] = useState(EMPTY_EDIT_CONTACT_FORM);
   const [editContactError, setEditContactError] = useState("");
   const [savingContactEdit, setSavingContactEdit] = useState(false);
+  const [deletingContactId, setDeletingContactId] = useState("");
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [selectedCustomerTab, setSelectedCustomerTab] = useState("history");
   const [customerLoading, setCustomerLoading] = useState(false);
@@ -1041,6 +1046,35 @@ export default function CompaniesModule({
     }
   }
 
+  async function handleDeleteCompany(company) {
+    const companyId = String(company?.id || "").trim();
+    if (!companyId) return;
+
+    const confirmed = confirmStrongDelete({
+      entityLabel: "a empresa",
+      itemLabel: company?.trade_name || maskCnpj(company?.cnpj)
+    });
+    if (!confirmed) return;
+
+    setError("");
+    setDeletingCompanyId(companyId);
+    try {
+      await deleteCompany(companyId);
+      if (editingCompanyId === companyId) {
+        cancelEditCompany();
+      }
+      if (selectedCompanyId === companyId) {
+        setSelectedCompanyId("");
+        setSelectedCustomerTab("history");
+      }
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeletingCompanyId("");
+    }
+  }
+
   function startEditContact(contact) {
     setEditContactError("");
     setEditingContactId(contact.id);
@@ -1148,6 +1182,34 @@ export default function CompaniesModule({
       setEditContactError(err.message);
     } finally {
       setSavingContactEdit(false);
+    }
+  }
+
+  async function handleDeleteContact(contact) {
+    const contactId = String(contact?.id || "").trim();
+    if (!contactId) return;
+
+    const confirmed = confirmStrongDelete({
+      entityLabel: "o contato",
+      itemLabel: contact?.full_name || "Contato"
+    });
+    if (!confirmed) return;
+
+    setError("");
+    setDeletingContactId(contactId);
+    try {
+      await deleteContact(contactId);
+      if (editingContactId === contactId) {
+        cancelEditContact();
+      }
+      await load();
+      if (selectedCompanyId) {
+        await loadCustomerWorkspace(selectedCompanyId);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeletingContactId("");
     }
   }
 
@@ -1286,6 +1348,14 @@ export default function CompaniesModule({
                         </button>
                         <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditCompany(company)}>
                           Editar
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          onClick={() => handleDeleteCompany(company)}
+                          disabled={deletingCompanyId === company.id}
+                        >
+                          {deletingCompanyId === company.id ? "Excluindo..." : "Excluir"}
                         </button>
                       </td>
                     </tr>
@@ -1694,6 +1764,14 @@ export default function CompaniesModule({
                     <td>
                       <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditContact(contact)}>
                         Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost btn-table-action"
+                        onClick={() => handleDeleteContact(contact)}
+                        disabled={deletingContactId === contact.id}
+                      >
+                        {deletingContactId === contact.id ? "Excluindo..." : "Excluir"}
                       </button>
                     </td>
                   </tr>
