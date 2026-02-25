@@ -2747,6 +2747,15 @@ Deno.serve(async (request: Request) => {
   const syncScope = resolveSyncScope(body.sync_scope ?? body.syncScope);
   const includeContacts = syncScope !== "south_cnpj_only";
   const includeDeals = syncScope === "full";
+  const dealsOnly = includeDeals
+    ? parseBoolean(
+        body.deals_only ??
+          body.dealsOnly ??
+          body.opportunities_only ??
+          body.opportunitiesOnly,
+        false
+      )
+    : false;
   const dealStageFilter = includeDeals
     ? resolveDealStageFilter(
         body.deal_stage_filter ??
@@ -2818,6 +2827,7 @@ Deno.serve(async (request: Request) => {
           api_url: apiUrl,
           auth_mode: authState.mode,
           sync_scope: syncScope,
+          deals_only: dealsOnly,
           deal_stage_filter: dealStageFilter || null,
           deal_pipeline_filter: dealPipelineFilter || null,
           deals_limit: dealsLimit || null,
@@ -2900,6 +2910,7 @@ Deno.serve(async (request: Request) => {
         ...summary,
         operation: "enrich_missing_companies_only",
         sync_scope: syncScope,
+        deals_only: dealsOnly,
         deal_stage_filter: dealStageFilter || null,
         deal_pipeline_filter: dealPipelineFilter || null,
         deals_limit: dealsLimit || null,
@@ -2930,6 +2941,11 @@ Deno.serve(async (request: Request) => {
     }
 
     const state = parseCursorState(cursorState, requestedMaxPages);
+    if (dealsOnly) {
+      state.resource_index = RESOURCE_ORDER.indexOf("deals");
+      state.next_by_resource.organizations = "";
+      state.next_by_resource.contacts = "";
+    }
     const companyMap = new Map<string, string>();
     const opportunityMatchCache = new Map<string, AnyRecord[]>();
     const deadline = Date.now() + executionGuardMs;
@@ -2947,6 +2963,10 @@ Deno.serve(async (request: Request) => {
       }
 
       const resource = RESOURCE_ORDER[state.resource_index];
+      if (dealsOnly && resource !== "deals") {
+        state.resource_index = RESOURCE_ORDER.indexOf("deals");
+        continue;
+      }
       if (!includeContacts && resource === "contacts") {
         state.resource_index = RESOURCE_ORDER.length;
         summary.contacts_skipped_by_scope =
@@ -3104,6 +3124,7 @@ Deno.serve(async (request: Request) => {
     const resultPayload: AnyRecord = {
       ...summary,
       sync_scope: syncScope,
+      deals_only: dealsOnly,
       deal_stage_filter: dealStageFilter || null,
       deal_pipeline_filter: dealPipelineFilter || null,
       deals_limit: dealsLimit || null,

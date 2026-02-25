@@ -11,7 +11,9 @@ import {
   deleteProposalCppRow,
   deleteProposalProductProfile,
   deleteProposalTemplate,
+  importWhatsAppContactsBatch,
   listCompanyLifecycleStages,
+  listCompanyOptions,
   listOmieCustomerSyncJobs,
   listProposalCommercialTerms,
   listProposalCppRows,
@@ -86,6 +88,7 @@ const EMPTY_RD_FORM = {
   south_cnpj_only: true,
   south_state_scope: "SC_PR_RS",
   sync_customers_only: true,
+  deals_only: false,
   deal_pipeline_filter: "",
   deal_stage_filter: "",
   deals_limit: "0"
@@ -403,6 +406,7 @@ function readRdFormStorage() {
       south_state_scope: southStateScopeValid ? southStateScopeRaw : EMPTY_RD_FORM.south_state_scope,
       sync_customers_only:
         parsed.sync_customers_only === undefined ? Boolean(EMPTY_RD_FORM.sync_customers_only) : Boolean(parsed.sync_customers_only),
+      deals_only: parsed.deals_only === undefined ? Boolean(EMPTY_RD_FORM.deals_only) : Boolean(parsed.deals_only),
       deal_pipeline_filter: String(parsed.deal_pipeline_filter || EMPTY_RD_FORM.deal_pipeline_filter),
       deal_stage_filter: dealStageFilterValid ? dealStageFilterRaw : EMPTY_RD_FORM.deal_stage_filter,
       deals_limit: String(parsed.deals_limit || EMPTY_RD_FORM.deals_limit)
@@ -410,6 +414,230 @@ function readRdFormStorage() {
   } catch {
     return EMPTY_RD_FORM;
   }
+}
+
+function removeDiacritics(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function decodeVCardValue(value) {
+  return String(value || "")
+    .replace(/\\n/gi, " ")
+    .replace(/\\,/g, ",")
+    .replace(/\\;/g, ";")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractPhoneCandidate(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  const matched = text.match(/(?:\+?55[\s.\-]*)?(?:\(?\d{2}\)?[\s.\-]*)?\d{4,5}[\s.\-]?\d{4}/);
+  if (matched?.[0]) return matched[0];
+
+  const digits = text.replace(/\D/g, "");
+  if (digits.length >= 10 && digits.length <= 13) return digits;
+  return "";
+}
+
+function isLikelyImportHeader(line) {
+  const normalized = removeDiacritics(line).toLowerCase();
+  if (!normalized || /\d/.test(normalized)) return false;
+  const hasNameLabel = normalized.includes("nome") || normalized.includes("contato");
+  const hasPhoneLabel =
+    normalized.includes("whatsapp") ||
+    normalized.includes("telefone") ||
+    normalized.includes("celular") ||
+    normalized.includes("phone");
+  return hasNameLabel && hasPhoneLabel;
+}
+
+function parseVcfContactList(rawText) {
+  const lines = String(rawText || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n");
+
+  const unfolded = [];
+  for (const rawLine of lines) {
+    if (/^[ \t]/.test(rawLine) && unfolded.length) {
+      unfolded[unfolded.length - 1] += rawLine.trim();
+    } else {
+      unfolded.push(rawLine);
+    }
+  }
+
+  const contacts = [];
+  let current = null;
+
+  for (const rawLine of unfolded) {
+    const line = String(rawLine || "").trim();
+    const upper = line.toUpperCase();
+
+    if (upper === "BEGIN:VCARD") {
+      current = { full_name: "", whatsapp: "", email: "" };
+      continue;
+    }
+
+    if (upper === "END:VCARD") {
+      if (current?.whatsapp) contacts.push(current);
+      current = null;
+      continue;
+    }
+
+    if (!current || !line.includes(":")) continue;
+    const separatorIndex = line.indexOf(":");
+    const key = line.slice(0, separatorIndex).toUpperCase();
+    const value = decodeVCardValue(line.slice(separatorIndex + 1));
+    if (!value) continue;
+
+    if (!current.full_name && (key.startsWith("FN") || key === "N" || key.startsWith("N;"))) {
+      const parts = value.split(";").filter(Boolean);
+      current.full_name = parts.length > 1 ? parts.reverse().join(" ").trim() : value;
+      continue;
+    }
+
+    if (!current.whatsapp && key.startsWith("TEL")) {
+      current.whatsapp = value;
+      continue;
+    }
+
+    if (!current.email && key.startsWith("EMAIL")) {
+      current.email = value.toLowerCase();
+    }
+  }
+
+  return contacts;
+}
+
+function parseJsonContactList(rawText) {
+  const normalized = String(rawText || "").trim();
+  if (!normalized) return [];
+  if (!normalized.startsWith("[") && !normalized.startsWith("{")) return [];
+
+  try {
+    const parsed = JSON.parse(normalized);
+    const candidates = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.contacts) ? parsed.contacts : [];
+    if (!Array.isArray(candidates)) return [];
+
+    return candidates
+      .map((row) => asObject(row))
+      .map((row) => ({
+        full_name: String(row.full_name || row.name || row.contact || "").trim(),
+        whatsapp: String(row.whatsapp || row.phone || row.number || "").trim(),
+        email: String(row.email || "").trim().toLowerCase()
+      }))
+      .filter((row) => Boolean(row.whatsapp));
+  } catch {
+    return [];
+  }
+}
+
+function parseDelimitedContactLine(rawLine) {
+  const line = String(rawLine || "").trim();
+  if (!line) return null;
+
+  const columns = line
+    .split(/[;,\t|]/)
+    .map((part) => String(part || "").trim())
+    .filter(Boolean);
+  const cells = columns.length ? columns : [line];
+
+  let whatsapp = "";
+  let email = "";
+  let fullName = "";
+
+  for (const cell of cells) {
+    if (!whatsapp) {
+      const candidate = extractPhoneCandidate(cell);
+      if (candidate) whatsapp = candidate;
+    }
+    if (!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(cell)) {
+      email = cell.toLowerCase();
+    }
+  }
+
+  if (!whatsapp) {
+    const candidate = extractPhoneCandidate(line);
+    if (candidate) whatsapp = candidate;
+  }
+
+  for (const cell of cells) {
+    if (!cell) continue;
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(cell)) continue;
+    const phoneCandidate = extractPhoneCandidate(cell);
+    if (phoneCandidate && phoneCandidate.replace(/\D/g, "").length >= 10) continue;
+    fullName = cell;
+    break;
+  }
+
+  return {
+    full_name: fullName,
+    whatsapp,
+    email
+  };
+}
+
+function parseWhatsAppImportText(rawText, fileName = "") {
+  const sourceText = String(rawText || "").trim();
+  if (!sourceText) {
+    return {
+      contacts: [],
+      total_rows: 0,
+      skipped_rows: 0
+    };
+  }
+
+  const jsonContacts = parseJsonContactList(sourceText);
+  if (jsonContacts.length) {
+    return {
+      contacts: jsonContacts,
+      total_rows: jsonContacts.length,
+      skipped_rows: 0
+    };
+  }
+
+  const isVcf = /\.vcf$/i.test(String(fileName || "").trim()) || sourceText.toUpperCase().includes("BEGIN:VCARD");
+  if (isVcf) {
+    const contacts = parseVcfContactList(sourceText);
+    return {
+      contacts,
+      total_rows: contacts.length,
+      skipped_rows: 0
+    };
+  }
+
+  const lines = sourceText
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n");
+
+  const contacts = [];
+  let totalRows = 0;
+  let skippedRows = 0;
+
+  for (const rawLine of lines) {
+    const line = String(rawLine || "").trim();
+    if (!line) continue;
+    totalRows += 1;
+
+    if (isLikelyImportHeader(line)) continue;
+    const parsed = parseDelimitedContactLine(line);
+    if (!parsed?.whatsapp) {
+      skippedRows += 1;
+      continue;
+    }
+    contacts.push(parsed);
+  }
+
+  return {
+    contacts,
+    total_rows: totalRows,
+    skipped_rows: skippedRows
+  };
 }
 
 export default function SettingsModule() {
@@ -500,10 +728,20 @@ export default function SettingsModule() {
   const [rdHistoryLoading, setRdHistoryLoading] = useState(false);
   const [rdResult, setRdResult] = useState(null);
   const [rdResumeCursor, setRdResumeCursor] = useState(null);
+  const [companyOptions, setCompanyOptions] = useState([]);
+  const [companyOptionsLoading, setCompanyOptionsLoading] = useState(false);
+  const [waImportRawText, setWaImportRawText] = useState("");
+  const [waImportFileName, setWaImportFileName] = useState("");
+  const [waImportCompanyId, setWaImportCompanyId] = useState("");
+  const [waImportError, setWaImportError] = useState("");
+  const [waImportSuccess, setWaImportSuccess] = useState("");
+  const [waImporting, setWaImporting] = useState(false);
+  const [waImportResult, setWaImportResult] = useState(null);
 
   const activeCount = useMemo(() => stages.filter((item) => item.is_active).length, [stages]);
   const omieResultSummary = useMemo(() => asObject(omieResult), [omieResult]);
   const rdResultSummary = useMemo(() => asObject(rdResult), [rdResult]);
+  const waImportSummary = useMemo(() => asObject(waImportResult), [waImportResult]);
   const activeUsersCount = useMemo(() => users.filter((item) => item.status === "active").length, [users]);
   const createProfileSubcategoryOptions = useMemo(
     () => getSubcategoriesByType(proposalProductProfileForm.proposal_type),
@@ -715,6 +953,19 @@ export default function SettingsModule() {
     }
   }
 
+  async function loadCompanyOptionsForImport() {
+    setCompanyOptionsLoading(true);
+    try {
+      const rows = await listCompanyOptions();
+      setCompanyOptions(rows);
+    } catch (err) {
+      setWaImportError(err.message);
+      setCompanyOptions([]);
+    } finally {
+      setCompanyOptionsLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadUsers();
     loadStages();
@@ -723,6 +974,7 @@ export default function SettingsModule() {
     loadProposalCommercialTerms();
     loadOmieHistory();
     loadRdHistory();
+    loadCompanyOptionsForImport();
   }, []);
 
   useEffect(() => {
@@ -1655,6 +1907,7 @@ export default function SettingsModule() {
     const southStateScope = String(rdForm.south_state_scope || EMPTY_RD_FORM.south_state_scope);
     const selectedSouthStates = southCnpjOnly ? resolveSouthStates(southStateScope) : [];
     const syncScope = southCnpjOnly ? "south_cnpj_only" : rdForm.sync_customers_only ? "customers_whatsapp_only" : "full";
+    const dealsOnly = syncScope === "full" ? Boolean(rdForm.deals_only) : false;
     const dealPipelineFilter = syncScope === "full" ? String(rdForm.deal_pipeline_filter || "").trim() : "";
     const dealStageFilter = syncScope === "full" ? String(rdForm.deal_stage_filter || "").trim() : "";
     const dealsLimit = syncScope === "full" ? clampInteger(rdForm.deals_limit, 0, 500, 0) : 0;
@@ -1671,6 +1924,7 @@ export default function SettingsModule() {
       page_chunk_size: dryRun ? RD_SYNC_PAGE_CHUNK_DRY_RUN : RD_SYNC_PAGE_CHUNK_LIVE,
       dry_run: dryRun,
       sync_scope: syncScope,
+      deals_only: dealsOnly,
       deal_pipeline_filter: dealPipelineFilter || null,
       deal_stage_filter: dealStageFilter || null,
       deals_limit: dealsLimit || null,
@@ -1715,6 +1969,7 @@ export default function SettingsModule() {
         records_per_page: payload.records_per_page,
         dry_run: payload.dry_run,
         sync_scope: payload.sync_scope,
+        deals_only: payload.deals_only,
         deal_pipeline_filter: payload.deal_pipeline_filter,
         deal_stage_filter: payload.deal_stage_filter,
         deals_limit: payload.deals_limit,
@@ -1725,12 +1980,16 @@ export default function SettingsModule() {
       const previousResult = asObject(rdResult);
       const previousWasDryRun = Boolean(previousResult.dry_run);
       const previousScope = String(previousResult.sync_scope || "").trim().toLowerCase();
+      const previousDealsOnly = Boolean(previousResult.deals_only);
       const forceFreshCursorForDealSampling =
-        !dryRun && syncScope === "full" && (Boolean(dealPipelineFilter) || Boolean(dealStageFilter) || Number(dealsLimit) > 0);
+        !dryRun &&
+        syncScope === "full" &&
+        (dealsOnly || Boolean(dealPipelineFilter) || Boolean(dealStageFilter) || Number(dealsLimit) > 0);
       let cursor =
         !dryRun &&
         !previousWasDryRun &&
         previousScope === syncScope &&
+        previousDealsOnly === dealsOnly &&
         !forceFreshCursorForDealSampling &&
         rdResumeCursor &&
         typeof rdResumeCursor === "object"
@@ -1792,6 +2051,9 @@ export default function SettingsModule() {
         aggregate.skipped_invalid_payload += Number(safeResult.skipped_invalid_payload || 0);
         if (safeResult.sync_scope) {
           aggregate.sync_scope = String(safeResult.sync_scope || aggregate.sync_scope);
+        }
+        if (safeResult.deals_only !== undefined) {
+          aggregate.deals_only = Boolean(safeResult.deals_only);
         }
         if (safeResult.deal_pipeline_filter !== undefined) {
           aggregate.deal_pipeline_filter = safeResult.deal_pipeline_filter || null;
@@ -1857,6 +2119,81 @@ export default function SettingsModule() {
       setRdError(err.message);
     } finally {
       setRdSyncing(false);
+    }
+  }
+
+  async function handleWaImportFileSelect(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setWaImportError("");
+    setWaImportSuccess("");
+    setWaImportResult(null);
+
+    try {
+      const text = await file.text();
+      if (!String(text || "").trim()) {
+        throw new Error("Arquivo vazio. Selecione um arquivo com contatos.");
+      }
+      setWaImportRawText(text);
+      setWaImportFileName(file.name);
+      setWaImportSuccess(`Arquivo "${file.name}" carregado. Revise os dados e clique em importar.`);
+    } catch (err) {
+      setWaImportError(err.message || "Falha ao ler o arquivo selecionado.");
+      setWaImportFileName("");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function clearWaImportForm() {
+    setWaImportRawText("");
+    setWaImportFileName("");
+    setWaImportCompanyId("");
+    setWaImportError("");
+    setWaImportSuccess("");
+    setWaImportResult(null);
+  }
+
+  async function handleImportWhatsAppContacts(event) {
+    event.preventDefault();
+    setWaImportError("");
+    setWaImportSuccess("");
+    setWaImportResult(null);
+
+    const parsed = parseWhatsAppImportText(waImportRawText, waImportFileName);
+    if (!parsed.contacts.length) {
+      setWaImportError("Nenhum contato válido encontrado. Informe linhas com nome/telefone ou carregue um arquivo válido.");
+      return;
+    }
+
+    setWaImporting(true);
+    try {
+      const result = await importWhatsAppContactsBatch({
+        company_id: String(waImportCompanyId || "").trim() || null,
+        contacts: parsed.contacts
+      });
+
+      const safe = asObject(result);
+      const summary = {
+        ...safe,
+        source_total_rows: parsed.total_rows,
+        source_skipped_rows: parsed.skipped_rows
+      };
+      setWaImportResult(summary);
+
+      const inserted = Number(summary.inserted || 0);
+      const skippedExisting = Number(summary.skipped_existing || 0);
+      const skippedInvalid = Number(summary.skipped_invalid || 0) + Number(summary.source_skipped_rows || 0);
+      const duplicatedInPayload = Number(summary.skipped_duplicated_in_payload || 0);
+
+      setWaImportSuccess(
+        `Importação concluída: ${inserted} inserido(s), ${skippedExisting} já existente(s), ${skippedInvalid} inválido(s), ${duplicatedInPayload} duplicado(s) na lista.`
+      );
+    } catch (err) {
+      setWaImportError(err.message || "Falha ao importar contatos do WhatsApp.");
+    } finally {
+      setWaImporting(false);
     }
   }
 
@@ -3332,6 +3669,130 @@ export default function SettingsModule() {
       </article>
 
       <article className="panel top-gap">
+        <h2>Importação de contatos WhatsApp</h2>
+        <p className="muted">
+          O WhatsApp oficial não libera uma API para listar automaticamente todos os contatos do seu celular. Use este importador
+          com arquivo CSV/TXT/VCF/JSON (ou cole os dados) para trazer sua base e deduplicar por número.
+        </p>
+        {waImportError ? <p className="error-text">{waImportError}</p> : null}
+        {waImportSuccess ? <p className="success-text">{waImportSuccess}</p> : null}
+
+        <form className="form-grid top-gap" onSubmit={handleImportWhatsAppContacts}>
+          <div className="settings-omie-grid">
+            <label className="settings-field">
+              <span>Vincular todos os contatos a uma empresa (opcional)</span>
+              <select
+                value={waImportCompanyId}
+                onChange={(event) => setWaImportCompanyId(event.target.value)}
+                disabled={companyOptionsLoading || waImporting}
+              >
+                <option value="">Sem vínculo de empresa</option>
+                {companyOptions.map((company) => (
+                  <option key={company.id} value={company.id}>
+                    {company.trade_name}
+                    {company.cnpj ? ` (${company.cnpj})` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="settings-field">
+              <span>Carregar arquivo (.csv, .txt, .vcf ou .json)</span>
+              <input
+                type="file"
+                accept=".csv,.txt,.vcf,.json,text/csv,text/plain,text/vcard,application/json"
+                onChange={handleWaImportFileSelect}
+                disabled={waImporting}
+              />
+            </label>
+
+            <label className="settings-field settings-field-wide">
+              <span>Colar lista de contatos (1 linha por contato, com nome e número)</span>
+              <textarea
+                className="settings-library-textarea"
+                value={waImportRawText}
+                onChange={(event) => setWaImportRawText(event.target.value)}
+                placeholder={"Nome;WhatsApp\nMaria Silva;(47) 99999-1111\nJoao,+55 11 98888-2222"}
+                disabled={waImporting}
+              />
+            </label>
+          </div>
+
+          {waImportFileName ? <p className="muted">Arquivo carregado: {waImportFileName}</p> : null}
+
+          <div className="inline-actions">
+            <button type="submit" className="btn-primary" disabled={waImporting}>
+              {waImporting ? "Importando..." : "Importar contatos"}
+            </button>
+            <button type="button" className="btn-ghost" onClick={clearWaImportForm} disabled={waImporting}>
+              Limpar
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={loadCompanyOptionsForImport}
+              disabled={companyOptionsLoading || waImporting}
+            >
+              {companyOptionsLoading ? "Atualizando empresas..." : "Atualizar empresas"}
+            </button>
+          </div>
+        </form>
+
+        {waImportResult ? (
+          <div className="kpi-grid top-gap">
+            <article className="kpi-card">
+              <span className="kpi-label">Linhas recebidas</span>
+              <strong className="kpi-value">{Number(waImportSummary.source_total_rows || waImportSummary.received || 0)}</strong>
+            </article>
+            <article className="kpi-card">
+              <span className="kpi-label">Contatos válidos</span>
+              <strong className="kpi-value">{Number(waImportSummary.normalized || 0)}</strong>
+            </article>
+            <article className="kpi-card">
+              <span className="kpi-label">Inseridos</span>
+              <strong className="kpi-value">{Number(waImportSummary.inserted || 0)}</strong>
+            </article>
+            <article className="kpi-card">
+              <span className="kpi-label">Já existentes</span>
+              <strong className="kpi-value">{Number(waImportSummary.skipped_existing || 0)}</strong>
+            </article>
+            <article className="kpi-card">
+              <span className="kpi-label">Inválidos / ignorados</span>
+              <strong className="kpi-value">
+                {Number(waImportSummary.skipped_invalid || 0) + Number(waImportSummary.source_skipped_rows || 0)}
+              </strong>
+            </article>
+            <article className="kpi-card">
+              <span className="kpi-label">Duplicados na lista</span>
+              <strong className="kpi-value">{Number(waImportSummary.skipped_duplicated_in_payload || 0)}</strong>
+            </article>
+          </div>
+        ) : null}
+
+        {Array.isArray(waImportSummary.errors) && waImportSummary.errors.length ? (
+          <div className="top-gap">
+            <h3>Erros encontrados (amostra)</h3>
+            <ul className="muted">
+              {waImportSummary.errors.slice(0, 5).map((item, index) => (
+                <li key={`wa-import-error-${index}`}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {Array.isArray(waImportSummary.warnings) && waImportSummary.warnings.length ? (
+          <div className="top-gap">
+            <h3>Avisos (amostra)</h3>
+            <ul className="muted">
+              {waImportSummary.warnings.slice(0, 5).map((item, index) => (
+                <li key={`wa-import-warning-${index}`}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </article>
+
+      <article className="panel top-gap">
         <h2>Integração RD Station CRM</h2>
         <p className="muted">
           Por padrão, migra apenas empresas com CNPJ novo dos estados SC, PR e RS. Também é possível sincronizar com contatos
@@ -3443,6 +3904,19 @@ export default function SettingsModule() {
 
           {rdFullSyncSelected ? (
             <>
+              <label className="checkbox-inline">
+                <input
+                  type="checkbox"
+                  checked={Boolean(rdForm.deals_only)}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setRdForm((prev) => ({ ...prev, deals_only: checked }));
+                    setRdResumeCursor(null);
+                  }}
+                />
+                Sincronizar somente oportunidades (pular organizações e contatos)
+              </label>
+
               <div className="settings-omie-grid">
                 <label className="settings-field settings-field-wide">
                   <span>Filtrar oportunidades por funil do RD (opcional)</span>
@@ -3496,6 +3970,7 @@ export default function SettingsModule() {
                   onClick={() => {
                     setRdForm((prev) => ({
                       ...prev,
+                      deals_only: true,
                       deal_pipeline_filter: "Gráficas Novos Contatos",
                       deal_stage_filter: "",
                       deals_limit: "0",
@@ -3603,6 +4078,7 @@ export default function SettingsModule() {
                 const errorMessage = String(job.error_message || "").trim();
                 const dryRunFlag = Boolean(result.dry_run ?? payload.dry_run);
                 const syncScopeValue = String(result.sync_scope || payload.sync_scope || "").trim().toLowerCase();
+                const dealsOnlyValue = Boolean(result.deals_only ?? payload.deals_only);
                 const dealPipelineFilterValue = String(result.deal_pipeline_filter || payload.deal_pipeline_filter || "").trim();
                 const dealStageFilterValue = String(result.deal_stage_filter || payload.deal_stage_filter || "").trim();
                 const dealStageFilterLabel = RD_DEAL_STAGE_FILTER_OPTIONS.find(
@@ -3624,7 +4100,7 @@ export default function SettingsModule() {
                         : "";
                 const syncScopeLabel =
                   syncScopeValue === "full"
-                    ? `Importação completa${
+                    ? `Importação completa${dealsOnlyValue ? " · somente oportunidades" : ""}${
                         dealPipelineFilterValue ? ` · funil ${dealPipelineFilterValue}` : ""
                       }${
                         dealStageFilterValue ? ` · etapa ${dealStageFilterLabel || dealStageFilterValue}` : ""
