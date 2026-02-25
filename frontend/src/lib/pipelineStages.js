@@ -3,7 +3,6 @@ export const PIPELINE_STAGES = [
   { value: "qualificacao", label: "QUALIFICAÇÃO" },
   { value: "proposta", label: "PROPOSTA" },
   { value: "follow_up", label: "FOLLOW-UP" },
-  { value: "stand_by", label: "STAND-BY" },
   { value: "ganho", label: "GANHO" },
   { value: "perdido", label: "PERDIDO" }
 ];
@@ -17,8 +16,7 @@ const NEXT_STAGE_MAP = {
   lead: ["qualificacao"],
   qualificacao: ["proposta"],
   proposta: ["follow_up"],
-  follow_up: ["stand_by"],
-  stand_by: ["ganho"],
+  follow_up: ["ganho"],
   ganho: ["perdido"],
   perdido: []
 };

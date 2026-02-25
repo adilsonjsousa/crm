@@ -1432,7 +1432,7 @@ function mapOpportunityStage(stage: unknown, status: string) {
   if (normalized.includes("follow")) return "follow_up";
   if (normalized.includes("acompanh")) return "follow_up";
   if (normalized.includes("negoci")) return "follow_up";
-  if (normalized.includes("stand") || normalized.includes("espera")) return "stand_by";
+  if (normalized.includes("stand") || normalized.includes("espera")) return "follow_up";
   if (normalized.includes("ganh") || normalized.includes("won")) return "ganho";
   if (normalized.includes("perd") || normalized.includes("lost")) return "perdido";
   return "lead";
@@ -1447,7 +1447,7 @@ function resolveDealStageFilter(value: unknown) {
   if (normalized.includes("qualif")) return "qualificacao";
   if (normalized.includes("propost") || normalized.includes("proposal")) return "proposta";
   if (normalized.includes("follow")) return "follow_up";
-  if (normalized.includes("stand") || normalized.includes("espera")) return "stand_by";
+  if (normalized.includes("stand") || normalized.includes("espera")) return "follow_up";
   if (normalized.includes("ganh") || normalized.includes("won")) return "ganho";
   if (normalized.includes("perd") || normalized.includes("lost")) return "perdido";
   return "";

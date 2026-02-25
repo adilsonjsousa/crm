@@ -59,7 +59,6 @@ const RD_DEAL_STAGE_FILTER_OPTIONS = [
   { value: "qualificacao", label: "QUALIFICAÇÃO" },
   { value: "proposta", label: "PROPOSTA" },
   { value: "follow_up", label: "FOLLOW-UP" },
-  { value: "stand_by", label: "STAND-BY" },
   { value: "ganho", label: "GANHO" },
   { value: "perdido", label: "PERDIDO" }
 ];

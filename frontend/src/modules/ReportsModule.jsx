@@ -19,7 +19,6 @@ const STAGE_PROBABILITY = {
   qualificacao: 25,
   proposta: 60,
   follow_up: 70,
-  stand_by: 40,
   ganho: 100,
   perdido: 0
 };
@@ -28,8 +27,7 @@ const FUNNEL_FLOW = [
   ["lead", "qualificacao"],
   ["qualificacao", "proposta"],
   ["proposta", "follow_up"],
-  ["follow_up", "stand_by"],
-  ["stand_by", "ganho"]
+  ["follow_up", "ganho"]
 ];
 
 function asObject(value) {
