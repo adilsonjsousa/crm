@@ -1,4 +1,4 @@
-import { ensureSupabase } from "./supabase";
+import { createStatelessSupabaseClient, ensureSupabase } from "./supabase";
 import { PIPELINE_STAGES, sortByStageOrder, stageStatus } from "./pipelineStages";
 import {
   PRODUCT_CATALOG_ROWS,
@@ -2769,12 +2769,36 @@ export async function syncRdStationCrm(payload) {
   const supabase = ensureSupabase();
   const body = asObject(payload);
 
-  const { data, error } = await supabase.functions.invoke("rdstation-sync-crm-public", {
+  let { data, error } = await supabase.functions.invoke("rdstation-sync-crm-public", {
     body
   });
 
   if (error) {
-    const details = await readFunctionInvokeErrorDetails(error);
+    let details = await readFunctionInvokeErrorDetails(error);
+    const canRetryStateless = details.status === 401 || details.status === 403;
+    if (canRetryStateless) {
+      try {
+        const fallbackClient = createStatelessSupabaseClient();
+        const retry = await fallbackClient.functions.invoke("rdstation-sync-crm-public", {
+          body
+        });
+        data = retry.data;
+        error = retry.error;
+        if (!error) {
+          if (data?.error) {
+            throw new Error(String(data.message || data.error || "Falha na sincronização RD Station."));
+          }
+          return data || {};
+        }
+        details = await readFunctionInvokeErrorDetails(error);
+      } catch (retryError) {
+        const retryMessage = String(retryError?.message || "").trim();
+        if (retryMessage) {
+          throw new Error(retryMessage);
+        }
+      }
+    }
+
     const message = String(details.message || "").toLowerCase();
     const payloadMessage = String(details.payloadMessage || "");
 
