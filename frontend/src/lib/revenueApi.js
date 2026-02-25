@@ -251,6 +251,15 @@ function normalizeProposalLibraryNullableNumber(value) {
   return parsed;
 }
 
+function chunkArray(values, chunkSize = 100) {
+  const normalizedChunkSize = Number.isFinite(chunkSize) ? Math.max(1, Math.floor(chunkSize)) : 100;
+  const chunks = [];
+  for (let index = 0; index < values.length; index += normalizedChunkSize) {
+    chunks.push(values.slice(index, index + normalizedChunkSize));
+  }
+  return chunks;
+}
+
 function normalizeProposalCppSection(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "components" ? "components" : "toner";
@@ -934,6 +943,146 @@ export async function deleteContact(contactId) {
   const supabase = ensureSupabase();
   const { error } = await supabase.from("contacts").delete().eq("id", normalizedContactId);
   if (error) throw new Error(normalizeError(error, "Falha ao excluir contato."));
+}
+
+export async function importWhatsAppContactsBatch(payload) {
+  const supabase = ensureSupabase();
+  const rawContacts = Array.isArray(payload?.contacts) ? payload.contacts : [];
+  const normalizedCompanyIdRaw = String(payload?.company_id || payload?.companyId || "").trim();
+  const normalizedCompanyId = normalizedCompanyIdRaw || null;
+
+  const normalizedContacts = [];
+  const skippedInvalidRows = [];
+  const warnings = [];
+  const seenDigits = new Set();
+  let duplicatedInPayload = 0;
+
+  for (let index = 0; index < rawContacts.length; index += 1) {
+    const rowNumber = index + 1;
+    const row = asObject(rawContacts[index]);
+    const phoneRaw = String(row.whatsapp || row.phone || row.number || "").trim();
+
+    if (!phoneRaw) {
+      skippedInvalidRows.push(`Linha ${rowNumber}: WhatsApp não informado.`);
+      continue;
+    }
+
+    let whatsapp = null;
+    try {
+      whatsapp = validateBrazilPhoneOrEmpty(phoneRaw, `WhatsApp da linha ${rowNumber}`);
+    } catch (error) {
+      skippedInvalidRows.push(error instanceof Error ? error.message : `Linha ${rowNumber}: WhatsApp inválido.`);
+      continue;
+    }
+
+    if (!whatsapp) {
+      skippedInvalidRows.push(`Linha ${rowNumber}: WhatsApp inválido.`);
+      continue;
+    }
+
+    const digits = cleanDigits(whatsapp);
+    if (!digits || (digits.length !== 10 && digits.length !== 11)) {
+      skippedInvalidRows.push(`Linha ${rowNumber}: WhatsApp inválido.`);
+      continue;
+    }
+
+    if (seenDigits.has(digits)) {
+      duplicatedInPayload += 1;
+      continue;
+    }
+    seenDigits.add(digits);
+
+    const fullNameRaw = String(row.full_name || row.name || "").trim();
+    const emailRaw = String(row.email || "").trim().toLowerCase();
+    const roleTitleRaw = String(row.role_title || row.role || "").trim();
+    const hasValidEmail = !emailRaw || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw);
+    if (emailRaw && !hasValidEmail) {
+      warnings.push(`Linha ${rowNumber}: e-mail inválido ignorado (${emailRaw}).`);
+    }
+
+    normalizedContacts.push({
+      company_id: normalizedCompanyId,
+      full_name: fullNameRaw || `Contato WhatsApp ${digits}`,
+      whatsapp,
+      email: hasValidEmail ? emailRaw || null : null,
+      role_title: roleTitleRaw || null,
+      is_primary: false
+    });
+  }
+
+  if (!normalizedContacts.length) {
+    return {
+      received: rawContacts.length,
+      normalized: 0,
+      inserted: 0,
+      skipped_existing: 0,
+      skipped_invalid: skippedInvalidRows.length,
+      skipped_duplicated_in_payload: duplicatedInPayload,
+      errors: skippedInvalidRows.slice(0, 30),
+      warnings: warnings.slice(0, 30)
+    };
+  }
+
+  const existingDigits = new Set();
+  const normalizedWhatsappList = normalizedContacts.map((item) => item.whatsapp);
+  for (const whatsappChunk of chunkArray(normalizedWhatsappList, 150)) {
+    let query = supabase.from("contacts").select("whatsapp").in("whatsapp", whatsappChunk);
+    if (normalizedCompanyId) {
+      query = query.eq("company_id", normalizedCompanyId);
+    } else {
+      query = query.is("company_id", null);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw new Error(normalizeError(error, "Falha ao verificar contatos já existentes."));
+    }
+
+    for (const row of data || []) {
+      const digits = cleanDigits(row?.whatsapp);
+      if (digits) existingDigits.add(digits);
+    }
+  }
+
+  const insertQueue = normalizedContacts.filter((item) => !existingDigits.has(cleanDigits(item.whatsapp)));
+  let skippedExisting = normalizedContacts.length - insertQueue.length;
+  let inserted = 0;
+  const insertErrors = [];
+
+  for (const chunk of chunkArray(insertQueue, 80)) {
+    const { error } = await supabase.from("contacts").insert(chunk);
+    if (!error) {
+      inserted += chunk.length;
+      continue;
+    }
+
+    for (const row of chunk) {
+      const { error: rowError } = await supabase.from("contacts").insert(row);
+      if (!rowError) {
+        inserted += 1;
+        continue;
+      }
+
+      const fingerprint = `${String(rowError?.message || "")} ${String(rowError?.details || "")}`.toLowerCase();
+      if (fingerprint.includes("contacts_company_whatsapp_digits_unique_idx")) {
+        skippedExisting += 1;
+        continue;
+      }
+
+      insertErrors.push(`${row.full_name}: ${normalizeError(rowError, "Falha ao inserir contato.")}`);
+    }
+  }
+
+  return {
+    received: rawContacts.length,
+    normalized: normalizedContacts.length,
+    inserted,
+    skipped_existing: skippedExisting,
+    skipped_invalid: skippedInvalidRows.length,
+    skipped_duplicated_in_payload: duplicatedInPayload,
+    errors: [...skippedInvalidRows, ...insertErrors].slice(0, 30),
+    warnings: warnings.slice(0, 30)
+  };
 }
 
 export async function listOpportunities(options = {}) {
