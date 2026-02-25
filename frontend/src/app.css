@@ -906,6 +906,50 @@ a.btn-table-action {
   z-index: 1;
 }
 
+.reports-funnel-kpi-grid {
+  grid-template-columns: repeat(4, minmax(160px, 220px));
+}
+
+.reports-funnel-toolbar {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(160px, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.reports-filter-field {
+  display: grid;
+  gap: 4px;
+}
+
+.reports-filter-field span {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.reports-filter-field input,
+.reports-filter-field select {
+  width: 100%;
+  min-width: 0;
+}
+
+.reports-filter-checkbox {
+  align-self: end;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+}
+
+.reports-funnel-actions {
+  align-self: end;
+}
+
+.reports-grid-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 8px;
+}
+
 .settings-stage-input {
   width: 100%;
   min-width: 180px;
@@ -2167,6 +2211,18 @@ tbody tr:hover {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
   }
 
+  .reports-funnel-toolbar {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
+  .reports-funnel-kpi-grid {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+
+  .reports-grid-two {
+    grid-template-columns: 1fr;
+  }
+
   .reports-header {
     grid-template-columns: 1fr;
     align-items: stretch;
@@ -2274,7 +2330,9 @@ tbody tr:hover {
   }
 
   .reports-kpi-grid,
-  .reports-toolbar {
+  .reports-toolbar,
+  .reports-funnel-toolbar,
+  .reports-funnel-kpi-grid {
     grid-template-columns: 1fr;
   }
 

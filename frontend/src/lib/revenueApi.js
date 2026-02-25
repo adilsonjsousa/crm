@@ -551,6 +551,92 @@ export async function listAllCompaniesForReport() {
   }));
 }
 
+export async function listPipelineAnalyticsForReport() {
+  const supabase = ensureSupabase();
+  const pageSize = 500;
+
+  const opportunities = [];
+  let fromOpportunities = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("opportunities")
+      .select(
+        "id,company_id,owner_user_id,title,stage,status,estimated_value,close_probability,expected_close_date,created_at,updated_at,companies:company_id(id,trade_name,segmento,city,state,address_full)"
+      )
+      .order("created_at", { ascending: false })
+      .range(fromOpportunities, fromOpportunities + pageSize - 1);
+
+    if (error) throw new Error(normalizeError(error, "Falha ao listar oportunidades para relatório."));
+    if (!data?.length) break;
+    opportunities.push(...data);
+    if (data.length < pageSize) break;
+    fromOpportunities += pageSize;
+  }
+
+  const stageHistory = [];
+  let fromStageHistory = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("opportunity_stage_history")
+      .select("id,opportunity_id,from_stage,to_stage,changed_at")
+      .order("changed_at", { ascending: true })
+      .range(fromStageHistory, fromStageHistory + pageSize - 1);
+
+    if (error) throw new Error(normalizeError(error, "Falha ao listar histórico de etapas para relatório."));
+    if (!data?.length) break;
+    stageHistory.push(...data);
+    if (data.length < pageSize) break;
+    fromStageHistory += pageSize;
+  }
+
+  const openTasks = [];
+  let fromOpenTasks = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("tasks")
+      .select("id,company_id,title,status,due_date,assignee_user_id,created_at")
+      .not("status", "in", "(done,cancelled)")
+      .not("company_id", "is", null)
+      .not("due_date", "is", null)
+      .order("due_date", { ascending: true })
+      .range(fromOpenTasks, fromOpenTasks + pageSize - 1);
+
+    if (error) throw new Error(normalizeError(error, "Falha ao listar tarefas para relatório."));
+    if (!data?.length) break;
+    openTasks.push(...data);
+    if (data.length < pageSize) break;
+    fromOpenTasks += pageSize;
+  }
+
+  const integrationLinks = [];
+  let fromIntegrationLinks = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("integration_links")
+      .select("provider,local_entity_type,local_entity_id,updated_at")
+      .eq("local_entity_type", "company")
+      .in("provider", ["omie", "rdstation"])
+      .order("updated_at", { ascending: false })
+      .range(fromIntegrationLinks, fromIntegrationLinks + pageSize - 1);
+
+    if (error) {
+      console.warn("Falha ao listar origem de integração para relatório de funil:", error.message);
+      break;
+    }
+    if (!data?.length) break;
+    integrationLinks.push(...data);
+    if (data.length < pageSize) break;
+    fromIntegrationLinks += pageSize;
+  }
+
+  return {
+    opportunities,
+    stageHistory,
+    openTasks,
+    integrationLinks
+  };
+}
+
 export async function getCompanyById(companyId) {
   const normalizedCompanyId = String(companyId || "").trim();
   if (!normalizedCompanyId) return null;
