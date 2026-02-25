@@ -1525,14 +1525,18 @@ function resolveDealPipelineFilter(value: unknown) {
   return normalized;
 }
 
-function matchDealPipelineFilter(pipelineRaw: unknown, filterNormalized: string) {
+function matchDealPipelineFilter(pipelineRaw: unknown, filterNormalized: string, stageRaw: unknown = "") {
   if (!filterNormalized) return true;
-  const normalizedPipeline = normalizeDealPipelineName(pipelineRaw);
-  if (!normalizedPipeline) return false;
-  return (
-    normalizedPipeline === filterNormalized ||
-    normalizedPipeline.includes(filterNormalized) ||
-    filterNormalized.includes(normalizedPipeline)
+  const normalizedCandidates = [
+    normalizeDealPipelineName(pipelineRaw),
+    normalizeDealPipelineName(stageRaw)
+  ].filter(Boolean);
+  if (!normalizedCandidates.length) return false;
+  return normalizedCandidates.some(
+    (candidate) =>
+      candidate === filterNormalized ||
+      candidate.includes(filterNormalized) ||
+      filterNormalized.includes(candidate)
   );
 }
 
@@ -3003,7 +3007,7 @@ Deno.serve(async (request: Request) => {
           }
 
           const parsed = parseDeal(rawItem);
-          if (dealPipelineFilter && !matchDealPipelineFilter(parsed.pipelineRaw, dealPipelineFilter)) {
+          if (dealPipelineFilter && !matchDealPipelineFilter(parsed.pipelineRaw, dealPipelineFilter, parsed.stageRaw)) {
             summary.opportunities_skipped_by_pipeline_filter =
               getResourceCount(summary, "opportunities_skipped_by_pipeline_filter") + 1;
             continue;
