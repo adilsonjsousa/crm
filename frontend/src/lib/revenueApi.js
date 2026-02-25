@@ -1001,6 +1001,15 @@ export async function createTicket(payload) {
   if (error) throw new Error(normalizeError(error, "Falha ao criar chamado."));
 }
 
+export async function deleteTicket(ticketId) {
+  const normalizedTicketId = String(ticketId || "").trim();
+  if (!normalizedTicketId) throw new Error("Chamado inválido para exclusão.");
+
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("service_tickets").delete().eq("id", normalizedTicketId);
+  if (error) throw new Error(normalizeError(error, "Falha ao excluir chamado."));
+}
+
 export async function listTasks() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
@@ -1085,6 +1094,15 @@ export async function updateTask(taskId, payload) {
   const supabase = ensureSupabase();
   const { error } = await supabase.from("tasks").update(payload).eq("id", taskId);
   if (error) throw new Error(normalizeError(error, "Falha ao atualizar tarefa."));
+}
+
+export async function deleteTask(taskId) {
+  const normalizedTaskId = String(taskId || "").trim();
+  if (!normalizedTaskId) throw new Error("Tarefa inválida para exclusão.");
+
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("tasks").delete().eq("id", normalizedTaskId);
+  if (error) throw new Error(normalizeError(error, "Falha ao excluir tarefa."));
 }
 
 async function insertTaskVisitEvent({ taskId, companyId, eventName, payload, happenedAt }) {
@@ -1599,6 +1617,15 @@ export async function createOrder(payload) {
   }
 
   return data;
+}
+
+export async function deleteOrder(orderId) {
+  const normalizedOrderId = String(orderId || "").trim();
+  if (!normalizedOrderId) throw new Error("Pedido inválido para exclusão.");
+
+  const supabase = ensureSupabase();
+  const { error } = await supabase.from("sales_orders").delete().eq("id", normalizedOrderId);
+  if (error) throw new Error(normalizeError(error, "Falha ao excluir pedido."));
 }
 
 export async function findOrderByOpportunity(opportunityId) {

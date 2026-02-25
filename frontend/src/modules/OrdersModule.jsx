@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { createOrder, listCompanyOptions, listOrders } from "../lib/revenueApi";
+import { createOrder, deleteOrder, listCompanyOptions, listOrders } from "../lib/revenueApi";
+import { confirmStrongDelete } from "../lib/confirmDelete";
 import {
   PRODUCTS_BY_SUBCATEGORY,
   SALES_TYPES,
@@ -19,6 +20,8 @@ export default function OrdersModule() {
   const [orders, setOrders] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [deletingOrderId, setDeletingOrderId] = useState("");
   const [form, setForm] = useState({
     company_id: "",
     order_number: "",
@@ -51,6 +54,7 @@ export default function OrdersModule() {
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
+    setSuccess("");
 
     try {
       if (!String(form.order_type || "").trim()) {
@@ -95,8 +99,33 @@ export default function OrdersModule() {
         order_date: ""
       }));
       await load();
+      setSuccess("Pedido salvo com sucesso.");
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  async function handleDeleteOrder(order) {
+    const orderId = String(order?.id || "").trim();
+    if (!orderId) return;
+
+    const confirmed = confirmStrongDelete({
+      entityLabel: "o pedido",
+      itemLabel: order?.order_number || orderId
+    });
+    if (!confirmed) return;
+
+    setError("");
+    setSuccess("");
+    setDeletingOrderId(orderId);
+    try {
+      await deleteOrder(orderId);
+      setOrders((prev) => prev.filter((item) => item.id !== orderId));
+      setSuccess("Pedido excluído com sucesso.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeletingOrderId("");
     }
   }
 
@@ -104,6 +133,7 @@ export default function OrdersModule() {
     <section className="module two-col">
       <article className="panel">
         <h2>Pedidos de Venda</h2>
+        {success ? <p className="success-text">{success}</p> : null}
         <form className="form-grid" onSubmit={handleSubmit}>
           <select
             required
@@ -208,6 +238,7 @@ export default function OrdersModule() {
                 <th>Tipo</th>
                 <th>Produtos</th>
                 <th>Total</th>
+                <th>Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -218,6 +249,16 @@ export default function OrdersModule() {
                   <td>{orderTypeLabel(order.order_type)}</td>
                   <td>{(order.items || []).map((item) => item.item_description).join(", ") || "-"}</td>
                   <td>{brl(order.total_amount)}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-table-action"
+                      onClick={() => handleDeleteOrder(order)}
+                      disabled={deletingOrderId === order.id}
+                    >
+                      {deletingOrderId === order.id ? "Excluindo..." : "Excluir"}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

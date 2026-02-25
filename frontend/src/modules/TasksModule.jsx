@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createTask,
+  deleteTask,
   listCompanyOptions,
   listSystemUsers,
   listTaskScheduleConflicts,
@@ -12,6 +13,7 @@ import {
   scheduleTaskOnlineMeeting,
   updateTask
 } from "../lib/revenueApi";
+import { confirmStrongDelete } from "../lib/confirmDelete";
 import { toWhatsAppBrazilNumber } from "../lib/phone";
 
 const ACTIVITY_OPTIONS = [
@@ -342,6 +344,7 @@ export default function TasksModule({
   const [checkinTaskId, setCheckinTaskId] = useState("");
   const [checkoutTaskId, setCheckoutTaskId] = useState("");
   const [meetingTaskId, setMeetingTaskId] = useState("");
+  const [deletingTaskId, setDeletingTaskId] = useState("");
   const [companySearchTerm, setCompanySearchTerm] = useState("");
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
   const [form, setForm] = useState({
@@ -942,6 +945,30 @@ export default function TasksModule({
         )
       );
       setError(err.message);
+    }
+  }
+
+  async function handleDeleteTask(task) {
+    const taskId = String(task?.id || "").trim();
+    if (!taskId) return;
+
+    const confirmed = confirmStrongDelete({
+      entityLabel: "a tarefa",
+      itemLabel: task?.title || "Sem título"
+    });
+    if (!confirmed) return;
+
+    setError("");
+    setSuccess("");
+    setDeletingTaskId(taskId);
+    try {
+      await deleteTask(taskId);
+      setTasks((prev) => prev.filter((item) => item.id !== taskId));
+      setSuccess("Tarefa excluída com sucesso.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeletingTaskId("");
     }
   }
 
@@ -1623,6 +1650,7 @@ export default function TasksModule({
                 <th>Status</th>
                 <th>Reunião online</th>
                 <th>Execução em campo</th>
+                <th>Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -1728,11 +1756,21 @@ export default function TasksModule({
                       </div>
                     )}
                   </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-table-action"
+                      onClick={() => handleDeleteTask(task)}
+                      disabled={deletingTaskId === task.id}
+                    >
+                      {deletingTaskId === task.id ? "Excluindo..." : "Excluir"}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {!listRows.length ? (
                 <tr>
-                  <td colSpan={10} className="muted">
+                  <td colSpan={11} className="muted">
                     Nenhuma tarefa encontrada.
                   </td>
                 </tr>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { createTicket, listCompanyOptions, listTickets } from "../lib/revenueApi";
+import { createTicket, deleteTicket, listCompanyOptions, listTickets } from "../lib/revenueApi";
+import { confirmStrongDelete } from "../lib/confirmDelete";
 
 const SERVICE_FORM_DEFAULTS_STORAGE_KEY = "crm.service.form-defaults.v1";
 
@@ -46,6 +47,7 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
   const [companies, setCompanies] = useState([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [deletingTicketId, setDeletingTicketId] = useState("");
   const [companySearchTerm, setCompanySearchTerm] = useState("");
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
   const [form, setForm] = useState({
@@ -194,6 +196,30 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
     });
   }
 
+  async function handleDeleteTicket(ticket) {
+    const ticketId = String(ticket?.id || "").trim();
+    if (!ticketId) return;
+
+    const confirmed = confirmStrongDelete({
+      entityLabel: "o chamado",
+      itemLabel: ticket?.companies?.trade_name || ticket?.id
+    });
+    if (!confirmed) return;
+
+    setError("");
+    setSuccess("");
+    setDeletingTicketId(ticketId);
+    try {
+      await deleteTicket(ticketId);
+      setTickets((prev) => prev.filter((item) => item.id !== ticketId));
+      setSuccess("Chamado excluído com sucesso.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeletingTicketId("");
+    }
+  }
+
   return (
     <section className="module two-col">
       <article className="panel">
@@ -280,6 +306,7 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
                 <th>Tipo</th>
                 <th>Prioridade</th>
                 <th>Status</th>
+                <th>Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -289,6 +316,16 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
                   <td>{ticket.ticket_type}</td>
                   <td>{ticket.priority}</td>
                   <td>{ticket.status}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-table-action"
+                      onClick={() => handleDeleteTicket(ticket)}
+                      disabled={deletingTicketId === ticket.id}
+                    >
+                      {deletingTicketId === ticket.id ? "Excluindo..." : "Excluir"}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
