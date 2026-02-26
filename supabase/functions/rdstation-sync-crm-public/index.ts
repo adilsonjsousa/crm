@@ -1530,19 +1530,59 @@ function resolveDealPipelineFilter(value: unknown) {
   return normalized;
 }
 
-function matchDealPipelineFilter(pipelineRaw: unknown, filterNormalized: string, stageRaw: unknown = "") {
-  if (!filterNormalized) return true;
-  const normalizedCandidates = [
-    normalizeDealPipelineName(pipelineRaw),
-    normalizeDealPipelineName(stageRaw)
-  ].filter(Boolean);
-  if (!normalizedCandidates.length) return false;
-  return normalizedCandidates.some(
+const LEGACY_PIPELINE_STAGE_FALLBACK_HINTS: Record<string, string[]> = {
+  "graficas novos contatos": [
+    "contato feito",
+    "retomar contato no futuro",
+    "acompanhamento",
+    "aguardando fechamento",
+    "envio de amostras",
+    "contatos antigos",
+    "sem contato"
+  ]
+};
+
+function matchDealPipelineFilter(
+  pipelineRaw: unknown,
+  filterNormalized: string,
+  stageRaw: unknown = ""
+): { matched: boolean; usedStageFallback: boolean } {
+  if (!filterNormalized) {
+    return { matched: true, usedStageFallback: false };
+  }
+
+  const normalizedPipeline = normalizeDealPipelineName(pipelineRaw);
+  const normalizedStage = normalizeDealPipelineName(stageRaw);
+  const normalizedCandidates = [normalizedPipeline, normalizedStage].filter(Boolean);
+
+  const directMatch = normalizedCandidates.some(
     (candidate) =>
       candidate === filterNormalized ||
       candidate.includes(filterNormalized) ||
       filterNormalized.includes(candidate)
   );
+  if (directMatch) {
+    return { matched: true, usedStageFallback: false };
+  }
+
+  // Legacy RD API v1 can omit pipeline/funnel metadata in deals responses.
+  // In this case, allow known stage names for specific funnels to avoid false negatives.
+  if (!normalizedPipeline && normalizedStage) {
+    const fallbackStages = LEGACY_PIPELINE_STAGE_FALLBACK_HINTS[filterNormalized] || [];
+    if (fallbackStages.length) {
+      const stageFallbackMatch = fallbackStages.some(
+        (stageHint) =>
+          normalizedStage === stageHint ||
+          normalizedStage.includes(stageHint) ||
+          stageHint.includes(normalizedStage)
+      );
+      if (stageFallbackMatch) {
+        return { matched: true, usedStageFallback: true };
+      }
+    }
+  }
+
+  return { matched: false, usedStageFallback: false };
 }
 
 function normalizeLooseOpportunityTitle(value: unknown) {
@@ -2876,10 +2916,12 @@ Deno.serve(async (request: Request) => {
       opportunities_created: 0,
       opportunities_updated: 0,
       opportunities_matched_by_similarity: 0,
+      opportunities_matched_by_pipeline_stage_fallback: 0,
       opportunities_skipped_by_scope: 0,
       opportunities_skipped_by_pipeline_filter: 0,
       opportunities_skipped_by_stage_filter: 0,
       opportunities_pipeline_samples: [],
+      opportunities_pipeline_stage_fallback_samples: [],
       links_updated: 0,
       skipped_without_identifier: 0,
       skipped_without_cnpj: 0,
@@ -3048,10 +3090,23 @@ Deno.serve(async (request: Request) => {
             `pipeline_id=${safeString(parsed.pipelineIdRaw) || "-"} | pipeline=${safeString(parsed.pipelineRaw) || "-"} | stage=${safeString(parsed.stageRaw) || "-"}`,
             30
           );
-          if (dealPipelineFilter && !matchDealPipelineFilter(parsed.pipelineRaw, dealPipelineFilter, parsed.stageRaw)) {
-            summary.opportunities_skipped_by_pipeline_filter =
-              getResourceCount(summary, "opportunities_skipped_by_pipeline_filter") + 1;
-            continue;
+          if (dealPipelineFilter) {
+            const pipelineFilterMatch = matchDealPipelineFilter(parsed.pipelineRaw, dealPipelineFilter, parsed.stageRaw);
+            if (!pipelineFilterMatch.matched) {
+              summary.opportunities_skipped_by_pipeline_filter =
+                getResourceCount(summary, "opportunities_skipped_by_pipeline_filter") + 1;
+              continue;
+            }
+            if (pipelineFilterMatch.usedStageFallback) {
+              summary.opportunities_matched_by_pipeline_stage_fallback =
+                getResourceCount(summary, "opportunities_matched_by_pipeline_stage_fallback") + 1;
+              appendUniqueSummarySample(
+                summary,
+                "opportunities_pipeline_stage_fallback_samples",
+                safeString(parsed.stageRaw) || "-",
+                20
+              );
+            }
           }
           const mappedStatus = mapOpportunityStatus(parsed.statusRaw);
           const mappedStage = mapOpportunityStage(parsed.stageRaw, mappedStatus);

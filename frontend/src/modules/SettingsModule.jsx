@@ -1953,6 +1953,7 @@ export default function SettingsModule() {
         opportunities_created: 0,
         opportunities_updated: 0,
         opportunities_matched_by_similarity: 0,
+        opportunities_matched_by_pipeline_stage_fallback: 0,
         opportunities_skipped_by_scope: 0,
         opportunities_skipped_by_pipeline_filter: 0,
         opportunities_skipped_by_stage_filter: 0,
@@ -2042,6 +2043,9 @@ export default function SettingsModule() {
         aggregate.opportunities_created += Number(safeResult.opportunities_created || 0);
         aggregate.opportunities_updated += Number(safeResult.opportunities_updated || 0);
         aggregate.opportunities_matched_by_similarity += Number(safeResult.opportunities_matched_by_similarity || 0);
+        aggregate.opportunities_matched_by_pipeline_stage_fallback += Number(
+          safeResult.opportunities_matched_by_pipeline_stage_fallback || 0
+        );
         aggregate.opportunities_skipped_by_scope += Number(safeResult.opportunities_skipped_by_scope || 0);
         aggregate.opportunities_skipped_by_pipeline_filter += Number(safeResult.opportunities_skipped_by_pipeline_filter || 0);
         aggregate.opportunities_skipped_by_stage_filter += Number(safeResult.opportunities_skipped_by_stage_filter || 0);
@@ -2238,6 +2242,12 @@ export default function SettingsModule() {
     Number(rdResultSummary.contacts_skipped_without_whatsapp || 0) +
     Number(rdResultSummary.contacts_skipped_existing_whatsapp || 0);
   const rdSkippedOutsideSouthTotal = Number(rdResultSummary.companies_skipped_by_state || 0);
+  const rdPipelineFilteredTotal = Number(rdResultSummary.opportunities_skipped_by_pipeline_filter || 0);
+  const rdStageFilteredTotal = Number(rdResultSummary.opportunities_skipped_by_stage_filter || 0);
+  const rdPipelineStageFallbackMatchedTotal = Number(
+    rdResultSummary.opportunities_matched_by_pipeline_stage_fallback || 0
+  );
+  const rdOpportunitiesProcessedTotal = Number(rdResultSummary.opportunities_processed || 0);
   const rdResultAllowedStates = sanitizeAllowedStates(rdResultSummary.allowed_states);
   const rdCurrentAllowedStates = rdSouthOnlySelected ? resolveSouthStates(rdForm.south_state_scope) : [];
   const rdScopeSouthLabel = formatAllowedStatesLabel(rdResultAllowedStates.length ? rdResultAllowedStates : rdCurrentAllowedStates);
@@ -4030,16 +4040,22 @@ export default function SettingsModule() {
               <span className="kpi-label">Empresas já existentes</span>
               <strong className="kpi-value">{Number(rdResultSummary.companies_skipped_existing || 0)}</strong>
             </article>
-            {Number(rdResultSummary.opportunities_skipped_by_stage_filter || 0) > 0 ? (
+            {rdStageFilteredTotal > 0 ? (
               <article className="kpi-card">
                 <span className="kpi-label">Oportunidades fora do filtro</span>
-                <strong className="kpi-value">{Number(rdResultSummary.opportunities_skipped_by_stage_filter || 0)}</strong>
+                <strong className="kpi-value">{rdStageFilteredTotal}</strong>
               </article>
             ) : null}
-            {Number(rdResultSummary.opportunities_skipped_by_pipeline_filter || 0) > 0 ? (
+            {rdPipelineFilteredTotal > 0 ? (
               <article className="kpi-card">
                 <span className="kpi-label">Oportunidades fora do funil</span>
-                <strong className="kpi-value">{Number(rdResultSummary.opportunities_skipped_by_pipeline_filter || 0)}</strong>
+                <strong className="kpi-value">{rdPipelineFilteredTotal}</strong>
+              </article>
+            ) : null}
+            {rdPipelineStageFallbackMatchedTotal > 0 ? (
+              <article className="kpi-card">
+                <span className="kpi-label">Match por etapa (fallback)</span>
+                <strong className="kpi-value">{rdPipelineStageFallbackMatchedTotal}</strong>
               </article>
             ) : null}
             {Number(rdResultSummary.opportunities_matched_by_similarity || 0) > 0 ? (
@@ -4052,6 +4068,17 @@ export default function SettingsModule() {
         ) : null}
         {rdResult && rdResultSummary.dry_run ? (
           <p className="muted">Resultado em modo teste: os dados foram apenas validados e não foram gravados no CRM.</p>
+        ) : null}
+        {rdResult &&
+        rdScopeValue === "full" &&
+        rdOpportunitiesProcessedTotal === 0 &&
+        rdPipelineFilteredTotal > 0 &&
+        String(rdResultSummary.deal_pipeline_filter || "").trim() ? (
+          <p className="error-text">
+            Nenhuma oportunidade foi importada porque o filtro de funil descartou {rdPipelineFilteredTotal} registro(s). O sistema
+            já aplica fallback por etapa quando o RD não informa o funil; se ainda zerar, revise o nome do funil e rode sem filtro
+            para comparar.
+          </p>
         ) : null}
 
         <h3 className="top-gap">Histórico de sincronizações RD</h3>
@@ -4090,6 +4117,7 @@ export default function SettingsModule() {
                 const hasMoreFlag = parseBoolean(result.has_more ?? payload.has_more, false);
                 const stopReason = String(result.stop_reason || payload.stop_reason || "").trim();
                 const nextResource = String(result.next_resource || payload.next_resource || "").trim().toLowerCase();
+                const opportunitiesSkippedByPipeline = Number(result.opportunities_skipped_by_pipeline_filter || 0);
                 const nextResourceLabel =
                   nextResource === "organizations"
                     ? "organizações"
@@ -4112,7 +4140,16 @@ export default function SettingsModule() {
                   hasMoreFlag && !errorMessage
                     ? `Lote parcial (${stopReason || "page_chunk_limit"}). Continue para seguir em ${nextResourceLabel || "próxima etapa"}.`
                     : "";
-                const details = errorMessage || partialDetails || (job.status === "success" ? "Concluído sem erro." : "-");
+                const skippedByPipelineDetails =
+                  !errorMessage &&
+                  !hasMoreFlag &&
+                  processed === 0 &&
+                  opportunities === 0 &&
+                  opportunitiesSkippedByPipeline > 0
+                    ? `${opportunitiesSkippedByPipeline} oportunidade(s) fora do funil filtrado neste lote.`
+                    : "";
+                const details =
+                  errorMessage || partialDetails || skippedByPipelineDetails || (job.status === "success" ? "Concluído sem erro." : "-");
 
                 return (
                   <tr key={job.id}>
