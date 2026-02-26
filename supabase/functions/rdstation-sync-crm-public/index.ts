@@ -2768,6 +2768,13 @@ Deno.serve(async (request: Request) => {
       body.backfillRdCompanies,
     false
   );
+  const enrichMissingCompaniesDuringSync = parseBoolean(
+    body.enrich_missing_companies_during_sync ??
+      body.enrichMissingCompaniesDuringSync ??
+      body.backfill_companies_during_sync ??
+      body.backfillCompaniesDuringSync,
+    false
+  );
   const dryRun = parseBoolean(body.dry_run ?? body.dryRun, false);
   const enrichmentScanLimit = clampNumber(
     body.enrichment_scan_limit ?? body.enrichmentScanLimit,
@@ -2879,7 +2886,8 @@ Deno.serve(async (request: Request) => {
           execution_guard_ms: executionGuardMs,
           cursor: cursorState,
           enrichment_scan_limit: enrichmentScanLimit,
-          enrichment_batch_limit: enrichmentBatchLimit
+          enrichment_batch_limit: enrichmentBatchLimit,
+          enrich_missing_companies_during_sync: enrichMissingCompaniesDuringSync
         },
         started_at: startedAt
       })
@@ -2971,6 +2979,7 @@ Deno.serve(async (request: Request) => {
         stop_reason: "completed",
         enrichment_scan_limit: enrichmentScanLimit,
         enrichment_batch_limit: enrichmentBatchLimit,
+        enrich_missing_companies_during_sync: enrichMissingCompaniesDuringSync,
         started_at: startedAt,
         finished_at: new Date().toISOString()
       };
@@ -3155,14 +3164,17 @@ Deno.serve(async (request: Request) => {
       }
     }
 
-    await enrichMissingRdCompaniesBatch({
-      supabase,
-      dryRun,
-      summary,
-      cache: cnpjProfileCache,
-      scanLimit: enrichmentScanLimit,
-      batchLimit: enrichmentBatchLimit
-    });
+    // Optional heavy step: keep disabled by default during normal sync to avoid compute spikes.
+    if (enrichMissingCompaniesDuringSync && !dealsOnly) {
+      await enrichMissingRdCompaniesBatch({
+        supabase,
+        dryRun,
+        summary,
+        cache: cnpjProfileCache,
+        scanLimit: enrichmentScanLimit,
+        batchLimit: enrichmentBatchLimit
+      });
+    }
 
     const hasMore = state.resource_index < RESOURCE_ORDER.length;
     const nextCursor = hasMore
@@ -3196,6 +3208,7 @@ Deno.serve(async (request: Request) => {
       next_cursor: nextCursor,
       next_resource: hasMore ? RESOURCE_ORDER[state.resource_index] : null,
       stop_reason: stopReason,
+      enrich_missing_companies_during_sync: enrichMissingCompaniesDuringSync,
       started_at: startedAt,
       finished_at: new Date().toISOString()
     };
