@@ -986,6 +986,85 @@ function formatCnpj(value) {
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
 }
 
+function parseMoneyLikeValue(value) {
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : 0;
+  const raw = String(value || "").trim();
+  if (!raw) return 0;
+  const normalized = raw.replace(/r\$/gi, "").replace(/\s+/g, "");
+  const candidate = normalized.includes(",")
+    ? normalized.replace(/\./g, "").replace(",", ".")
+    : normalized.replace(/,/g, "");
+  const parsed = Number(candidate);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function readImportField(normalizedRow, aliases = []) {
+  for (const alias of aliases) {
+    const key = normalizeLookupText(alias);
+    if (!Object.prototype.hasOwnProperty.call(normalizedRow, key)) continue;
+    const value = normalizedRow[key];
+    if (value === 0) return "0";
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function mapImportOpportunityType(value) {
+  const normalized = normalizeLookupText(value);
+  if (!normalized) return "equipment";
+  if (normalized.includes("supr")) return "supplies";
+  if (normalized.includes("serv")) return "service";
+  return "equipment";
+}
+
+function mapImportOpportunityStage(value) {
+  const normalized = normalizeLookupText(value);
+  if (!normalized) return "lead";
+  if (normalized.includes("qualif")) return "qualificacao";
+  if (normalized.includes("propost") || normalized.includes("orcament")) return "proposta";
+  if (normalized.includes("follow") || normalized.includes("acompanh") || normalized.includes("negoci")) return "follow_up";
+  if (normalized.includes("ganh") || normalized.includes("won")) return "ganho";
+  if (normalized.includes("perd") || normalized.includes("lost")) return "perdido";
+  return "lead";
+}
+
+function parseImportDateToYmd(value) {
+  if (!value) return todayYmd();
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  const text = String(value || "").trim();
+  if (!text) return todayYmd();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+
+  const brMatch = text.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+  if (brMatch) {
+    const day = Number(brMatch[1]);
+    const month = Number(brMatch[2]);
+    let year = Number(brMatch[3]);
+    if (year < 100) year += year >= 70 ? 1900 : 2000;
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      const parsed = new Date(Date.UTC(year, month - 1, day));
+      if (Number.isFinite(parsed.getTime())) {
+        return parsed.toISOString().slice(0, 10);
+      }
+    }
+  }
+
+  const numericExcelDate = Number(text);
+  if (Number.isFinite(numericExcelDate) && numericExcelDate > 20000) {
+    const parsed = new Date(Math.round((numericExcelDate - 25569) * 86400 * 1000));
+    if (Number.isFinite(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  }
+
+  const fallback = new Date(text);
+  if (Number.isFinite(fallback.getTime())) return fallback.toISOString().slice(0, 10);
+  return todayYmd();
+}
+
 function normalizePipelineFormDefaults(rawDefaults = {}) {
   const normalizedType = SALES_TYPES.some((item) => item.value === rawDefaults.opportunity_type)
     ? String(rawDefaults.opportunity_type)
@@ -1211,6 +1290,7 @@ export default function PipelineModule({
   prefillCompanyRequest = 0
 }) {
   const handledPrefillRequestRef = useRef(0);
+  const importFileInputRef = useRef(null);
   const pipelineDefaultsRef = useRef(readPipelineFormDefaults());
   const [pipelineUsers, setPipelineUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -1226,6 +1306,8 @@ export default function PipelineModule({
   const [editingOpportunityId, setEditingOpportunityId] = useState("");
   const [savingOpportunity, setSavingOpportunity] = useState(false);
   const [purgingPipeline, setPurgingPipeline] = useState(false);
+  const [importingOpportunitiesBatch, setImportingOpportunitiesBatch] = useState(false);
+  const [lastImportedFileName, setLastImportedFileName] = useState("");
   const [deletingOpportunityId, setDeletingOpportunityId] = useState("");
   const [creatingProposalId, setCreatingProposalId] = useState("");
   const [proposalsByOpportunity, setProposalsByOpportunity] = useState({});
@@ -2069,6 +2151,205 @@ export default function PipelineModule({
     }
   }
 
+  async function handleImportOpportunitiesFile(event) {
+    const file = event?.target?.files?.[0] || null;
+    if (event?.target) event.target.value = "";
+    if (!file) return;
+
+    if (!canViewAllOpportunities) {
+      setError("Somente Gestor/Admin pode importar oportunidades por planilha.");
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setImportingOpportunitiesBatch(true);
+    setLastImportedFileName(file.name || "");
+
+    try {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(await file.arrayBuffer(), {
+        type: "array",
+        raw: false,
+        cellDates: true
+      });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) {
+        throw new Error("Planilha inválida: nenhuma aba encontrada.");
+      }
+
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], {
+        defval: "",
+        raw: false
+      });
+      if (!rows.length) {
+        throw new Error("Planilha sem linhas para importar.");
+      }
+
+      const companyCandidates = (companies || []).map((company) => ({
+        id: String(company?.id || "").trim(),
+        tradeName: String(company?.trade_name || "").trim(),
+        key: normalizeLookupText(company?.trade_name)
+      }));
+      const ownerCandidates = (ownerFilterOptions || []).map((user) => ({
+        userId: String(user?.user_id || "").trim(),
+        fullName: String(user?.full_name || "").trim(),
+        fullNameKey: normalizeLookupText(user?.full_name),
+        emailKey: normalizeLookupText(user?.email)
+      }));
+
+      const selectedFilterOwner = String(opportunityOwnerFilterUserId || "").trim();
+      const warnings = [];
+      let inserted = 0;
+      let duplicated = 0;
+      let skippedCompany = 0;
+      let skippedOwner = 0;
+      let skippedValue = 0;
+      let skippedInvalid = 0;
+
+      function findCompanyIdByName(companyNameRaw) {
+        const key = normalizeLookupText(companyNameRaw);
+        if (!key) return "";
+        const exact = companyCandidates.find((item) => item.key === key);
+        if (exact?.id) return exact.id;
+        const partial = companyCandidates.find((item) => item.key && (item.key.includes(key) || key.includes(item.key)));
+        return partial?.id || "";
+      }
+
+      function findOwnerIdByName(ownerNameRaw) {
+        const key = normalizeLookupText(ownerNameRaw);
+        if (!key) return "";
+        const exact = ownerCandidates.find((item) => item.fullNameKey === key || item.emailKey === key);
+        if (exact?.userId) return exact.userId;
+        const partial = ownerCandidates.find(
+          (item) => item.fullNameKey && (item.fullNameKey.includes(key) || key.includes(item.fullNameKey))
+        );
+        return partial?.userId || "";
+      }
+
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index] || {};
+        const normalizedRow = {};
+        for (const [key, value] of Object.entries(row)) {
+          normalizedRow[normalizeLookupText(key)] = value;
+        }
+
+        const rowNumber = index + 2;
+        const companyName = readImportField(normalizedRow, ["Empresa"]);
+        const ownerName = readImportField(normalizedRow, ["Responsável da Oportunidade", "Responsavel da Oportunidade"]);
+        const categoryRaw = readImportField(normalizedRow, ["Categoria do item"]);
+        const subcategoryRaw = readImportField(normalizedRow, ["Sub-categoria", "Subcategoria"]);
+        const productRaw = readImportField(normalizedRow, ["Produto"]);
+        const valueRaw = readImportField(normalizedRow, ["Valor do Item", "Valor"]);
+        const stageRaw = readImportField(normalizedRow, ["Etapa da Oportunidade", "Etapa"]);
+        const dateRaw = readImportField(normalizedRow, ["Data da Oportunidade", "Data"]);
+
+        if (!companyName || !subcategoryRaw || !productRaw) {
+          skippedInvalid += 1;
+          warnings.push(`Linha ${rowNumber}: campos obrigatórios ausentes (empresa/sub-categoria/produto).`);
+          continue;
+        }
+
+        const companyId = findCompanyIdByName(companyName);
+        if (!companyId) {
+          skippedCompany += 1;
+          warnings.push(`Linha ${rowNumber}: empresa não encontrada (${companyName}).`);
+          continue;
+        }
+
+        let ownerUserId = "";
+        if (selectedFilterOwner && selectedFilterOwner !== PIPELINE_OWNER_FILTER_ALL) {
+          ownerUserId = selectedFilterOwner;
+        }
+        if (ownerName) {
+          const matchedOwner = findOwnerIdByName(ownerName);
+          if (matchedOwner) ownerUserId = matchedOwner;
+        }
+        if (!ownerUserId) {
+          skippedOwner += 1;
+          warnings.push(`Linha ${rowNumber}: responsável não encontrado (${ownerName || "-"})`);
+          continue;
+        }
+
+        const opportunityType = mapImportOpportunityType(categoryRaw);
+        const titleSubcategory = canonicalizeOpportunitySubcategory(subcategoryRaw);
+        const titleProduct = String(productRaw || "").trim();
+
+        const informedValue = parseMoneyLikeValue(valueRaw);
+        const catalogValue = resolveEstimatedValueByProduct(titleSubcategory, titleProduct);
+        const profileValue = resolveEstimatedValueByProfile(titleSubcategory, titleProduct, savedProposalProductProfiles);
+        const resolvedValue = informedValue > 0 ? informedValue : catalogValue === null ? profileValue : catalogValue;
+        const estimatedValue = Number(resolvedValue || 0);
+
+        if (!(estimatedValue > 0)) {
+          skippedValue += 1;
+          warnings.push(`Linha ${rowNumber}: valor não encontrado para ${titleSubcategory} > ${titleProduct}.`);
+          continue;
+        }
+
+        const stage = mapImportOpportunityStage(stageRaw);
+        const lineItem = normalizeOpportunityItem({
+          opportunity_type: opportunityType,
+          title_subcategory: titleSubcategory,
+          title_product: titleProduct,
+          estimated_value: estimatedValue
+        });
+
+        if (!isOpportunityItemComplete(lineItem)) {
+          skippedInvalid += 1;
+          warnings.push(`Linha ${rowNumber}: item inválido (${titleSubcategory} / ${titleProduct}).`);
+          continue;
+        }
+
+        const payload = {
+          company_id: companyId,
+          owner_user_id: ownerUserId,
+          title: composeOpportunityTitleFromItems([lineItem]),
+          line_items: [lineItem],
+          stage,
+          status: stageStatus(stage),
+          estimated_value: estimatedValue,
+          expected_close_date: parseImportDateToYmd(dateRaw)
+        };
+
+        try {
+          await createOpportunity(payload, {
+            ownerUserId
+          });
+          inserted += 1;
+        } catch (rowError) {
+          const rowMessage = String(rowError?.message || "");
+          if (rowMessage.toLowerCase().includes("já existe oportunidade")) {
+            duplicated += 1;
+            continue;
+          }
+          warnings.push(`Linha ${rowNumber}: ${rowMessage || "falha ao importar oportunidade"}`);
+        }
+      }
+
+      await load();
+
+      const summary = [
+        `Importação concluída (${file.name}):`,
+        `${inserted} inserida(s)`,
+        `${duplicated} duplicada(s)`,
+        `${skippedCompany} sem empresa`,
+        `${skippedOwner} sem responsável`,
+        `${skippedValue} sem valor cadastrado`,
+        `${skippedInvalid} inválida(s)`
+      ].join(" | ");
+
+      if (warnings.length) {
+        setError(`Importação com avisos (${warnings.length}). Primeiros: ${warnings.slice(0, 3).join(" | ")}`);
+      }
+      setSuccess(summary);
+    } catch (err) {
+      setError(err.message || "Falha ao importar oportunidades da planilha.");
+    } finally {
+      setImportingOpportunitiesBatch(false);
+    }
+  }
+
   function handleViewerChange(nextUserId) {
     const normalized = String(nextUserId || "").trim();
     if (!canViewAllOpportunities && viewerUserId && normalized !== viewerUserId) return;
@@ -2814,6 +3095,22 @@ export default function PipelineModule({
               <button type="button" className="btn-ghost" onClick={handlePurgePipeline} disabled={purgingPipeline}>
                 {purgingPipeline ? "Limpando funil..." : "Limpar base do funil"}
               </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => importFileInputRef.current?.click()}
+                disabled={importingOpportunitiesBatch}
+              >
+                {importingOpportunitiesBatch ? "Importando lote..." : "Importar oportunidades (.xlsx)"}
+              </button>
+              <input
+                ref={importFileInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleImportOpportunitiesFile}
+                style={{ display: "none" }}
+              />
+              {lastImportedFileName ? <span className="muted">Último arquivo: {lastImportedFileName}</span> : null}
             </div>
           ) : null}
         </div>
