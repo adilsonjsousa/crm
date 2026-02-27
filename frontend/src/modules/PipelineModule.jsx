@@ -1249,13 +1249,13 @@ function mapImportOpportunityStage(value) {
 }
 
 function parseImportDateToYmd(value) {
-  if (!value) return todayYmd();
+  if (!value) return defaultExpectedCloseYmd();
   if (value instanceof Date && Number.isFinite(value.getTime())) {
     return value.toISOString().slice(0, 10);
   }
 
   const text = String(value || "").trim();
-  if (!text) return todayYmd();
+  if (!text) return defaultExpectedCloseYmd();
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
 
   const brMatch = text.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
@@ -1280,7 +1280,7 @@ function parseImportDateToYmd(value) {
 
   const fallback = new Date(text);
   if (Number.isFinite(fallback.getTime())) return fallback.toISOString().slice(0, 10);
-  return todayYmd();
+  return defaultExpectedCloseYmd();
 }
 
 function normalizePipelineFormDefaults(rawDefaults = {}) {
@@ -1316,6 +1316,12 @@ function todayYmd() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function defaultExpectedCloseYmd() {
+  const date = new Date();
+  date.setDate(date.getDate() + 30);
+  return date.toISOString().slice(0, 10);
+}
+
 function emptyOpportunityForm(defaultCompanyId = "", defaultOwnerUserId = "", rawDefaults = null) {
   const defaults = normalizePipelineFormDefaults(rawDefaults || {});
   return {
@@ -1326,7 +1332,7 @@ function emptyOpportunityForm(defaultCompanyId = "", defaultOwnerUserId = "", ra
     title_product: "",
     stage: defaults.stage,
     estimated_value: "",
-    expected_close_date: todayYmd()
+    expected_close_date: defaultExpectedCloseYmd()
   };
 }
 
@@ -2126,7 +2132,7 @@ export default function PipelineModule({
         stage: form.stage,
         status: stageStatus(form.stage),
         estimated_value: opportunityItemsTotalValue,
-        expected_close_date: form.expected_close_date || null
+        expected_close_date: form.expected_close_date || defaultExpectedCloseYmd()
       };
 
       setSavingOpportunity(true);
@@ -2154,7 +2160,7 @@ export default function PipelineModule({
           title_subcategory: "",
           title_product: "",
           estimated_value: "",
-          expected_close_date: todayYmd()
+          expected_close_date: defaultExpectedCloseYmd()
         }));
         setOpportunityItems([]);
         postSaveSuccessMessage = "Oportunidade salva. Formulário mantido para cadastrar a próxima.";
