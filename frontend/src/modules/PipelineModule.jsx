@@ -1268,6 +1268,28 @@ export default function PipelineModule({
     return activeUsers.length ? activeUsers : pipelineUsers;
   }, [pipelineUsers]);
   const effectiveOwnerFilterUserId = canViewAllOpportunities ? opportunityOwnerFilterUserId : viewerUserId;
+  const defaultOwnerForForm = canViewAllOpportunities
+    ? opportunityOwnerFilterUserId !== PIPELINE_OWNER_FILTER_ALL
+      ? opportunityOwnerFilterUserId
+      : ""
+    : viewerUserId;
+  const viewerOptions = useMemo(() => {
+    if (canViewAllOpportunities) return pipelineUsers;
+    const current = pipelineUsers.find((item) => item.user_id === viewerUserId);
+    return current ? [current] : pipelineUsers.slice(0, 1);
+  }, [canViewAllOpportunities, pipelineUsers, viewerUserId]);
+  const ownerFieldValue = useMemo(() => {
+    if (!canViewAllOpportunities) {
+      return form.owner_user_id || viewerUserId || "";
+    }
+    if (editingOpportunityId) {
+      return form.owner_user_id || "";
+    }
+    if (opportunityOwnerFilterUserId === PIPELINE_OWNER_FILTER_ALL) {
+      return PIPELINE_OWNER_FILTER_ALL;
+    }
+    return form.owner_user_id || opportunityOwnerFilterUserId || "";
+  }, [canViewAllOpportunities, editingOpportunityId, form.owner_user_id, opportunityOwnerFilterUserId, viewerUserId]);
   const ownerNameById = useMemo(() => {
     const map = {};
     for (const user of pipelineUsers) {
@@ -1483,7 +1505,7 @@ export default function PipelineModule({
       setOpportunityOwnerFilterUserId(selectedCanViewAll ? PIPELINE_OWNER_FILTER_ALL : selectedViewer.user_id);
       setForm((prev) => ({
         ...prev,
-        owner_user_id: prev.owner_user_id || selectedViewer.user_id
+        owner_user_id: selectedCanViewAll ? "" : selectedViewer.user_id
       }));
     } catch (err) {
       setError(err.message);
@@ -1656,11 +1678,11 @@ export default function PipelineModule({
     setEditingOpportunityId("");
     setError("");
     setSuccess("");
-    setForm(() => emptyOpportunityForm(prefillCompanyId || companyById?.id || "", viewerUserId, pipelineDefaultsRef.current));
+    setForm(() => emptyOpportunityForm(prefillCompanyId || companyById?.id || "", defaultOwnerForForm, pipelineDefaultsRef.current));
     setOpportunityItems([]);
     setCompanySearchTerm(prefillCompanyName || companyById?.trade_name || "");
     setCompanySuggestionsOpen(false);
-  }, [prefillCompanyDraft, prefillCompanyRequest, companies, viewerUserId]);
+  }, [prefillCompanyDraft, prefillCompanyRequest, companies, defaultOwnerForForm]);
 
   useEffect(() => {
     let active = true;
@@ -1780,6 +1802,11 @@ export default function PipelineModule({
         setError("Adicione ao menos um item na oportunidade.");
         return;
       }
+      const selectedOwnerUserId = String(form.owner_user_id || "").trim();
+      if (canViewAllOpportunities && (!selectedOwnerUserId || selectedOwnerUserId === PIPELINE_OWNER_FILTER_ALL)) {
+        setError("Selecione um responsável específico para salvar a oportunidade.");
+        return;
+      }
 
       const title = composeOpportunityTitleFromItems(allOpportunityItems);
       if (!title) {
@@ -1789,7 +1816,9 @@ export default function PipelineModule({
 
       const payload = {
         company_id: form.company_id,
-        owner_user_id: form.owner_user_id || viewerUserId || null,
+        owner_user_id: canViewAllOpportunities
+          ? selectedOwnerUserId || null
+          : viewerUserId || selectedOwnerUserId || null,
         title,
         line_items: allOpportunityItems,
         stage: form.stage,
@@ -1813,7 +1842,7 @@ export default function PipelineModule({
 
       if (editingOpportunityId) {
         setEditingOpportunityId("");
-        setForm(emptyOpportunityForm("", viewerUserId, pipelineDefaultsRef.current));
+        setForm(emptyOpportunityForm("", defaultOwnerForForm, pipelineDefaultsRef.current));
         setOpportunityItems([]);
         setCompanySearchTerm("");
         postSaveSuccessMessage = "Oportunidade atualizada com sucesso.";
@@ -1828,7 +1857,7 @@ export default function PipelineModule({
         setOpportunityItems([]);
         postSaveSuccessMessage = "Oportunidade salva. Formulário mantido para cadastrar a próxima.";
       } else {
-        setForm(emptyOpportunityForm("", viewerUserId, pipelineDefaultsRef.current));
+        setForm(emptyOpportunityForm("", defaultOwnerForForm, pipelineDefaultsRef.current));
         setOpportunityItems([]);
         setCompanySearchTerm("");
         postSaveSuccessMessage = "Oportunidade salva com sucesso.";
@@ -1957,7 +1986,7 @@ export default function PipelineModule({
     setError("");
     setSuccess("");
     setEditingOpportunityId("");
-    setForm(emptyOpportunityForm("", viewerUserId, pipelineDefaultsRef.current));
+    setForm(emptyOpportunityForm("", defaultOwnerForForm, pipelineDefaultsRef.current));
     setOpportunityItems([]);
     setCompanySearchTerm("");
     setCompanySuggestionsOpen(false);
@@ -2004,6 +2033,7 @@ export default function PipelineModule({
 
   function handleViewerChange(nextUserId) {
     const normalized = String(nextUserId || "").trim();
+    if (!canViewAllOpportunities && viewerUserId && normalized !== viewerUserId) return;
     const nextViewer = pipelineUsers.find((item) => item.user_id === normalized);
     if (!nextViewer) return;
 
@@ -2013,7 +2043,7 @@ export default function PipelineModule({
     setViewerRole(nextRole);
     setOpportunityOwnerFilterUserId(nextCanViewAll ? PIPELINE_OWNER_FILTER_ALL : nextViewer.user_id);
     setEditingOpportunityId("");
-    setForm(() => emptyOpportunityForm("", nextViewer.user_id, pipelineDefaultsRef.current));
+    setForm(() => emptyOpportunityForm("", nextCanViewAll ? "" : nextViewer.user_id, pipelineDefaultsRef.current));
     setOpportunityItems([]);
     setCompanySearchTerm("");
     setCompanySuggestionsOpen(false);
@@ -2031,16 +2061,28 @@ export default function PipelineModule({
     }
   }
 
-  function handleOwnerFilterChange(nextOwnerUserId) {
+  function handleOpportunityOwnerChange(nextOwnerUserId) {
     const normalized = String(nextOwnerUserId || "").trim();
-    if (!canViewAllOpportunities) return;
-    if (!normalized || normalized === PIPELINE_OWNER_FILTER_ALL) {
-      setOpportunityOwnerFilterUserId(PIPELINE_OWNER_FILTER_ALL);
+    if (!canViewAllOpportunities) {
+      const ownerId = viewerUserId || normalized;
+      setForm((prev) => ({ ...prev, owner_user_id: ownerId }));
       return;
     }
+
+    if (!normalized || normalized === PIPELINE_OWNER_FILTER_ALL) {
+      if (!editingOpportunityId) {
+        setOpportunityOwnerFilterUserId(PIPELINE_OWNER_FILTER_ALL);
+        setForm((prev) => ({ ...prev, owner_user_id: "" }));
+      }
+      return;
+    }
+
     const hasUser = ownerFilterOptions.some((item) => item.user_id === normalized);
     if (!hasUser) return;
-    setOpportunityOwnerFilterUserId(normalized);
+    if (!editingOpportunityId) {
+      setOpportunityOwnerFilterUserId(normalized);
+    }
+    setForm((prev) => ({ ...prev, owner_user_id: normalized }));
   }
 
   async function handleCreateAutomatedProposal(event, item) {
@@ -2712,37 +2754,20 @@ export default function PipelineModule({
             <select
               value={viewerUserId}
               onChange={(event) => handleViewerChange(event.target.value)}
-              disabled={loadingUsers || !pipelineUsers.length}
+              disabled={loadingUsers || !pipelineUsers.length || (!canViewAllOpportunities && Boolean(viewerUserId))}
             >
               {!pipelineUsers.length ? <option value="">Sem usuários cadastrados</option> : null}
-              {pipelineUsers.map((user) => (
+              {viewerOptions.map((user) => (
                 <option key={user.user_id} value={user.user_id}>
                   {user.full_name || user.email} ({String(user.role || "sales").toUpperCase()})
                 </option>
               ))}
             </select>
           </label>
-          <label className="settings-field">
-            <span>Responsável da oportunidade (filtro)</span>
-            <select
-              value={canViewAllOpportunities ? opportunityOwnerFilterUserId : viewerUserId}
-              onChange={(event) => handleOwnerFilterChange(event.target.value)}
-              disabled={loadingUsers || !ownerFilterOptions.length || !canViewAllOpportunities}
-            >
-              {canViewAllOpportunities ? <option value={PIPELINE_OWNER_FILTER_ALL}>Todos</option> : null}
-              {(canViewAllOpportunities ? ownerFilterOptions : ownerFilterOptions.filter((item) => item.user_id === viewerUserId)).map(
-                (user) => (
-                  <option key={user.user_id} value={user.user_id}>
-                    {user.full_name || user.email}
-                  </option>
-                )
-              )}
-            </select>
-          </label>
           <p className="pipeline-access-note">
             {viewerUser
               ? canViewAllOpportunities
-                ? "Perfil Gestor/Admin: pode filtrar por responsável ou visualizar Todos."
+                ? "Perfil Gestor/Admin: use o campo 'Responsável da oportunidade' no formulário para filtrar por vendedor ou Todos."
                 : "Perfil Vendedor/Backoffice: visualiza apenas as oportunidades do próprio usuário."
               : "Cadastre ao menos um usuário ativo em Configurações para usar o controle de visibilidade."}
           </p>
@@ -2807,13 +2832,15 @@ export default function PipelineModule({
           <label className="settings-field">
             <span>Responsável da oportunidade</span>
             <select
-              value={form.owner_user_id}
-              onChange={(event) => setForm((prev) => ({ ...prev, owner_user_id: event.target.value }))}
-              required
-              disabled={!assignableOwners.length}
+              value={ownerFieldValue}
+              onChange={(event) => handleOpportunityOwnerChange(event.target.value)}
+              disabled={!assignableOwners.length || (!canViewAllOpportunities && Boolean(viewerUserId))}
             >
               {!assignableOwners.length ? <option value="">Sem responsável disponível</option> : null}
-              {assignableOwners.map((user) => (
+              {canViewAllOpportunities && !editingOpportunityId ? (
+                <option value={PIPELINE_OWNER_FILTER_ALL}>Todos (somente filtro)</option>
+              ) : null}
+              {(canViewAllOpportunities ? ownerFilterOptions : assignableOwners).map((user) => (
                 <option key={user.user_id} value={user.user_id}>
                   {user.full_name || user.email}
                 </option>
