@@ -953,6 +953,38 @@ function normalizeLookupText(value) {
     .trim();
 }
 
+function isPrivilegedPipelineRole(role) {
+  const normalized = String(role || "").trim().toLowerCase();
+  return normalized === "admin" || normalized === "manager";
+}
+
+function pickPreferredViewerUser(users = [], savedViewerId = "") {
+  if (!users.length) return null;
+  const normalizedSavedId = String(savedViewerId || "").trim();
+  const savedUser = normalizedSavedId ? users.find((item) => String(item?.user_id || "").trim() === normalizedSavedId) || null : null;
+  const preferredNamedManager = users.find((item) => {
+    if (!isPrivilegedPipelineRole(item?.role)) return false;
+    const normalizedName = normalizeLookupText(item?.full_name || item?.email || "");
+    return normalizedName.includes("adilson joao");
+  });
+
+  if (savedUser && isPrivilegedPipelineRole(savedUser.role)) {
+    return savedUser;
+  }
+
+  if (preferredNamedManager) {
+    return preferredNamedManager;
+  }
+
+  const anyPrivileged = users.find((item) => isPrivilegedPipelineRole(item?.role));
+  if (anyPrivileged) {
+    return anyPrivileged;
+  }
+
+  if (savedUser) return savedUser;
+  return users[0];
+}
+
 function normalizeLooseLookupText(value) {
   return normalizeLookupText(value)
     .replace(/[^a-z0-9 ]+/g, " ")
@@ -1581,11 +1613,7 @@ export default function PipelineModule({
       ? opportunityOwnerFilterUserId
       : ""
     : viewerUserId;
-  const viewerOptions = useMemo(() => {
-    if (canViewAllOpportunities) return pipelineUsers;
-    const current = pipelineUsers.find((item) => item.user_id === viewerUserId);
-    return current ? [current] : pipelineUsers.slice(0, 1);
-  }, [canViewAllOpportunities, pipelineUsers, viewerUserId]);
+  const viewerOptions = useMemo(() => pipelineUsers, [pipelineUsers]);
   const ownerFieldValue = useMemo(() => {
     if (!canViewAllOpportunities) {
       return form.owner_user_id || viewerUserId || "";
@@ -1805,7 +1833,7 @@ export default function PipelineModule({
       }
 
       const savedViewerId = typeof window === "undefined" ? "" : String(window.localStorage.getItem(PIPELINE_VIEWER_STORAGE_KEY) || "");
-      const selectedViewer = availableUsers.find((item) => item.user_id === savedViewerId) || availableUsers[0];
+      const selectedViewer = pickPreferredViewerUser(availableUsers, savedViewerId) || availableUsers[0];
 
       setViewerUserId(selectedViewer.user_id);
       setViewerRole(String(selectedViewer.role || "sales"));
@@ -1815,6 +1843,10 @@ export default function PipelineModule({
         ...prev,
         owner_user_id: selectedCanViewAll ? "" : selectedViewer.user_id
       }));
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(PIPELINE_VIEWER_STORAGE_KEY, String(selectedViewer.user_id || ""));
+      }
     } catch (err) {
       setError(err.message);
       setPipelineUsers([]);
@@ -2647,7 +2679,6 @@ export default function PipelineModule({
 
   function handleViewerChange(nextUserId) {
     const normalized = String(nextUserId || "").trim();
-    if (!canViewAllOpportunities && viewerUserId && normalized !== viewerUserId) return;
     const nextViewer = pipelineUsers.find((item) => item.user_id === normalized);
     if (!nextViewer) return;
 
@@ -3368,7 +3399,7 @@ export default function PipelineModule({
             <select
               value={viewerUserId}
               onChange={(event) => handleViewerChange(event.target.value)}
-              disabled={loadingUsers || !pipelineUsers.length || (!canViewAllOpportunities && Boolean(viewerUserId))}
+              disabled={loadingUsers || !pipelineUsers.length}
             >
               {!pipelineUsers.length ? <option value="">Sem usuários cadastrados</option> : null}
               {viewerOptions.map((user) => (
