@@ -30,6 +30,15 @@ const FUNNEL_FLOW = [
   ["follow_up", "ganho"]
 ];
 
+const STAGE_COLOR_BY_KEY = {
+  lead: "#7c3aed",
+  qualificacao: "#2563eb",
+  proposta: "#0891b2",
+  follow_up: "#d97706",
+  ganho: "#059669",
+  perdido: "#dc2626"
+};
+
 function asObject(value) {
   if (value && typeof value === "object" && !Array.isArray(value)) return value;
   return {};
@@ -698,6 +707,12 @@ export default function ReportsModule() {
     });
   }, [filteredFunnelRows]);
 
+  const funnelStageScale = useMemo(() => {
+    const maxCount = Math.max(1, ...funnelByStage.map((row) => Number(row.count || 0)));
+    const maxValue = Math.max(1, ...funnelByStage.map((row) => Number(row.totalValue || 0)));
+    return { maxCount, maxValue };
+  }, [funnelByStage]);
+
   const conversionByStage = useMemo(() => {
     return FUNNEL_FLOW.map(([fromStage, toStage]) => {
       const entered = filteredFunnelRows.filter((row) => row.entered_stages.has(fromStage));
@@ -1010,7 +1025,7 @@ export default function ReportsModule() {
 
   return (
     <section className="module reports-module">
-      <article className="panel reports-panel">
+      <article className="panel reports-panel reports-companies top-gap">
         <div className="reports-header">
           <div className="reports-heading">
             <h2>Relatório de empresas cadastradas</h2>
@@ -1099,7 +1114,7 @@ export default function ReportsModule() {
         </div>
       </article>
 
-      <article className="panel reports-panel top-gap">
+      <article className="panel reports-panel reports-funnel">
         <div className="reports-header">
           <div className="reports-heading">
             <h2>Relatório analítico do funil de vendas</h2>
@@ -1237,6 +1252,38 @@ export default function ReportsModule() {
         </div>
 
         {funnelError ? <p className="error-text">{funnelError}</p> : null}
+
+        <div className="reports-funnel-visual">
+          <h3>Visão gráfica do funil</h3>
+          <div className="reports-stage-chart-grid">
+            {funnelByStage.map((row) => {
+              const color = STAGE_COLOR_BY_KEY[row.stage] || "#7c3aed";
+              const countWidth = row.count > 0 ? Math.max(8, (Number(row.count || 0) / funnelStageScale.maxCount) * 100) : 0;
+              const valueWidth = row.totalValue > 0 ? Math.max(8, (Number(row.totalValue || 0) / funnelStageScale.maxValue) * 100) : 0;
+              return (
+                <article key={`visual-${row.stage}`} className="reports-stage-chart-card">
+                  <header>
+                    <strong>{row.stageLabel}</strong>
+                    <span>{row.count} op.</span>
+                  </header>
+                  <div className="reports-stage-chart-row">
+                    <span>Volume</span>
+                    <div className="reports-stage-chart-track">
+                      <span className="reports-stage-chart-fill" style={{ width: `${countWidth}%`, background: color }} />
+                    </div>
+                  </div>
+                  <div className="reports-stage-chart-row">
+                    <span>Valor</span>
+                    <div className="reports-stage-chart-track">
+                      <span className="reports-stage-chart-fill" style={{ width: `${valueWidth}%`, background: color }} />
+                    </div>
+                  </div>
+                  <small>{formatCurrency(row.totalValue)}</small>
+                </article>
+              );
+            })}
+          </div>
+        </div>
 
         <div className="table-wrap reports-table-wrap">
           <table>
