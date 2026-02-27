@@ -1200,6 +1200,39 @@ export async function deleteOpportunity(opportunityId) {
   if (error) throw new Error(normalizeError(error, "Falha ao excluir oportunidade."));
 }
 
+export async function purgeAllOpportunities() {
+  const supabase = ensureSupabase();
+
+  const { count: beforeCount, error: beforeError } = await supabase
+    .from("opportunities")
+    .select("id", { count: "exact", head: true });
+  if (beforeError) throw new Error(normalizeError(beforeError, "Falha ao contar oportunidades antes da limpeza."));
+
+  const safeBeforeCount = Number(beforeCount || 0);
+  if (safeBeforeCount <= 0) {
+    return {
+      before: 0,
+      after: 0,
+      deleted: 0
+    };
+  }
+
+  const { error: deleteError } = await supabase.from("opportunities").delete().not("id", "is", null);
+  if (deleteError) throw new Error(normalizeError(deleteError, "Falha ao limpar oportunidades do funil."));
+
+  const { count: afterCount, error: afterError } = await supabase
+    .from("opportunities")
+    .select("id", { count: "exact", head: true });
+  if (afterError) throw new Error(normalizeError(afterError, "Falha ao validar limpeza do funil."));
+
+  const safeAfterCount = Number(afterCount || 0);
+  return {
+    before: safeBeforeCount,
+    after: safeAfterCount,
+    deleted: Math.max(0, safeBeforeCount - safeAfterCount)
+  };
+}
+
 export async function updateOpportunityStage({ opportunityId, fromStage, toStage }) {
   const supabase = ensureSupabase();
   const { error: updateError } = await supabase

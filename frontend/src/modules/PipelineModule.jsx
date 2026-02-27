@@ -5,6 +5,7 @@ import {
   createProposalDocumentVersion,
   createOpportunity,
   deleteOpportunity,
+  purgeAllOpportunities,
   listCompanyContacts,
   listCompanyOptions,
   listLatestOrdersByOpportunity,
@@ -1224,6 +1225,7 @@ export default function PipelineModule({
   const [dragOverStage, setDragOverStage] = useState("");
   const [editingOpportunityId, setEditingOpportunityId] = useState("");
   const [savingOpportunity, setSavingOpportunity] = useState(false);
+  const [purgingPipeline, setPurgingPipeline] = useState(false);
   const [deletingOpportunityId, setDeletingOpportunityId] = useState("");
   const [creatingProposalId, setCreatingProposalId] = useState("");
   const [proposalsByOpportunity, setProposalsByOpportunity] = useState({});
@@ -2031,6 +2033,42 @@ export default function PipelineModule({
     }
   }
 
+  async function handlePurgePipeline() {
+    if (!canViewAllOpportunities) {
+      setError("Somente Gestor/Admin pode limpar a base do funil.");
+      return;
+    }
+
+    const confirmed = await confirmStrongDelete({
+      entityLabel: "todas as oportunidades do funil",
+      itemLabel: `${items.length} oportunidade(s) carregada(s) agora`
+    });
+    if (!confirmed) return;
+
+    setError("");
+    setSuccess("");
+    setPurgingPipeline(true);
+
+    try {
+      const result = await purgeAllOpportunities();
+      setEditingOpportunityId("");
+      setOpportunityItems([]);
+      setProposalEditor(null);
+      setProposalContacts([]);
+      setProposalVersions([]);
+      setProposalsByOpportunity({});
+      setForm(emptyOpportunityForm("", defaultOwnerForForm, pipelineDefaultsRef.current));
+      setCompanySearchTerm("");
+      setCompanySuggestionsOpen(false);
+      await load();
+      setSuccess(`Limpeza concluída: ${Number(result.deleted || 0)} oportunidade(s) removida(s).`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPurgingPipeline(false);
+    }
+  }
+
   function handleViewerChange(nextUserId) {
     const normalized = String(nextUserId || "").trim();
     if (!canViewAllOpportunities && viewerUserId && normalized !== viewerUserId) return;
@@ -2771,6 +2809,13 @@ export default function PipelineModule({
                 : "Perfil Vendedor/Backoffice: visualiza apenas as oportunidades do próprio usuário."
               : "Cadastre ao menos um usuário ativo em Configurações para usar o controle de visibilidade."}
           </p>
+          {canViewAllOpportunities ? (
+            <div className="inline-actions">
+              <button type="button" className="btn-ghost" onClick={handlePurgePipeline} disabled={purgingPipeline}>
+                {purgingPipeline ? "Limpando funil..." : "Limpar base do funil"}
+              </button>
+            </div>
+          ) : null}
         </div>
         <div className="pipeline-automation-toggle">
           <label className="checkbox-inline">
