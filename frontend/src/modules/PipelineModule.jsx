@@ -21,6 +21,7 @@ import {
 import { confirmStrongDelete } from "../lib/confirmDelete";
 import { PIPELINE_STAGES, canMoveToStage, stageLabel, stageStatus } from "../lib/pipelineStages";
 import {
+  PRODUCT_CATALOG_ROWS,
   PRODUCTS_BY_SUBCATEGORY,
   SALES_TYPES,
   composeOpportunityTitleFromItems,
@@ -277,6 +278,20 @@ function formatDateTimeBr(dateTimeValue) {
   const parsed = new Date(dateTimeValue);
   if (Number.isNaN(parsed.getTime())) return "-";
   return parsed.toLocaleString("pt-BR");
+}
+
+function formatDateOnlyBr(value) {
+  if (!value) return "-";
+  const raw = String(value || "").trim();
+  if (!raw) return "-";
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00` : raw;
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  }).format(parsed);
 }
 
 function proposalVersionEventLabel(value) {
@@ -938,6 +953,83 @@ function normalizeLookupText(value) {
     .trim();
 }
 
+function normalizeLooseLookupText(value) {
+  return normalizeLookupText(value)
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeLooseLookup(value) {
+  return normalizeLooseLookupText(value)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2);
+}
+
+const COMPANY_NAME_STOPWORDS = new Set([
+  "de",
+  "da",
+  "do",
+  "das",
+  "dos",
+  "e",
+  "me",
+  "mei",
+  "eireli",
+  "ltda",
+  "sa",
+  "grafica",
+  "graficas",
+  "copiar",
+  "copiadora",
+  "industria",
+  "comercio",
+  "servicos"
+]);
+
+function tokenizeCompanyNameCore(value) {
+  return tokenizeLooseLookup(value).filter((token) => !COMPANY_NAME_STOPWORDS.has(token));
+}
+
+function cleanDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function normalizeModelFamilyLookupText(value) {
+  const tokens = tokenizeLooseLookup(value);
+  if (!tokens.length) return "";
+  return tokens
+    .map((token) => {
+      if (/^[a-z]+[0-9]{3,}$/i.test(token)) {
+        return token.replace(/[0-9]$/, "");
+      }
+      return token;
+    })
+    .join(" ")
+    .trim();
+}
+
+function computeTokenOverlapScore(baseTokens = [], candidateTokens = []) {
+  if (!baseTokens.length || !candidateTokens.length) return 0;
+  const baseSet = new Set(baseTokens);
+  const candidateSet = new Set(candidateTokens);
+  let intersection = 0;
+  for (const token of baseSet) {
+    if (candidateSet.has(token)) intersection += 1;
+  }
+  if (!intersection) return 0;
+  return intersection / Math.max(baseSet.size, candidateSet.size);
+}
+
+function parseProductCodeHint(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const match = text.match(/[a-z]{2,}[0-9]{2,}/i);
+  if (!match) return "";
+  return normalizeLooseLookupText(match[0]);
+}
+
 const OPPORTUNITY_SUBCATEGORY_BY_KEY = SALES_TYPES.flatMap((type) => getSubcategoriesByType(type.value)).reduce((acc, subcategory) => {
   acc[normalizeLookupText(subcategory)] = subcategory;
   return acc;
@@ -960,22 +1052,148 @@ function appendUniqueProduct(targetList, seenSet, value) {
 
 function resolveEstimatedValueByProfile(titleSubcategory, titleProduct, profiles = []) {
   const productKey = normalizeLookupText(titleProduct);
-  if (!productKey) return null;
+  const productLooseKey = normalizeLooseLookupText(titleProduct);
+  const productFamilyKey = normalizeModelFamilyLookupText(titleProduct);
+  const productCodeHint = parseProductCodeHint(titleProduct);
+  if (!productKey && !productLooseKey) return null;
   const subcategoryKey = normalizeLookupText(canonicalizeOpportunitySubcategory(titleSubcategory));
+  const sourceTokens = tokenizeLooseLookup(titleProduct);
 
-  let fallbackProfile = null;
-  for (const profile of profiles || []) {
-    const profileProductKey = normalizeLookupText(profile?.product_name);
-    if (profileProductKey !== productKey) continue;
+  function profileBasePrice(profile) {
+    const parsed = Number(String(profile?.base_price ?? "").replace(",", "."));
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return parsed;
+  }
+
+  function profileMatchPriority(profile) {
     const profileSubcategoryKey = normalizeLookupText(canonicalizeOpportunitySubcategory(profile?.product_subcategory));
-    if (!subcategoryKey || !profileSubcategoryKey || profileSubcategoryKey === subcategoryKey) {
-      fallbackProfile = profile;
-      if (subcategoryKey && profileSubcategoryKey === subcategoryKey) break;
+    if (!subcategoryKey || !profileSubcategoryKey) return 0;
+    return profileSubcategoryKey === subcategoryKey ? 10 : -10;
+  }
+
+  const activeProfiles = (profiles || []).filter((entry) => profileBasePrice(entry) !== null);
+  if (!activeProfiles.length) return null;
+
+  if (productCodeHint) {
+    const byCode = activeProfiles.find((profile) => {
+      const profileCode = normalizeLooseLookupText(profile?.product_code);
+      if (!profileCode || profileCode.length < 4) return false;
+      if (profileMatchPriority(profile) < 0) return false;
+      return productCodeHint === profileCode || productCodeHint.includes(profileCode) || profileCode.includes(productCodeHint);
+    });
+    if (byCode) return profileBasePrice(byCode);
+  }
+
+  let bestExact = null;
+  for (const profile of activeProfiles) {
+    const profileProductKey = normalizeLookupText(profile?.product_name);
+    if (!profileProductKey || profileProductKey !== productKey) continue;
+    if (profileMatchPriority(profile) < 0) continue;
+    if (!bestExact || profileMatchPriority(profile) > profileMatchPriority(bestExact)) bestExact = profile;
+  }
+  if (bestExact) return profileBasePrice(bestExact);
+
+  let bestLoose = null;
+  let bestLooseScore = 0;
+  for (const profile of activeProfiles) {
+    if (profileMatchPriority(profile) < 0) continue;
+    const profileLooseKey = normalizeLooseLookupText(profile?.product_name);
+    if (!profileLooseKey) continue;
+    if (
+      productLooseKey &&
+      (productLooseKey === profileLooseKey || productLooseKey.includes(profileLooseKey) || profileLooseKey.includes(productLooseKey))
+    ) {
+      const localScore = profileLooseKey === productLooseKey ? 1 : 0.92;
+      if (!bestLoose || localScore > bestLooseScore || profileMatchPriority(profile) > profileMatchPriority(bestLoose)) {
+        bestLoose = profile;
+        bestLooseScore = localScore;
+      }
+      continue;
+    }
+
+    if (productFamilyKey) {
+      const profileFamilyKey = normalizeModelFamilyLookupText(profile?.product_name);
+      if (
+        profileFamilyKey &&
+        (productFamilyKey === profileFamilyKey ||
+          productFamilyKey.includes(profileFamilyKey) ||
+          profileFamilyKey.includes(productFamilyKey))
+      ) {
+        const localScore = 0.88;
+        if (!bestLoose || localScore > bestLooseScore || profileMatchPriority(profile) > profileMatchPriority(bestLoose)) {
+          bestLoose = profile;
+          bestLooseScore = localScore;
+        }
+        continue;
+      }
+    }
+
+    const candidateTokens = tokenizeLooseLookup(profile?.product_name);
+    const overlap = computeTokenOverlapScore(sourceTokens, candidateTokens);
+    if (overlap >= 0.74 && (!bestLoose || overlap > bestLooseScore)) {
+      bestLoose = profile;
+      bestLooseScore = overlap;
+    }
+  }
+  if (bestLoose) return profileBasePrice(bestLoose);
+
+  return null;
+}
+
+function resolveEstimatedValueByCatalogLoose(titleSubcategory, titleProduct) {
+  const canonicalSubcategory = canonicalizeOpportunitySubcategory(titleSubcategory);
+  const productLooseKey = normalizeLooseLookupText(titleProduct);
+  const productFamilyKey = normalizeModelFamilyLookupText(titleProduct);
+  if (!canonicalSubcategory || !productLooseKey) return null;
+
+  const catalogRows = (PRODUCT_CATALOG_ROWS || []).filter(
+    (row) => canonicalizeOpportunitySubcategory(row?.title) === canonicalSubcategory
+  );
+  if (!catalogRows.length) return null;
+
+  const sourceTokens = tokenizeLooseLookup(titleProduct);
+  let bestRow = null;
+  let bestScore = 0;
+
+  function considerRow(row, score) {
+    if (!Number.isFinite(score) || score <= 0) return;
+    if (!bestRow || score > bestScore) {
+      bestRow = row;
+      bestScore = score;
     }
   }
 
-  if (!fallbackProfile) return null;
-  const parsed = Number(String(fallbackProfile.base_price ?? "").replace(",", "."));
+  for (const row of catalogRows) {
+    const rowLooseKey = normalizeLooseLookupText(row?.product);
+    const rowFamilyKey = normalizeModelFamilyLookupText(row?.product);
+    if (!rowLooseKey) continue;
+
+    if (rowLooseKey === productLooseKey) {
+      considerRow(row, 1);
+      continue;
+    }
+    if (productLooseKey.includes(rowLooseKey) || rowLooseKey.includes(productLooseKey)) {
+      considerRow(row, 0.92);
+      continue;
+    }
+    if (
+      productFamilyKey &&
+      rowFamilyKey &&
+      (productFamilyKey === rowFamilyKey || productFamilyKey.includes(rowFamilyKey) || rowFamilyKey.includes(productFamilyKey))
+    ) {
+      considerRow(row, 0.88);
+      continue;
+    }
+
+    const candidateTokens = tokenizeLooseLookup(row?.product);
+    const overlap = computeTokenOverlapScore(sourceTokens, candidateTokens);
+    if (overlap >= 0.74) {
+      considerRow(row, overlap);
+    }
+  }
+
+  if (!bestRow) return null;
+  const parsed = Number(String(bestRow.estimated_value ?? "").replace(",", "."));
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return parsed;
 }
@@ -2189,7 +2407,11 @@ export default function PipelineModule({
       const companyCandidates = (companies || []).map((company) => ({
         id: String(company?.id || "").trim(),
         tradeName: String(company?.trade_name || "").trim(),
-        key: normalizeLookupText(company?.trade_name)
+        key: normalizeLookupText(company?.trade_name),
+        looseKey: normalizeLooseLookupText(company?.trade_name),
+        tokens: tokenizeLooseLookup(company?.trade_name),
+        coreTokens: tokenizeCompanyNameCore(company?.trade_name),
+        cnpjDigits: cleanDigits(company?.cnpj)
       }));
       const ownerCandidates = (ownerFilterOptions || []).map((user) => ({
         userId: String(user?.user_id || "").trim(),
@@ -2207,13 +2429,78 @@ export default function PipelineModule({
       let skippedValue = 0;
       let skippedInvalid = 0;
 
-      function findCompanyIdByName(companyNameRaw) {
+      function findCompanyIdByName(companyNameRaw, companyCnpjRaw) {
+        const cnpjDigits = cleanDigits(companyCnpjRaw);
+        if (cnpjDigits.length === 14) {
+          const byCnpj = companyCandidates.find((item) => item.cnpjDigits === cnpjDigits);
+          if (byCnpj?.id) return byCnpj.id;
+        }
+
         const key = normalizeLookupText(companyNameRaw);
-        if (!key) return "";
+        const looseKey = normalizeLooseLookupText(companyNameRaw);
+        if (!key && !looseKey) return "";
+
         const exact = companyCandidates.find((item) => item.key === key);
         if (exact?.id) return exact.id;
-        const partial = companyCandidates.find((item) => item.key && (item.key.includes(key) || key.includes(item.key)));
-        return partial?.id || "";
+
+        const exactLoose = companyCandidates.find((item) => item.looseKey === looseKey);
+        if (exactLoose?.id) return exactLoose.id;
+
+        const partial = companyCandidates.find((item) => item.looseKey && (item.looseKey.includes(looseKey) || looseKey.includes(item.looseKey)));
+        if (partial?.id) return partial.id;
+
+        const sourceTokens = tokenizeLooseLookup(companyNameRaw);
+        if (sourceTokens.length < 2) return "";
+
+        let best = null;
+        let bestScore = 0;
+        for (const candidate of companyCandidates) {
+          const overlap = computeTokenOverlapScore(sourceTokens, candidate.tokens);
+          if (!Number.isFinite(overlap) || overlap <= bestScore) continue;
+          best = candidate;
+          bestScore = overlap;
+        }
+
+        if (best?.id && bestScore >= 0.8) return best.id;
+
+        const sourceCoreTokens = tokenizeCompanyNameCore(companyNameRaw);
+        if (!sourceCoreTokens.length) return "";
+
+        const rankedCoreCandidates = companyCandidates
+          .map((candidate) => {
+            const intersection = sourceCoreTokens.filter((token) => candidate.coreTokens.includes(token));
+            const overlapCount = intersection.length;
+            if (!overlapCount) return null;
+            const overlapScore = overlapCount / Math.max(sourceCoreTokens.length, candidate.coreTokens.length || 1);
+            const strongestTokenLength = intersection.reduce((acc, token) => Math.max(acc, token.length), 0);
+            return {
+              candidate,
+              overlapCount,
+              overlapScore,
+              strongestTokenLength
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => {
+            if (b.overlapCount !== a.overlapCount) return b.overlapCount - a.overlapCount;
+            if (b.overlapScore !== a.overlapScore) return b.overlapScore - a.overlapScore;
+            return b.strongestTokenLength - a.strongestTokenLength;
+          });
+
+        const top = rankedCoreCandidates[0];
+        const second = rankedCoreCandidates[1];
+        const topIsStrong = top && (top.overlapCount >= 2 || top.strongestTokenLength >= 8);
+        const topIsUnique =
+          !second ||
+          top.overlapCount > second.overlapCount ||
+          top.overlapScore - second.overlapScore >= 0.2 ||
+          top.strongestTokenLength > second.strongestTokenLength;
+
+        if (top?.candidate?.id && topIsStrong && topIsUnique) {
+          return top.candidate.id;
+        }
+
+        return "";
       }
 
       function findOwnerIdByName(ownerNameRaw) {
@@ -2236,6 +2523,7 @@ export default function PipelineModule({
 
         const rowNumber = index + 2;
         const companyName = readImportField(normalizedRow, ["Empresa"]);
+        const companyCnpj = readImportField(normalizedRow, ["CNPJ", "Cnpj", "CNPJ da Empresa"]);
         const ownerName = readImportField(normalizedRow, ["Responsável da Oportunidade", "Responsavel da Oportunidade"]);
         const categoryRaw = readImportField(normalizedRow, ["Categoria do item"]);
         const subcategoryRaw = readImportField(normalizedRow, ["Sub-categoria", "Subcategoria"]);
@@ -2250,7 +2538,7 @@ export default function PipelineModule({
           continue;
         }
 
-        const companyId = findCompanyIdByName(companyName);
+        const companyId = findCompanyIdByName(companyName, companyCnpj);
         if (!companyId) {
           skippedCompany += 1;
           warnings.push(`Linha ${rowNumber}: empresa não encontrada (${companyName}).`);
@@ -2276,15 +2564,16 @@ export default function PipelineModule({
         const titleProduct = String(productRaw || "").trim();
 
         const informedValue = parseMoneyLikeValue(valueRaw);
-        const catalogValue = resolveEstimatedValueByProduct(titleSubcategory, titleProduct);
+        const catalogExactValue = resolveEstimatedValueByProduct(titleSubcategory, titleProduct);
+        const catalogLooseValue =
+          catalogExactValue === null ? resolveEstimatedValueByCatalogLoose(titleSubcategory, titleProduct) : catalogExactValue;
         const profileValue = resolveEstimatedValueByProfile(titleSubcategory, titleProduct, savedProposalProductProfiles);
-        const resolvedValue = informedValue > 0 ? informedValue : catalogValue === null ? profileValue : catalogValue;
+        const resolvedValue = informedValue > 0 ? informedValue : catalogLooseValue === null ? profileValue : catalogLooseValue;
         const estimatedValue = Number(resolvedValue || 0);
 
         if (!(estimatedValue > 0)) {
           skippedValue += 1;
-          warnings.push(`Linha ${rowNumber}: valor não encontrado para ${titleSubcategory} > ${titleProduct}.`);
-          continue;
+          warnings.push(`Linha ${rowNumber}: valor não encontrado para ${titleSubcategory} > ${titleProduct}; importada com valor 0.`);
         }
 
         const stage = mapImportOpportunityStage(stageRaw);
@@ -2335,7 +2624,7 @@ export default function PipelineModule({
         `${duplicated} duplicada(s)`,
         `${skippedCompany} sem empresa`,
         `${skippedOwner} sem responsável`,
-        `${skippedValue} sem valor cadastrado`,
+        `${skippedValue} com valor 0 (sem cadastro)`,
         `${skippedInvalid} inválida(s)`
       ].join(" | ");
 
@@ -3310,18 +3599,24 @@ export default function PipelineModule({
             ) : null}
             <p className="pipeline-items-total">Valor total da oportunidade: {brl(opportunityItemsTotalValue)}</p>
           </div>
-          <select value={form.stage} onChange={(e) => setForm((prev) => ({ ...prev, stage: e.target.value }))}>
-            {PIPELINE_STAGES.map((stage) => (
-              <option key={stage.value} value={stage.value}>
-                {stage.label}
-              </option>
-            ))}
-          </select>
-          <input
-            type="date"
-            value={form.expected_close_date}
-            onChange={(e) => setForm((prev) => ({ ...prev, expected_close_date: e.target.value }))}
-          />
+          <label className="settings-field">
+            <span>Etapa da oportunidade</span>
+            <select value={form.stage} onChange={(e) => setForm((prev) => ({ ...prev, stage: e.target.value }))}>
+              {PIPELINE_STAGES.map((stage) => (
+                <option key={stage.value} value={stage.value}>
+                  {stage.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-field">
+            <span>Previsão de fechamento</span>
+            <input
+              type="date"
+              value={form.expected_close_date}
+              onChange={(e) => setForm((prev) => ({ ...prev, expected_close_date: e.target.value }))}
+            />
+          </label>
           <div className="inline-actions pipeline-form-actions">
             <button type="submit" value="save" className="btn-primary" disabled={savingOpportunity}>
               {savingOpportunity ? "Salvando..." : editingOpportunityId ? "Atualizar oportunidade" : "Salvar oportunidade"}
@@ -3392,6 +3687,8 @@ export default function PipelineModule({
                         <p className="pipeline-card-company">-</p>
                       )}
                       <p className="pipeline-card-owner">Responsável: {ownerNameById[item.owner_user_id] || "-"}</p>
+                      <p className="pipeline-card-meta">Cadastro: {formatDateOnlyBr(item.created_at)}</p>
+                      <p className="pipeline-card-meta">Previsão: {formatDateOnlyBr(item.expected_close_date)}</p>
                       <p className="pipeline-card-value">{brl(item.estimated_value)}</p>
                       {linkedProposal ? (
                         <p className="pipeline-card-proposal">

@@ -1455,6 +1455,12 @@ tbody tr:hover {
   color: var(--text-sub);
 }
 
+.pipeline-card-meta {
+  margin: 4px 0 0;
+  font-size: 0.72rem;
+  color: var(--text-sub);
+}
+
 .pipeline-card-company-link {
   margin: 6px 0 0;
   padding: 0;

@@ -635,6 +635,8 @@ export default function ReportsModule() {
     const now = new Date();
     const next30 = new Date();
     next30.setDate(now.getDate() + 30);
+    const next7 = new Date();
+    next7.setDate(now.getDate() + 7);
     const forecastNext30Days = openRows
       .filter((row) => {
         if (!row.expected_close_date) return false;
@@ -643,6 +645,14 @@ export default function ReportsModule() {
         return expectedMs >= now.getTime() && expectedMs <= next30.getTime();
       })
       .reduce((sum, row) => sum + row.weighted_value, 0);
+
+    const openWithoutExpectedCloseCount = openRows.filter((row) => !row.expected_close_date).length;
+    const openCloseNext7DaysCount = openRows.filter((row) => {
+      if (!row.expected_close_date) return false;
+      const expectedMs = toDateMs(row.expected_close_date, true);
+      if (expectedMs === null) return false;
+      return expectedMs >= now.getTime() && expectedMs <= next7.getTime();
+    }).length;
 
     const overdueCloseCount = openRows.filter((row) => row.expected_close_delay_days > 0).length;
     const staleWithoutUpdate = openRows.filter((row) => row.days_without_update > 14).length;
@@ -659,6 +669,8 @@ export default function ReportsModule() {
       avgTicket: total ? totalValue / total : 0,
       avgCycleDays,
       forecastNext30Days,
+      openWithoutExpectedCloseCount,
+      openCloseNext7DaysCount,
       overdueCloseCount,
       staleWithoutUpdate
     };
@@ -893,6 +905,8 @@ export default function ReportsModule() {
       { Indicador: "Ticket médio", Valor: funnelKpis.avgTicket },
       { Indicador: "Ciclo médio ganho (dias)", Valor: funnelKpis.avgCycleDays === null ? "-" : Number(funnelKpis.avgCycleDays.toFixed(2)) },
       { Indicador: "Forecast 30 dias (ponderado)", Valor: funnelKpis.forecastNext30Days },
+      { Indicador: "Abertas com fechamento em até 7 dias", Valor: funnelKpis.openCloseNext7DaysCount },
+      { Indicador: "Abertas sem previsão de fechamento", Valor: funnelKpis.openWithoutExpectedCloseCount },
       { Indicador: "Abertas com previsão vencida", Valor: funnelKpis.overdueCloseCount },
       { Indicador: "Abertas sem atualização >14 dias", Valor: funnelKpis.staleWithoutUpdate }
     ];
@@ -952,7 +966,8 @@ export default function ReportsModule() {
       Valor: row.estimated_value,
       "Aging etapa (dias)": row.aging_days,
       "Sem atualização (dias)": row.days_without_update,
-      "Previsão fechamento": row.expected_close_date || "-",
+      "Cadastro oportunidade": formatDate(row.created_at),
+      "Previsão fechamento": formatDate(row.expected_close_date),
       "Previsão vencida (dias)": row.expected_close_delay_days,
       "Tarefas atrasadas": row.overdue_tasks,
       "Score risco": row.risk_score,
@@ -972,11 +987,11 @@ export default function ReportsModule() {
       Valor: row.estimated_value,
       "Probabilidade (%)": row.close_probability,
       "Valor ponderado": row.weighted_value,
-      "Prev. fechamento": row.expected_close_date || "",
+      "Cadastro oportunidade": formatDate(row.created_at),
+      "Prev. fechamento": formatDate(row.expected_close_date),
       "Aging etapa (dias)": row.aging_days,
       "Tarefas atrasadas": row.overdue_tasks,
-      "Criada em": formatDateTime(row.created_at),
-      "Atualizada em": formatDateTime(row.updated_at)
+      "Atualizada em": formatDate(row.updated_at)
     }));
 
     const XLSX = await import("xlsx");
@@ -1123,6 +1138,14 @@ export default function ReportsModule() {
             <div className="kpi-card">
               <span className="kpi-label">Forecast 30 dias</span>
               <strong className="kpi-value">{formatCurrency(funnelKpis.forecastNext30Days)}</strong>
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Fecham em 7 dias</span>
+              <strong className="kpi-value">{funnelKpis.openCloseNext7DaysCount}</strong>
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Abertas sem previsão</span>
+              <strong className="kpi-value">{funnelKpis.openWithoutExpectedCloseCount}</strong>
             </div>
             <div className="kpi-card">
               <span className="kpi-label">Abertas em risco</span>
@@ -1375,6 +1398,8 @@ export default function ReportsModule() {
                 <th>Etapa</th>
                 <th>Vendedor</th>
                 <th>Valor</th>
+                <th>Cadastro</th>
+                <th>Prev. fechamento</th>
                 <th>Aging</th>
                 <th>Riscos detectados</th>
               </tr>
@@ -1382,7 +1407,7 @@ export default function ReportsModule() {
             <tbody>
               {!riskRows.length ? (
                 <tr>
-                  <td colSpan={8}>Nenhuma oportunidade em risco no filtro atual.</td>
+                  <td colSpan={10}>Nenhuma oportunidade em risco no filtro atual.</td>
                 </tr>
               ) : null}
               {riskRows.map((row) => (
@@ -1393,6 +1418,8 @@ export default function ReportsModule() {
                   <td>{row.stage_label}</td>
                   <td>{row.owner_label}</td>
                   <td>{formatCurrency(row.estimated_value)}</td>
+                  <td>{formatDate(row.created_at)}</td>
+                  <td>{formatDate(row.expected_close_date)}</td>
                   <td>{row.aging_days} dias</td>
                   <td>{row.risk_reasons}</td>
                 </tr>
@@ -1415,6 +1442,7 @@ export default function ReportsModule() {
                 <th>Cidade/UF</th>
                 <th>Valor</th>
                 <th>Forecast</th>
+                <th>Cadastro</th>
                 <th>Prev. fechamento</th>
                 <th>Aging</th>
               </tr>
@@ -1422,7 +1450,7 @@ export default function ReportsModule() {
             <tbody>
               {!filteredFunnelRows.length ? (
                 <tr>
-                  <td colSpan={11}>Nenhuma oportunidade encontrada com os filtros atuais.</td>
+                  <td colSpan={12}>Nenhuma oportunidade encontrada com os filtros atuais.</td>
                 </tr>
               ) : null}
               {filteredFunnelRows.map((row) => (
@@ -1436,7 +1464,8 @@ export default function ReportsModule() {
                   <td>{[row.company_city, row.company_state].filter(Boolean).join("/") || "-"}</td>
                   <td>{formatCurrency(row.estimated_value)}</td>
                   <td>{formatCurrency(row.weighted_value)}</td>
-                  <td>{row.expected_close_date ? formatDate(row.expected_close_date) : "-"}</td>
+                  <td>{formatDate(row.created_at)}</td>
+                  <td>{formatDate(row.expected_close_date)}</td>
                   <td>{row.aging_days} dias</td>
                 </tr>
               ))}
