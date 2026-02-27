@@ -36,6 +36,7 @@ const PROPOSAL_TEMPLATE_PROFILES_STORAGE_KEY = "crm.pipeline.proposal-template-p
 const PROPOSAL_LOGO_STORAGE_KEY = "crm.pipeline.proposal-logo.v1";
 const PIPELINE_VIEWER_STORAGE_KEY = "crm.pipeline.viewer-user-id.v1";
 const PIPELINE_FORM_DEFAULTS_STORAGE_KEY = "crm.pipeline.form-defaults.v1";
+const PIPELINE_OWNER_FILTER_ALL = "__all__";
 const ART_PRINTER_LOGO_CANDIDATES = [
   "/logo-art-printer.png",
   "/logo-artprinter.png",
@@ -1214,6 +1215,7 @@ export default function PipelineModule({
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [viewerUserId, setViewerUserId] = useState("");
   const [viewerRole, setViewerRole] = useState("sales");
+  const [opportunityOwnerFilterUserId, setOpportunityOwnerFilterUserId] = useState(PIPELINE_OWNER_FILTER_ALL);
   const [items, setItems] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [error, setError] = useState("");
@@ -1261,6 +1263,11 @@ export default function PipelineModule({
     if (canViewAllOpportunities) return activeUsers;
     return activeUsers.filter((item) => item.user_id === viewerUserId);
   }, [canViewAllOpportunities, pipelineUsers, viewerUserId]);
+  const ownerFilterOptions = useMemo(() => {
+    const activeUsers = pipelineUsers.filter((item) => item.status === "active");
+    return activeUsers.length ? activeUsers : pipelineUsers;
+  }, [pipelineUsers]);
+  const effectiveOwnerFilterUserId = canViewAllOpportunities ? opportunityOwnerFilterUserId : viewerUserId;
   const ownerNameById = useMemo(() => {
     const map = {};
     for (const user of pipelineUsers) {
@@ -1462,6 +1469,7 @@ export default function PipelineModule({
       if (!availableUsers.length) {
         setViewerUserId("");
         setViewerRole("sales");
+        setOpportunityOwnerFilterUserId(PIPELINE_OWNER_FILTER_ALL);
         setForm((prev) => ({ ...prev, owner_user_id: "" }));
         return;
       }
@@ -1471,6 +1479,8 @@ export default function PipelineModule({
 
       setViewerUserId(selectedViewer.user_id);
       setViewerRole(String(selectedViewer.role || "sales"));
+      const selectedCanViewAll = ["admin", "manager"].includes(String(selectedViewer.role || "sales"));
+      setOpportunityOwnerFilterUserId(selectedCanViewAll ? PIPELINE_OWNER_FILTER_ALL : selectedViewer.user_id);
       setForm((prev) => ({
         ...prev,
         owner_user_id: prev.owner_user_id || selectedViewer.user_id
@@ -1480,6 +1490,7 @@ export default function PipelineModule({
       setPipelineUsers([]);
       setViewerUserId("");
       setViewerRole("sales");
+      setOpportunityOwnerFilterUserId(PIPELINE_OWNER_FILTER_ALL);
     } finally {
       setLoadingUsers(false);
     }
@@ -1492,7 +1503,8 @@ export default function PipelineModule({
       const [opps, companiesData] = await Promise.all([
         listOpportunities({
           viewerUserId,
-          viewerRole
+          viewerRole,
+          ownerFilterUserId: effectiveOwnerFilterUserId
         }),
         listCompanyOptions()
       ]);
@@ -1612,7 +1624,7 @@ export default function PipelineModule({
 
   useEffect(() => {
     load();
-  }, [viewerUserId, viewerRole]);
+  }, [viewerUserId, viewerRole, effectiveOwnerFilterUserId]);
 
   useEffect(() => {
     loadSavedProposalTemplates({ silent: true });
@@ -1996,7 +2008,10 @@ export default function PipelineModule({
     if (!nextViewer) return;
 
     setViewerUserId(nextViewer.user_id);
-    setViewerRole(String(nextViewer.role || "sales"));
+    const nextRole = String(nextViewer.role || "sales");
+    const nextCanViewAll = nextRole === "admin" || nextRole === "manager";
+    setViewerRole(nextRole);
+    setOpportunityOwnerFilterUserId(nextCanViewAll ? PIPELINE_OWNER_FILTER_ALL : nextViewer.user_id);
     setEditingOpportunityId("");
     setForm(() => emptyOpportunityForm("", nextViewer.user_id, pipelineDefaultsRef.current));
     setOpportunityItems([]);
@@ -2014,6 +2029,18 @@ export default function PipelineModule({
     if (typeof window !== "undefined") {
       window.localStorage.setItem("crm.pipeline.auto-proposal-mode", nextValue ? "1" : "0");
     }
+  }
+
+  function handleOwnerFilterChange(nextOwnerUserId) {
+    const normalized = String(nextOwnerUserId || "").trim();
+    if (!canViewAllOpportunities) return;
+    if (!normalized || normalized === PIPELINE_OWNER_FILTER_ALL) {
+      setOpportunityOwnerFilterUserId(PIPELINE_OWNER_FILTER_ALL);
+      return;
+    }
+    const hasUser = ownerFilterOptions.some((item) => item.user_id === normalized);
+    if (!hasUser) return;
+    setOpportunityOwnerFilterUserId(normalized);
   }
 
   async function handleCreateAutomatedProposal(event, item) {
@@ -2695,10 +2722,27 @@ export default function PipelineModule({
               ))}
             </select>
           </label>
+          <label className="settings-field">
+            <span>Responsável da oportunidade (filtro)</span>
+            <select
+              value={canViewAllOpportunities ? opportunityOwnerFilterUserId : viewerUserId}
+              onChange={(event) => handleOwnerFilterChange(event.target.value)}
+              disabled={loadingUsers || !ownerFilterOptions.length || !canViewAllOpportunities}
+            >
+              {canViewAllOpportunities ? <option value={PIPELINE_OWNER_FILTER_ALL}>Todos</option> : null}
+              {(canViewAllOpportunities ? ownerFilterOptions : ownerFilterOptions.filter((item) => item.user_id === viewerUserId)).map(
+                (user) => (
+                  <option key={user.user_id} value={user.user_id}>
+                    {user.full_name || user.email}
+                  </option>
+                )
+              )}
+            </select>
+          </label>
           <p className="pipeline-access-note">
             {viewerUser
               ? canViewAllOpportunities
-                ? "Perfil Gestor/Admin: visualiza todas as oportunidades."
+                ? "Perfil Gestor/Admin: pode filtrar por responsável ou visualizar Todos."
                 : "Perfil Vendedor/Backoffice: visualiza apenas as oportunidades do próprio usuário."
               : "Cadastre ao menos um usuário ativo em Configurações para usar o controle de visibilidade."}
           </p>

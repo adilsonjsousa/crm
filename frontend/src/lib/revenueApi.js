@@ -1090,6 +1090,7 @@ export async function listOpportunities(options = {}) {
   const viewerUserId = String(options?.viewerUserId || "").trim();
   const viewerRole = normalizeUserRole(options?.viewerRole);
   const canViewAll = viewerRole === "admin" || viewerRole === "manager";
+  const ownerFilterUserId = String(options?.ownerFilterUserId || "").trim();
 
   let query = supabase
     .from("opportunities")
@@ -1099,6 +1100,9 @@ export async function listOpportunities(options = {}) {
 
   if (viewerUserId && !canViewAll) {
     query = query.eq("owner_user_id", viewerUserId);
+  }
+  if (canViewAll && ownerFilterUserId && ownerFilterUserId !== "__all__") {
+    query = query.eq("owner_user_id", ownerFilterUserId);
   }
 
   const { data, error } = await query.order("created_at", { ascending: false }).limit(30);
