@@ -237,6 +237,24 @@ function emptyInteractionForm() {
   };
 }
 
+const HUNTER_QUICK_OVERLAY_STYLE = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 95,
+  background: "rgba(18, 23, 34, 0.52)",
+  backdropFilter: "blur(2px)",
+  padding: "18px",
+  display: "flex",
+  justifyContent: "center",
+  alignItems: "flex-start"
+};
+
+const HUNTER_QUICK_MODAL_STYLE = {
+  width: "min(980px, 100%)",
+  maxHeight: "calc(100vh - 36px)",
+  overflow: "auto"
+};
+
 export default function HunterModule() {
   const [loading, setLoading] = useState(false);
   const [savingAction, setSavingAction] = useState(false);
@@ -579,6 +597,17 @@ export default function HunterModule() {
     if (!selectedCompany) {
       setQuickActionType("");
     }
+  }, [selectedCompany]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    if (!selectedCompany) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [selectedCompany]);
 
   useEffect(() => {
@@ -1073,9 +1102,10 @@ export default function HunterModule() {
       </div>
 
       {selectedCompany ? (
-        <div className="edit-company-modal-overlay" role="presentation" onClick={closeQuickAction}>
+        <div className="edit-company-modal-overlay" style={HUNTER_QUICK_OVERLAY_STYLE} role="presentation" onClick={closeQuickAction}>
           <article
             className="edit-company-modal-card hunter-quick-modal-card"
+            style={HUNTER_QUICK_MODAL_STYLE}
             role="dialog"
             aria-modal="true"
             aria-label={`Ações rápidas para ${selectedCompany.trade_name || "empresa"}`}
