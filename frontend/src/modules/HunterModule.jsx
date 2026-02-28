@@ -207,6 +207,17 @@ function ownerDisplayName(user) {
   return String(user.full_name || user.email || "Usuário").trim() || "Usuário";
 }
 
+function usersWithPreferredFirst(users = [], preferredUserId = "") {
+  const preferredId = String(preferredUserId || "").trim();
+  if (!preferredId || !Array.isArray(users) || !users.length) return users;
+  const index = users.findIndex((user) => String(user?.user_id || "").trim() === preferredId);
+  if (index <= 0) return users;
+  const ordered = [...users];
+  const [preferred] = ordered.splice(index, 1);
+  if (preferred) ordered.unshift(preferred);
+  return ordered;
+}
+
 function segmentFilterSummary(selectedSegments = []) {
   if (!selectedSegments.length) return "Todos";
   if (selectedSegments.length === 1) return selectedSegments[0];
@@ -379,6 +390,72 @@ export default function HunterModule() {
     }
     return grouped;
   }, [visibleOpenTasks]);
+
+  const preferredOwnerByCompany = useMemo(() => {
+    const scoreByCompany = {};
+
+    for (const opportunity of visibleOpenOpportunities) {
+      const companyId = String(opportunity.company_id || "").trim();
+      const ownerUserId = String(opportunity.owner_user_id || "").trim();
+      if (!companyId || !ownerUserId) continue;
+      if (!scoreByCompany[companyId]) scoreByCompany[companyId] = {};
+      const previous = scoreByCompany[companyId][ownerUserId] || { count: 0, lastMs: 0 };
+      const updatedMs = new Date(opportunity.updated_at || opportunity.created_at || 0).getTime();
+      scoreByCompany[companyId][ownerUserId] = {
+        count: previous.count + 1,
+        lastMs: Number.isFinite(updatedMs) ? Math.max(previous.lastMs, updatedMs) : previous.lastMs
+      };
+    }
+
+    const preferred = {};
+    for (const [companyId, ownersScore] of Object.entries(scoreByCompany)) {
+      const ranked = Object.entries(ownersScore).sort((a, b) => {
+        const byCount = Number(b[1]?.count || 0) - Number(a[1]?.count || 0);
+        if (byCount !== 0) return byCount;
+        return Number(b[1]?.lastMs || 0) - Number(a[1]?.lastMs || 0);
+      });
+      if (ranked.length) preferred[companyId] = ranked[0][0];
+    }
+
+    for (const task of visibleOpenTasks) {
+      const companyId = String(task.company_id || "").trim();
+      const assigneeUserId = String(task.assignee_user_id || "").trim();
+      if (!companyId || !assigneeUserId) continue;
+      if (!preferred[companyId]) preferred[companyId] = assigneeUserId;
+    }
+
+    return preferred;
+  }, [visibleOpenOpportunities, visibleOpenTasks]);
+
+  function resolveDefaultOwnerForCompanyId(companyId) {
+    const normalizedCompanyId = String(companyId || "").trim();
+    const preferredOwner = preferredOwnerByCompany[normalizedCompanyId];
+
+    if (canDistribute) {
+      if (preferredOwner && sellerUsers.some((user) => user.user_id === preferredOwner)) return preferredOwner;
+      return sellerUsers[0]?.user_id || "";
+    }
+
+    if (preferredOwner && activeUsers.some((user) => user.user_id === preferredOwner)) return preferredOwner;
+    return String(viewerUserId || "").trim();
+  }
+
+  const visitOwnerOptions = useMemo(() => {
+    const baseOptions = canDistribute ? sellerUsers : activeUsers.filter((user) => user.user_id === viewerUserId);
+    const preferredUserId = String(visitForm.assignee_user_id || "").trim() || resolveDefaultOwnerForCompanyId(selectedCompany?.id);
+    return usersWithPreferredFirst(baseOptions, preferredUserId);
+  }, [activeUsers, canDistribute, preferredOwnerByCompany, sellerUsers, selectedCompany?.id, viewerUserId, visitForm.assignee_user_id]);
+
+  const opportunityOwnerOptions = useMemo(() => {
+    const baseOptions = canDistribute ? sellerUsers : activeUsers.filter((user) => user.user_id === viewerUserId);
+    const preferredUserId = String(opportunityForm.owner_user_id || "").trim() || resolveDefaultOwnerForCompanyId(selectedCompany?.id);
+    return usersWithPreferredFirst(baseOptions, preferredUserId);
+  }, [activeUsers, canDistribute, preferredOwnerByCompany, sellerUsers, selectedCompany?.id, viewerUserId, opportunityForm.owner_user_id]);
+
+  const assignOwnerOptions = useMemo(() => {
+    const preferredUserId = String(assignForm.owner_user_id || "").trim() || resolveDefaultOwnerForCompanyId(selectedCompany?.id);
+    return usersWithPreferredFirst(sellerUsers, preferredUserId);
+  }, [preferredOwnerByCompany, sellerUsers, selectedCompany?.id, assignForm.owner_user_id]);
 
   const availableStates = useMemo(() => {
     const set = new Set();
@@ -667,9 +744,7 @@ export default function HunterModule() {
   function handleOpenQuickAction(type, company) {
     if (!company?.id) return;
 
-    const defaultOwner = canDistribute
-      ? sellerUsers[0]?.user_id || ""
-      : viewerUserId;
+    const defaultOwner = resolveDefaultOwnerForCompanyId(company.id);
 
     setQuickActionCompanyId(company.id);
     setQuickActionType(type);
@@ -1252,7 +1327,7 @@ export default function HunterModule() {
                       onChange={(event) => setVisitForm((prev) => ({ ...prev, assignee_user_id: event.target.value }))}
                       disabled={!canDistribute}
                     >
-                      {(canDistribute ? sellerUsers : activeUsers.filter((user) => user.user_id === viewerUserId)).map((user) => (
+                      {visitOwnerOptions.map((user) => (
                         <option key={user.user_id} value={user.user_id}>
                           {ownerDisplayName(user)}
                         </option>
@@ -1315,7 +1390,7 @@ export default function HunterModule() {
                       onChange={(event) => setOpportunityForm((prev) => ({ ...prev, owner_user_id: event.target.value }))}
                       disabled={!canDistribute}
                     >
-                      {(canDistribute ? sellerUsers : activeUsers.filter((user) => user.user_id === viewerUserId)).map((user) => (
+                      {opportunityOwnerOptions.map((user) => (
                         <option key={user.user_id} value={user.user_id}>
                           {ownerDisplayName(user)}
                         </option>
@@ -1376,7 +1451,7 @@ export default function HunterModule() {
                     value={assignForm.owner_user_id}
                     onChange={(event) => setAssignForm((prev) => ({ ...prev, owner_user_id: event.target.value }))}
                   >
-                    {sellerUsers.map((user) => (
+                    {assignOwnerOptions.map((user) => (
                       <option key={user.user_id} value={user.user_id}>
                         {ownerDisplayName(user)}
                       </option>
