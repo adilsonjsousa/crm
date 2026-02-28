@@ -760,6 +760,73 @@ textarea {
   resize: vertical;
 }
 
+.multi-checkbox-filter {
+  position: relative;
+  width: 100%;
+}
+
+.multi-checkbox-filter[open] {
+  z-index: 40;
+}
+
+.multi-checkbox-summary {
+  list-style: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: var(--bg-input);
+  color: var(--text-main);
+  cursor: pointer;
+  user-select: none;
+}
+
+.multi-checkbox-summary::-webkit-details-marker {
+  display: none;
+}
+
+.multi-checkbox-summary::after {
+  content: "▾";
+  float: right;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.multi-checkbox-filter[open] .multi-checkbox-summary::after {
+  content: "▴";
+}
+
+.multi-checkbox-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-panel);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.multi-checkbox-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-main);
+}
+
+.multi-checkbox-option input[type="checkbox"] {
+  margin: 0;
+  padding: 0;
+  width: 15px;
+  height: 15px;
+}
+
 .btn-primary {
   background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
   border-color: transparent;

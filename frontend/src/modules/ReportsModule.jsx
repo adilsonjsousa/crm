@@ -52,6 +52,24 @@ function normalizeText(value) {
     .trim();
 }
 
+function segmentFilterSummary(selectedSegments = []) {
+  if (!selectedSegments.length) return "Todos";
+  if (selectedSegments.length === 1) return selectedSegments[0];
+  return `${selectedSegments.length} segmentos`;
+}
+
+function toggleMultiValue(values = [], value = "") {
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue) return values;
+  const set = new Set(values);
+  if (set.has(normalizedValue)) {
+    set.delete(normalizedValue);
+  } else {
+    set.add(normalizedValue);
+  }
+  return Array.from(set);
+}
+
 function normalizeCityKey(value) {
   return String(value || "")
     .normalize("NFD")
@@ -360,7 +378,7 @@ export default function ReportsModule() {
   const [funnelEndDate, setFunnelEndDate] = useState(() => todayYmd());
   const [funnelOwnerFilter, setFunnelOwnerFilter] = useState("all");
   const [funnelStageFilter, setFunnelStageFilter] = useState("all");
-  const [funnelSegmentFilter, setFunnelSegmentFilter] = useState("all");
+  const [funnelSegmentFilters, setFunnelSegmentFilters] = useState([]);
   const [funnelOriginFilter, setFunnelOriginFilter] = useState("all");
   const [funnelCityFilter, setFunnelCityFilter] = useState("");
   const [funnelMinValue, setFunnelMinValue] = useState("");
@@ -581,6 +599,10 @@ export default function ReportsModule() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [enrichedFunnelRows]);
 
+  useEffect(() => {
+    setFunnelSegmentFilters((previous) => previous.filter((segment) => funnelSegmentOptions.includes(segment)));
+  }, [funnelSegmentOptions]);
+
   const filteredFunnelRows = useMemo(() => {
     const startMs = toDateMs(funnelStartDate, false);
     const endMs = toDateMs(funnelEndDate, true);
@@ -603,7 +625,7 @@ export default function ReportsModule() {
         }
       }
       if (funnelStageFilter !== "all" && row.stage !== funnelStageFilter) return false;
-      if (funnelSegmentFilter !== "all" && row.company_segment !== funnelSegmentFilter) return false;
+      if (funnelSegmentFilters.length && !funnelSegmentFilters.includes(row.company_segment)) return false;
       if (funnelOriginFilter !== "all" && row.origin_key !== funnelOriginFilter) return false;
       if (!matchesCityUfFilter({ city: row.company_city, state: row.company_state }, funnelCityFilterParsed)) return false;
 
@@ -619,7 +641,7 @@ export default function ReportsModule() {
     funnelOnlyOpen,
     funnelOwnerFilter,
     funnelStageFilter,
-    funnelSegmentFilter,
+    funnelSegmentFilters,
     funnelOriginFilter,
     funnelCityFilterParsed,
     funnelMinValue,
@@ -1202,14 +1224,29 @@ export default function ReportsModule() {
           </label>
           <label className="reports-filter-field">
             <span>Segmento</span>
-            <select value={funnelSegmentFilter} onChange={(event) => setFunnelSegmentFilter(event.target.value)}>
-              <option value="all">Todos</option>
-              {funnelSegmentOptions.map((segment) => (
-                <option key={segment} value={segment}>
-                  {segment}
-                </option>
-              ))}
-            </select>
+            <details className="multi-checkbox-filter">
+              <summary className="multi-checkbox-summary">{segmentFilterSummary(funnelSegmentFilters)}</summary>
+              <div className="multi-checkbox-menu">
+                <label className="multi-checkbox-option">
+                  <input
+                    type="checkbox"
+                    checked={!funnelSegmentFilters.length}
+                    onChange={() => setFunnelSegmentFilters([])}
+                  />
+                  Todos
+                </label>
+                {funnelSegmentOptions.map((segment) => (
+                  <label key={segment} className="multi-checkbox-option">
+                    <input
+                      type="checkbox"
+                      checked={funnelSegmentFilters.includes(segment)}
+                      onChange={() => setFunnelSegmentFilters((previous) => toggleMultiValue(previous, segment))}
+                    />
+                    {segment}
+                  </label>
+                ))}
+              </div>
+            </details>
           </label>
           <label className="reports-filter-field">
             <span>Origem</span>

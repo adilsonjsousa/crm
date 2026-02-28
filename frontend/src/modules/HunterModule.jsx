@@ -207,6 +207,24 @@ function ownerDisplayName(user) {
   return String(user.full_name || user.email || "Usuário").trim() || "Usuário";
 }
 
+function segmentFilterSummary(selectedSegments = []) {
+  if (!selectedSegments.length) return "Todos";
+  if (selectedSegments.length === 1) return selectedSegments[0];
+  return `${selectedSegments.length} segmentos`;
+}
+
+function toggleMultiValue(values = [], value = "") {
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue) return values;
+  const set = new Set(values);
+  if (set.has(normalizedValue)) {
+    set.delete(normalizedValue);
+  } else {
+    set.add(normalizedValue);
+  }
+  return Array.from(set);
+}
+
 function emptyInteractionForm() {
   return {
     interaction_type: "note",
@@ -237,7 +255,7 @@ export default function HunterModule() {
   const [searchTerm, setSearchTerm] = useState("");
   const [stateFilter, setStateFilter] = useState("");
   const [cityFilter, setCityFilter] = useState("");
-  const [segmentFilter, setSegmentFilter] = useState("");
+  const [segmentFilters, setSegmentFilters] = useState([]);
   const [onlyWithoutOpenOpportunities, setOnlyWithoutOpenOpportunities] = useState(false);
   const [riskDays, setRiskDays] = useState(7);
 
@@ -373,6 +391,10 @@ export default function HunterModule() {
     return [...set].sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [visibleCompanyRows]);
 
+  useEffect(() => {
+    setSegmentFilters((previous) => previous.filter((segment) => availableSegments.includes(segment)));
+  }, [availableSegments]);
+
   const filteredCompanies = useMemo(() => {
     const normalizedSearch = normalizeLookupText(searchTerm);
     const digitsSearch = cleanDigits(searchTerm);
@@ -387,7 +409,7 @@ export default function HunterModule() {
 
         if (stateFilter && companyState !== stateFilter) return false;
         if (cityFilter && companyCity !== cityFilter) return false;
-        if (segmentFilter && companySegment !== segmentFilter) return false;
+        if (segmentFilters.length && !segmentFilters.includes(companySegment)) return false;
 
         if (normalizedSearch) {
           const matchesName = companyName.includes(normalizedSearch);
@@ -406,7 +428,7 @@ export default function HunterModule() {
     openOpportunitiesByCompany,
     onlyWithoutOpenOpportunities,
     searchTerm,
-    segmentFilter,
+    segmentFilters,
     stateFilter,
     visibleCompanyRows
   ]);
@@ -986,14 +1008,29 @@ export default function HunterModule() {
 
           <label>
             Segmento
-            <select value={segmentFilter} onChange={(event) => setSegmentFilter(event.target.value)}>
-              <option value="">Todos</option>
-              {availableSegments.map((segment) => (
-                <option key={segment} value={segment}>
-                  {segment}
-                </option>
-              ))}
-            </select>
+            <details className="multi-checkbox-filter">
+              <summary className="multi-checkbox-summary">{segmentFilterSummary(segmentFilters)}</summary>
+              <div className="multi-checkbox-menu">
+                <label className="multi-checkbox-option">
+                  <input
+                    type="checkbox"
+                    checked={!segmentFilters.length}
+                    onChange={() => setSegmentFilters([])}
+                  />
+                  Todos
+                </label>
+                {availableSegments.map((segment) => (
+                  <label key={segment} className="multi-checkbox-option">
+                    <input
+                      type="checkbox"
+                      checked={segmentFilters.includes(segment)}
+                      onChange={() => setSegmentFilters((previous) => toggleMultiValue(previous, segment))}
+                    />
+                    {segment}
+                  </label>
+                ))}
+              </div>
+            </details>
           </label>
 
           <label>
