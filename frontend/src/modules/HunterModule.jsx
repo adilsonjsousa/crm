@@ -1506,6 +1506,8 @@ export default function HunterModule() {
                     ].filter(Boolean)
                   )
                 ].slice(0, 2);
+                const currentOwner = owners[0] || "";
+                const secondaryOwners = owners.slice(1);
 
                 return (
                   <tr key={company.id}>
@@ -1518,7 +1520,16 @@ export default function HunterModule() {
                     <td>{companyOpps.length}</td>
                     <td>{companyTasks.length}</td>
                     <td>{companyOpps.length ? `${maxAging} dia(s)` : "-"}</td>
-                    <td>{owners.length ? owners.join(" / ") : "Sem responsável"}</td>
+                    <td>
+                      {currentOwner ? (
+                        <div className="hunter-owner-cell">
+                          <span className="hunter-owner-badge">Responsável atual: {currentOwner}</span>
+                          {secondaryOwners.length ? <small className="muted hunter-owner-extra">{secondaryOwners.join(" / ")}</small> : null}
+                        </div>
+                      ) : (
+                        "Sem responsável"
+                      )}
+                    </td>
                     <td>
                       <div className="hunter-row-actions">
                         <button type="button" className="btn-ghost btn-table-action" onClick={() => handleOpenQuickAction("interaction", company)}>

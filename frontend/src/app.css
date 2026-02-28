@@ -661,6 +661,29 @@ body {
   gap: 6px;
 }
 
+.hunter-owner-cell {
+  display: grid;
+  gap: 4px;
+}
+
+.hunter-owner-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--accent-rgb), 0.38);
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--accent-2);
+  font-size: 0.73rem;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 3px 9px;
+}
+
+.hunter-owner-extra {
+  font-size: 0.74rem;
+}
+
 .hunter-quick-panel {
   display: grid;
   gap: 10px;
