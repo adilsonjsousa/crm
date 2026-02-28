@@ -1715,6 +1715,30 @@ export default function PipelineModule({
 
     return grouped;
   }, [items]);
+  const stageSummary = useMemo(() => {
+    const byStage = PIPELINE_STAGES.reduce((acc, stage) => {
+      const rows = itemsByStage[stage.value] || [];
+      const count = rows.length;
+      const totalValue = rows.reduce((sum, row) => sum + toPositiveMoneyNumber(row.estimated_value), 0);
+      acc[stage.value] = {
+        count,
+        totalValue
+      };
+      return acc;
+    }, {});
+
+    const funnelTotalCount = PIPELINE_STAGES.reduce((sum, stage) => sum + Number(byStage[stage.value]?.count || 0), 0);
+    const funnelTotalValue = PIPELINE_STAGES.reduce((sum, stage) => {
+      if (stage.value === "lead") return sum;
+      return sum + Number(byStage[stage.value]?.totalValue || 0);
+    }, 0);
+
+    return {
+      byStage,
+      funnelTotalCount,
+      funnelTotalValue
+    };
+  }, [itemsByStage]);
 
   const proposalItemsForDocument = useMemo(() => {
     if (!proposalEditor) return [];
@@ -3674,6 +3698,10 @@ export default function PipelineModule({
 
       <article className="panel top-gap">
         <h3>Funil de vendas</h3>
+        <p className="pipeline-funnel-summary">
+          Total do funil: <strong>{stageSummary.funnelTotalCount}</strong> oportunidade(s) ·
+          Valor total (sem LEAD): <strong>{brl(stageSummary.funnelTotalValue)}</strong>
+        </p>
         {error ? <p className="error-text">{error}</p> : null}
         {success ? <p className="success-text">{success}</p> : null}
         {!proposalEditor ? (
@@ -3692,8 +3720,13 @@ export default function PipelineModule({
               onDrop={(event) => handleDrop(event, stage.value)}
             >
               <header className="pipeline-column-header">
-                <span>{stage.label}</span>
-                <strong>{itemsByStage[stage.value]?.length || 0}</strong>
+                <div className="pipeline-column-title-row">
+                  <span>{stage.label}</span>
+                  <strong>{stageSummary.byStage[stage.value]?.count || 0}</strong>
+                </div>
+                <p className={`pipeline-column-total ${stage.value === "lead" ? "is-lead" : ""}`}>
+                  {stage.value === "lead" ? "Sem valor" : brl(stageSummary.byStage[stage.value]?.totalValue || 0)}
+                </p>
               </header>
 
               <div className="pipeline-column-body">

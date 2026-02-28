@@ -1653,6 +1653,11 @@ tbody tr:hover {
 .pipeline-column-header {
   padding: 9px;
   border-bottom: 1px solid var(--border-soft);
+  display: grid;
+  gap: 4px;
+}
+
+.pipeline-column-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1668,6 +1673,28 @@ tbody tr:hover {
 .pipeline-column-header strong {
   font-size: 0.78rem;
   color: var(--text-sub);
+}
+
+.pipeline-column-total {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent-2);
+}
+
+.pipeline-column-total.is-lead {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.pipeline-funnel-summary {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  color: var(--text-sub);
+}
+
+.pipeline-funnel-summary strong {
+  color: var(--accent-2);
 }
 
 .pipeline-column-body {
