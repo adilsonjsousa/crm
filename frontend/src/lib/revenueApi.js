@@ -1699,6 +1699,33 @@ export async function listCompanyInteractions(companyId) {
   }));
 }
 
+export async function listCompanyInteractionsFeed({ occurredFromIso = "", limit = 600 } = {}) {
+  const supabase = ensureSupabase();
+  const safeLimit = Number.isFinite(limit) ? Math.max(50, Math.min(2500, Math.floor(limit))) : 600;
+
+  let query = supabase
+    .from("company_interactions")
+    .select(
+      "id,company_id,interaction_type,direction,subject,content,whatsapp_number,phone_number,occurred_at,created_at,companies:company_id(id,trade_name,city,state,segmento)"
+    )
+    .order("occurred_at", { ascending: false })
+    .limit(safeLimit);
+
+  const normalizedOccurredFromIso = String(occurredFromIso || "").trim();
+  if (normalizedOccurredFromIso) {
+    query = query.gte("occurred_at", normalizedOccurredFromIso);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(normalizeError(error, "Falha ao listar interações globais."));
+
+  return (data || []).map((item) => ({
+    ...item,
+    whatsapp_number: formatBrazilPhone(item.whatsapp_number),
+    phone_number: formatBrazilPhone(item.phone_number)
+  }));
+}
+
 export async function listCompanyAssets(companyId) {
   const normalizedCompanyId = String(companyId || "").trim();
   if (!normalizedCompanyId) return [];

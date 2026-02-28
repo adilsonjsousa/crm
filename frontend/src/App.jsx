@@ -5,6 +5,7 @@ import { toWhatsAppBrazilNumber } from "./lib/phone";
 import DashboardModule from "./modules/DashboardModule";
 import CompaniesModule from "./modules/CompaniesModule";
 import PipelineModule from "./modules/PipelineModule";
+import HunterModule from "./modules/HunterModule";
 import ServiceModule from "./modules/ServiceModule";
 import OrdersModule from "./modules/OrdersModule";
 import TasksModule from "./modules/TasksModule";
@@ -19,6 +20,7 @@ const LEGACY_ALIAS_REDIRECT_HOSTS = new Set(["crm-kappa-peach.vercel.app"]);
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", hint: "Indicadores", icon: "◩" },
   { id: "pipeline", label: "Pipeline", hint: "Negócios", icon: "◧" },
+  { id: "hunter", label: "Fluxo", hint: "Hunter e cobertura", icon: "◲" },
   { id: "tasks", label: "Agenda", hint: "Fluxo de tarefas", icon: "◪" },
   { id: "companies", label: "Empresas", hint: "Contas e CNPJ", icon: "◎" },
   { id: "contacts", label: "Contatos", hint: "Pessoas e cargos", icon: "◬" },
@@ -48,6 +50,11 @@ const PAGE_META = {
     kicker: "Vendas",
     title: "Pipeline Comercial",
     description: "Evolua negócios por etapa com arrastar e soltar, mantendo processo previsível e auditável."
+  },
+  hunter: {
+    kicker: "Prospecção",
+    title: "Fluxo de Oportunidades",
+    description: "Priorize contas-alvo, distribua visitas e acompanhe cobertura comercial por região e responsável."
   },
   orders: {
     kicker: "Revenue Operations",
@@ -218,6 +225,7 @@ export default function App() {
         />
       );
     }
+    if (activeTab === "hunter") return <HunterModule />;
     if (activeTab === "orders") return <OrdersModule />;
     if (activeTab === "reports") return <ReportsModule />;
     if (activeTab === "tasks") {
