@@ -236,6 +236,70 @@ function isReceivableOverdue(receivable) {
   return normalizedStatus.includes("atras");
 }
 
+function isOmieFiscalOrder(order) {
+  const source = order && typeof order === "object" ? order : {};
+  const hasInvoiceId = Boolean(
+    String(source.numero_nfe || source.chave_nfe || source.codigo_nfe || source.numero_documento_fiscal || "").trim()
+  );
+  if (hasInvoiceId) return true;
+  if (source.data_faturamento_iso) return true;
+
+  const statusText = normalizeText([source.etapa, source.status, source.situacao_nf, source.status_nf].filter(Boolean).join(" "));
+  if (!statusText) return false;
+  if (statusText.includes("orcament") || statusText.includes("cotac") || statusText.includes("propost") || statusText.includes("rascunh")) {
+    return false;
+  }
+  if (statusText.includes("fatur") || statusText.includes("nota fiscal") || statusText.includes("nfe") || statusText.includes("emitid")) {
+    return true;
+  }
+
+  return false;
+}
+
+function resolveOmieOrderDateIso(order) {
+  return String(order?.data_faturamento_iso || order?.data_emissao_iso || order?.data_pedido_iso || "").trim() || null;
+}
+
+function computeOmieOrdersSummary(orders = []) {
+  const nowMs = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const safeRows = Array.isArray(orders) ? orders : [];
+  const sorted = [...safeRows].sort((a, b) => {
+    const aDate = resolveOmieOrderDateIso(a);
+    const bDate = resolveOmieOrderDateIso(b);
+    const aMs = aDate ? new Date(aDate).getTime() : Number.NEGATIVE_INFINITY;
+    const bMs = bDate ? new Date(bDate).getTime() : Number.NEGATIVE_INFINITY;
+    return bMs - aMs;
+  });
+
+  let totalAmount = 0;
+  let ordersLast90 = 0;
+  let ordersLast180 = 0;
+  let ordersLast360 = 0;
+
+  for (const row of sorted) {
+    totalAmount += Number(row?.valor_total || 0);
+    const orderDateIso = resolveOmieOrderDateIso(row);
+    if (!orderDateIso) continue;
+    const orderMs = new Date(orderDateIso).getTime();
+    if (!Number.isFinite(orderMs)) continue;
+    const diffDays = (nowMs - orderMs) / dayMs;
+    if (!Number.isFinite(diffDays) || diffDays < 0) continue;
+    if (diffDays <= 90) ordersLast90 += 1;
+    if (diffDays <= 180) ordersLast180 += 1;
+    if (diffDays <= 360) ordersLast360 += 1;
+  }
+
+  return {
+    total_orders: sorted.length,
+    total_amount: totalAmount,
+    last_purchase_at: sorted.length ? resolveOmieOrderDateIso(sorted[0]) : null,
+    orders_last_90_days: ordersLast90,
+    orders_last_180_days: ordersLast180,
+    orders_last_360_days: ordersLast360
+  };
+}
+
 export default function CustomerHistoryModal({ open, companyId, companyName, onClose, onRequestEditCompany = null }) {
   const [selectedTab, setSelectedTab] = useState("overview");
   const [loading, setLoading] = useState(false);
@@ -463,16 +527,21 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     () => assets.reduce((acc, item) => acc + Number(item.contract_cost || 0), 0),
     [assets]
   );
-  const omieSummary = useMemo(() => omiePurchases.summary || {}, [omiePurchases.summary]);
-  const omieOrders = useMemo(
+  const omieRawOrders = useMemo(
     () => (Array.isArray(omiePurchases.orders) ? omiePurchases.orders : []),
     [omiePurchases.orders]
+  );
+  const omieOrders = useMemo(() => omieRawOrders.filter((order) => isOmieFiscalOrder(order)), [omieRawOrders]);
+  const omieSummary = useMemo(() => computeOmieOrdersSummary(omieOrders), [omieOrders]);
+  const omieExcludedNonFiscalCount = useMemo(
+    () => Math.max(0, Number(omieRawOrders.length || 0) - Number(omieOrders.length || 0)),
+    [omieOrders.length, omieRawOrders.length]
   );
   const omieProductRows = useMemo(() => {
     const grouped = new Map();
 
     for (const order of omieOrders) {
-      const orderDateIso = order?.data_pedido_iso || order?.data_faturamento_iso || order?.data_emissao_iso || null;
+      const orderDateIso = order?.data_faturamento_iso || order?.data_emissao_iso || order?.data_pedido_iso || null;
       const orderItems = Array.isArray(order?.itens) ? order.itens : Array.isArray(order?.items) ? order.items : [];
 
       for (const itemRaw of orderItems) {
@@ -548,9 +617,17 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     return values[0].source;
   }, [omieOverdueReceivables]);
   const omiePurchaseWarnings = useMemo(() => {
-    if (Array.isArray(omiePurchases.purchase_warnings)) return omiePurchases.purchase_warnings;
-    return Array.isArray(omiePurchases.warnings) ? omiePurchases.warnings : [];
-  }, [omiePurchases.purchase_warnings, omiePurchases.warnings]);
+    const baseWarnings = Array.isArray(omiePurchases.purchase_warnings)
+      ? omiePurchases.purchase_warnings
+      : Array.isArray(omiePurchases.warnings)
+      ? omiePurchases.warnings
+      : [];
+    if (!omieExcludedNonFiscalCount) return baseWarnings;
+    return [
+      ...baseWarnings,
+      `Filtro fiscal aplicado no Cliente 360: ${omieExcludedNonFiscalCount} registro(s) sem nota fiscal foram ocultados.`
+    ];
+  }, [omieExcludedNonFiscalCount, omiePurchases.purchase_warnings, omiePurchases.warnings]);
   const omieReceivablesWarnings = useMemo(() => {
     if (Array.isArray(omiePurchases.receivables_warnings)) return omiePurchases.receivables_warnings;
     return Array.isArray(omiePurchases.warnings) ? omiePurchases.warnings : [];
@@ -1090,14 +1167,14 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                   <h4>Resumo de compras no OMIE</h4>
                   <div className="customer-popup-kpis">
                     <div>
-                      <span>Pedidos encontrados</span>
+                      <span>Notas fiscais encontradas</span>
                       <strong>{Number(omieSummary.total_orders || 0)}</strong>
                       <small>{omiePurchases.customer?.codigo_cliente_omie ? `Codigo OMIE ${omiePurchases.customer.codigo_cliente_omie}` : "-"}</small>
                     </div>
                     <div>
                       <span>Total em compras</span>
                       <strong>{brl(omieSummary.total_amount)}</strong>
-                      <small>Somatorio de pedidos retornados</small>
+                      <small>Somatorio de notas fiscais retornadas</small>
                     </div>
                     <div>
                       <span>Ultima compra</span>
@@ -1148,7 +1225,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                     <tbody>
                       {omieOrders.map((order, index) => (
                         <tr key={`${order.codigo_pedido || order.numero_pedido || "order"}-${index}`}>
-                          <td>{formatDateTime(order.data_pedido_iso || order.data_faturamento_iso || order.data_emissao_iso)}</td>
+                          <td>{formatDateTime(order.data_faturamento_iso || order.data_emissao_iso || order.data_pedido_iso)}</td>
                           <td>{order.numero_pedido || order.codigo_pedido || "-"}</td>
                           <td>{[order.etapa, order.status].filter(Boolean).join(" / ") || "-"}</td>
                           <td>{brl(order.valor_total)}</td>
@@ -1194,7 +1271,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
                     <div>
                       <span>Pedidos analisados</span>
                       <strong>{Number(omieOrders.length || 0)}</strong>
-                      <small>Base de compras OMIE</small>
+                      <small>Base fiscal de compras OMIE</small>
                     </div>
                   </div>
                 </article>

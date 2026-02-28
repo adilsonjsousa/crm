@@ -288,6 +288,7 @@ function normalizeStoragePart(value) {
 const CRM_ACCESS_MODULES = ["dashboard", "pipeline", "companies", "contacts", "tasks", "reports", "settings"];
 const CRM_ACCESS_LEVELS = ["none", "read", "edit", "admin"];
 const OMIE_CUSTOMERS_STORAGE_KEY = "crm.settings.omie.customers.v1";
+const OMIE_CUSTOMERS_COOKIE_KEY = "crm.settings.omie.customers.cookie.v1";
 const PROPOSAL_VERSION_EVENT_TYPES = new Set(["manual_save", "export_docx", "export_pdf", "send_email", "send_whatsapp"]);
 const PROPOSAL_VERSION_OUTPUT_FORMATS = new Set(["snapshot", "docx", "pdf", "email", "whatsapp"]);
 const LEGACY_PRODUCT_DEFAULT_DESCRIPTION = "Cadastro legado migrado automaticamente. Revisar descritivo tecnico.";
@@ -3042,15 +3043,40 @@ function readOmieCredentialsFromLocalStorage() {
     return { appKey: "", appSecret: "" };
   }
 
+  function readCookieCredentials() {
+    try {
+      const cookiePairs = String(window.document?.cookie || "")
+        .split(";")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const prefix = `${OMIE_CUSTOMERS_COOKIE_KEY}=`;
+      const rawCookie = cookiePairs.find((item) => item.startsWith(prefix));
+      if (!rawCookie) return { appKey: "", appSecret: "" };
+      const cookieValue = rawCookie.slice(prefix.length);
+      if (!cookieValue) return { appKey: "", appSecret: "" };
+      const parsed = asObject(JSON.parse(decodeURIComponent(cookieValue)));
+      return {
+        appKey: String(parsed.app_key || "").trim(),
+        appSecret: String(parsed.app_secret || "").trim()
+      };
+    } catch {
+      return { appKey: "", appSecret: "" };
+    }
+  }
+
   try {
     const raw = window.localStorage.getItem(OMIE_CUSTOMERS_STORAGE_KEY);
     const parsed = asObject(raw ? JSON.parse(raw) : {});
-    return {
+    const fromLocalStorage = {
       appKey: String(parsed.app_key || "").trim(),
       appSecret: String(parsed.app_secret || "").trim()
     };
+    if (fromLocalStorage.appKey && fromLocalStorage.appSecret) {
+      return fromLocalStorage;
+    }
+    return readCookieCredentials();
   } catch {
-    return { appKey: "", appSecret: "" };
+    return readCookieCredentials();
   }
 }
 
@@ -3136,19 +3162,18 @@ function resolveOmieLookupContext(company, options = {}, defaults = {}) {
   }
 
   const { appKey, appSecret } = readOmieCredentialsFromLocalStorage();
-  if (!appKey || !appSecret) {
-    throw new Error("Credenciais OMIE nao encontradas neste navegador. Preencha App Key e App Secret em Configuracoes.");
-  }
 
   const defaultRecordsPerPage = Number(defaults.records_per_page) > 0 ? Number(defaults.records_per_page) : 100;
   const defaultMaxPages = Number(defaults.max_pages) > 0 ? Number(defaults.max_pages) : 60;
   const body = {
-    app_key: appKey,
-    app_secret: appSecret,
     cnpj_cpf: cnpjDigits,
     records_per_page: Number(options.records_per_page) > 0 ? Number(options.records_per_page) : defaultRecordsPerPage,
     max_pages: Number(options.max_pages) > 0 ? Number(options.max_pages) : defaultMaxPages
   };
+  if (appKey && appSecret) {
+    body.app_key = appKey;
+    body.app_secret = appSecret;
+  }
 
   return { cnpjDigits, body, supabase: ensureSupabase() };
 }
@@ -3164,6 +3189,12 @@ export async function listCompanyOmiePurchases(company, options = {}) {
 
   const { data, error } = await invokeOmiePurchasesWithRetry(supabase, requestBody);
   if (error) {
+    const normalizedMessage = normalizeError(error, "").toLowerCase();
+    if (normalizedMessage.includes("missing_omie_credentials")) {
+      throw new Error(
+        "Credenciais OMIE nao encontradas neste navegador. Preencha App Key/App Secret em Configuracoes ou configure OMIE_APP_KEY/OMIE_APP_SECRET no servidor."
+      );
+    }
     if (isEdgeFunctionNon2xx(error)) {
       throw new Error("A consulta de compras OMIE ficou instavel neste lote. Tente novamente em alguns segundos.");
     }
@@ -3203,6 +3234,12 @@ export async function listCompanyOmieReceivables(company, options = {}) {
 
   const payload = await invokeOmieReceivablesWithFallback(supabase, requestBody);
   if (payload?.error) {
+    const normalizedMessage = normalizeError(payload.error, "").toLowerCase();
+    if (normalizedMessage.includes("missing_omie_credentials")) {
+      throw new Error(
+        "Credenciais OMIE nao encontradas neste navegador. Preencha App Key/App Secret em Configuracoes ou configure OMIE_APP_KEY/OMIE_APP_SECRET no servidor."
+      );
+    }
     throw new Error(normalizeError(payload.error, "Falha ao consultar contas a receber no OMIE."));
   }
 

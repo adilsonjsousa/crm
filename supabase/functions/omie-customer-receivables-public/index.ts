@@ -930,8 +930,8 @@ Deno.serve(async (request: Request) => {
     return jsonResponse(400, { error: "invalid_payload", message: "Payload invalido." });
   }
 
-  const appKey = safeString(body.app_key || body.appKey);
-  const appSecret = safeString(body.app_secret || body.appSecret);
+  const appKey = safeString(body.app_key || body.appKey || Deno.env.get("OMIE_APP_KEY"));
+  const appSecret = safeString(body.app_secret || body.appSecret || Deno.env.get("OMIE_APP_SECRET"));
   const cnpj = normalizeCnpj(body.cnpj_cpf || body.cnpj || body.cnpjCpf);
   const customerCodeHint = safeString(
     body.customer_code_hint || body.customerCodeHint || body.customer_code || body.customerCode || body.codigo_cliente_omie

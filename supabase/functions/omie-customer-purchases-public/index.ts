@@ -279,6 +279,22 @@ function normalizeOmieOrder(rawOrder: unknown) {
   const etapa = pickFirstNonEmpty(row, ["etapa"]) || pickFirstNonEmpty(header, ["etapa"]);
   const status =
     pickFirstNonEmpty(row, ["status_pedido", "status"]) || pickFirstNonEmpty(header, ["status_pedido", "status"]);
+  const numeroNfe =
+    pickFirstNonEmpty(row, ["numero_nfe", "numero_nf", "numero_nota_fiscal", "numero_nota"]) ||
+    pickFirstNonEmpty(header, ["numero_nfe", "numero_nf", "numero_nota_fiscal", "numero_nota"]);
+  const codigoNfe =
+    pickFirstNonEmpty(row, ["codigo_nfe", "codigo_nf", "codigo_nota_fiscal"]) ||
+    pickFirstNonEmpty(header, ["codigo_nfe", "codigo_nf", "codigo_nota_fiscal"]);
+  const chaveNfe =
+    pickFirstNonEmpty(row, ["chave_nfe", "chave_acesso_nfe", "chave_de_acesso"]) ||
+    pickFirstNonEmpty(header, ["chave_nfe", "chave_acesso_nfe", "chave_de_acesso"]);
+  const dataFaturamentoIso =
+    parseOmieDateToIso(pickFirstNonEmpty(header, ["data_faturamento"])) ||
+    parseOmieDateToIso(pickFirstNonEmpty(row, ["data_faturamento"]));
+  const dataEmissaoIso =
+    parseOmieDateToIso(pickFirstNonEmpty(header, ["data_emissao"])) ||
+    parseOmieDateToIso(pickFirstNonEmpty(row, ["data_emissao"]));
+  const dataCompraIso = dataFaturamentoIso || dataEmissaoIso || orderDateIso;
 
   return {
     codigo_pedido: codigoPedido || null,
@@ -287,16 +303,16 @@ function normalizeOmieOrder(rawOrder: unknown) {
     etapa: etapa || null,
     status: status || null,
     data_pedido_iso: orderDateIso,
-    data_faturamento_iso:
-      parseOmieDateToIso(pickFirstNonEmpty(header, ["data_faturamento"])) ||
-      parseOmieDateToIso(pickFirstNonEmpty(row, ["data_faturamento"])),
-    data_emissao_iso:
-      parseOmieDateToIso(pickFirstNonEmpty(header, ["data_emissao"])) ||
-      parseOmieDateToIso(pickFirstNonEmpty(row, ["data_emissao"])),
+    data_faturamento_iso: dataFaturamentoIso,
+    data_emissao_iso: dataEmissaoIso,
+    data_compra_iso: dataCompraIso,
     valor_total: totalAmount,
     valor_mercadorias: productsAmount,
     valor_desconto: discountAmount,
     valor_frete: freightAmount,
+    numero_nfe: numeroNfe || null,
+    codigo_nfe: codigoNfe || null,
+    chave_nfe: chaveNfe || null,
     codigo_cliente: pickFirstNonEmpty(row, ["codigo_cliente"]) || pickFirstNonEmpty(header, ["codigo_cliente"]) || null,
     itens: items,
     items
@@ -313,18 +329,16 @@ function buildOrderSummary(orders: Array<AnyRecord>) {
   let count360 = 0;
 
   const sorted = [...orders].sort((a, b) => {
-    const aMs = parseOmieDateToIso(a.data_pedido_iso)
-      ? new Date(String(a.data_pedido_iso)).getTime()
-      : Number.NEGATIVE_INFINITY;
-    const bMs = parseOmieDateToIso(b.data_pedido_iso)
-      ? new Date(String(b.data_pedido_iso)).getTime()
-      : Number.NEGATIVE_INFINITY;
+    const aDateIso = resolveOrderPurchaseDateIso(a);
+    const bDateIso = resolveOrderPurchaseDateIso(b);
+    const aMs = aDateIso ? new Date(aDateIso).getTime() : Number.NEGATIVE_INFINITY;
+    const bMs = bDateIso ? new Date(bDateIso).getTime() : Number.NEGATIVE_INFINITY;
     return bMs - aMs;
   });
 
   for (const order of sorted) {
     totalAmount += parseOmieMoney(order.valor_total);
-    const dateIso = parseOmieDateToIso(order.data_pedido_iso);
+    const dateIso = resolveOrderPurchaseDateIso(order);
     if (!dateIso) continue;
     const diffDays = (nowMs - new Date(dateIso).getTime()) / dayMs;
     if (!Number.isFinite(diffDays) || diffDays < 0) continue;
@@ -333,7 +347,7 @@ function buildOrderSummary(orders: Array<AnyRecord>) {
     if (diffDays <= 360) count360 += 1;
   }
 
-  const lastPurchaseAt = sorted[0]?.data_pedido_iso || null;
+  const lastPurchaseAt = sorted[0] ? resolveOrderPurchaseDateIso(sorted[0]) : null;
 
   return {
     total_orders: sorted.length,
@@ -350,6 +364,41 @@ function normalizeStatusText(value: unknown) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+function resolveOrderPurchaseDateIso(order: AnyRecord) {
+  const faturamento = parseOmieDateToIso(order.data_faturamento_iso);
+  if (faturamento) return faturamento;
+  const emissao = parseOmieDateToIso(order.data_emissao_iso);
+  if (emissao) return emissao;
+  return parseOmieDateToIso(order.data_pedido_iso);
+}
+
+function hasInvoiceStatusHint(order: AnyRecord) {
+  const statusText = normalizeStatusText(
+    [order.etapa, order.status, order.situacao_nf, order.status_nf, order.status_faturamento].filter(Boolean).join(" ")
+  );
+  if (!statusText) return false;
+
+  const negativeHints = ["orcament", "cotac", "propost", "rascunh", "cancel", "nao fatur"];
+  if (negativeHints.some((token) => statusText.includes(token))) return false;
+
+  return (
+    statusText.includes("fatur") ||
+    statusText.includes("nota fiscal") ||
+    statusText.includes("nfe") ||
+    statusText.includes("nf e") ||
+    statusText.includes("emitid")
+  );
+}
+
+function isFiscalOrder(order: AnyRecord) {
+  const hasInvoiceId = Boolean(
+    safeString(order.numero_nfe || order.chave_nfe || order.codigo_nfe || order.numero_documento_fiscal)
+  );
+  if (hasInvoiceId) return true;
+  if (parseOmieDateToIso(order.data_faturamento_iso)) return true;
+  return hasInvoiceStatusHint(order);
 }
 
 function isOpenReceivableStatus(value: unknown) {
@@ -799,17 +848,28 @@ async function listOmieOrdersByCustomer({
   }
 
   const sortedOrders = [...orders].sort((a, b) => {
-    const aDate = parseOmieDateToIso(a.data_pedido_iso);
-    const bDate = parseOmieDateToIso(b.data_pedido_iso);
+    const aDate = resolveOrderPurchaseDateIso(a);
+    const bDate = resolveOrderPurchaseDateIso(b);
     const aTime = aDate ? new Date(aDate).getTime() : Number.NEGATIVE_INFINITY;
     const bTime = bDate ? new Date(bDate).getTime() : Number.NEGATIVE_INFINITY;
     return bTime - aTime;
   });
+  const fiscalOrders = sortedOrders.filter((order) => isFiscalOrder(order));
+  const filteredNonFiscalCount = Math.max(0, sortedOrders.length - fiscalOrders.length);
+  const warnings: string[] = [];
+  if (filteredNonFiscalCount > 0) {
+    warnings.push(
+      `Filtro fiscal aplicado: ${filteredNonFiscalCount} registro(s) sem faturamento/nota fiscal foram desconsiderados.`
+    );
+  }
 
   return {
-    orders: sortedOrders,
+    orders: fiscalOrders,
     pages_processed: pagesProcessed,
-    total_pages_detected: totalPages
+    total_pages_detected: totalPages,
+    warnings,
+    raw_orders_count: sortedOrders.length,
+    filtered_non_fiscal_count: filteredNonFiscalCount
   };
 }
 
@@ -927,8 +987,8 @@ Deno.serve(async (request: Request) => {
     });
   }
 
-  const appKey = safeString(body.app_key || body.appKey);
-  const appSecret = safeString(body.app_secret || body.appSecret);
+  const appKey = safeString(body.app_key || body.appKey || Deno.env.get("OMIE_APP_KEY"));
+  const appSecret = safeString(body.app_secret || body.appSecret || Deno.env.get("OMIE_APP_SECRET"));
   const cnpj = normalizeCnpj(body.cnpj_cpf || body.cnpj || body.cnpjCpf);
   const customerCodeHint = safeString(
     body.customer_code_hint || body.customerCodeHint || body.customer_code || body.customerCode || body.codigo_cliente_omie
@@ -996,6 +1056,8 @@ Deno.serve(async (request: Request) => {
       pages_processed: number;
       total_pages_detected: number;
       warnings: string[];
+      raw_orders_count?: number;
+      filtered_non_fiscal_count?: number;
     } = {
       orders: [],
       pages_processed: 0,
@@ -1014,11 +1076,11 @@ Deno.serve(async (request: Request) => {
       });
       orderLookup = {
         ...orderResult,
-        warnings: []
+        warnings: Array.isArray(orderResult.warnings) ? orderResult.warnings : []
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha ao listar pedidos no OMIE.";
-      orderLookup.warnings.push(`ListarPedidos: ${message}`);
+      orderLookup.warnings.push(`ListarPedidos (base fiscal): ${message}`);
 
       if (customerCodeHint) {
         try {
@@ -1047,7 +1109,7 @@ Deno.serve(async (request: Request) => {
               warnings: [
                 ...orderLookup.warnings,
                 ...fallbackLookup.warnings,
-                "Pedidos recuperados via busca de cliente por CNPJ."
+                "Pedidos fiscais recuperados via busca de cliente por CNPJ."
               ]
             };
           } else if (fallbackLookup.warnings.length) {
@@ -1069,6 +1131,8 @@ Deno.serve(async (request: Request) => {
       customer: customerLookup.customer,
       summary,
       orders: orderLookup.orders,
+      raw_orders_count: Number(orderLookup.raw_orders_count || orderLookup.orders.length || 0),
+      filtered_non_fiscal_count: Number(orderLookup.filtered_non_fiscal_count || 0),
       pages_processed: orderLookup.pages_processed,
       total_pages_detected: orderLookup.total_pages_detected,
       receivables_summary: buildReceivablesSummary([]),

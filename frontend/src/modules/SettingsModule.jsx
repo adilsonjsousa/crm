@@ -37,6 +37,7 @@ import { confirmStrongDelete } from "../lib/confirmDelete";
 import { getSubcategoriesByType } from "../lib/productCatalog";
 
 const OMIE_STORAGE_KEY = "crm.settings.omie.customers.v1";
+const OMIE_COOKIE_KEY = "crm.settings.omie.customers.cookie.v1";
 const RDSTATION_STORAGE_KEY = "crm.settings.rdstation.crm.v1";
 const DEFAULT_OMIE_URL = "https://app.omie.com.br/api/v1/geral/clientes/";
 const DEFAULT_RDSTATION_URL = "https://api.rd.services/crm/v2";
@@ -364,23 +365,68 @@ function userDeliveryMessage(delivery) {
   return map[delivery] || "Operação concluída para o usuário.";
 }
 
+function readOmieCookieStorage() {
+  if (typeof window === "undefined") return null;
+  try {
+    const pairs = String(window.document?.cookie || "")
+      .split(";")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const prefix = `${OMIE_COOKIE_KEY}=`;
+    const entry = pairs.find((item) => item.startsWith(prefix));
+    if (!entry) return null;
+    const cookieValue = entry.slice(prefix.length);
+    if (!cookieValue) return null;
+    return asObject(JSON.parse(decodeURIComponent(cookieValue)));
+  } catch {
+    return null;
+  }
+}
+
+function writeOmieCookieStorage(payload) {
+  if (typeof window === "undefined") return;
+  try {
+    const encoded = encodeURIComponent(JSON.stringify(asObject(payload)));
+    window.document.cookie = `${OMIE_COOKIE_KEY}=${encoded}; path=/; max-age=31536000; SameSite=Lax`;
+  } catch {
+    // noop
+  }
+}
+
+function clearOmieCookieStorage() {
+  if (typeof window === "undefined") return;
+  window.document.cookie = `${OMIE_COOKIE_KEY}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
+}
+
 function readOmieFormStorage() {
   if (typeof window === "undefined") return EMPTY_OMIE_FORM;
 
   try {
     const raw = window.localStorage.getItem(OMIE_STORAGE_KEY);
-    if (!raw) return EMPTY_OMIE_FORM;
-    const parsed = asObject(JSON.parse(raw));
+    const parsed = asObject(raw ? JSON.parse(raw) : {});
+    const fromCookie = readOmieCookieStorage();
+    const merged = {
+      ...fromCookie,
+      ...parsed
+    };
     return {
-      app_key: String(parsed.app_key || ""),
-      app_secret: String(parsed.app_secret || ""),
-      records_per_page: String(parsed.records_per_page || EMPTY_OMIE_FORM.records_per_page),
-      max_pages: String(parsed.max_pages || EMPTY_OMIE_FORM.max_pages),
-      omie_api_url: String(parsed.omie_api_url || EMPTY_OMIE_FORM.omie_api_url),
-      dry_run: Boolean(parsed.dry_run)
+      app_key: String(merged.app_key || ""),
+      app_secret: String(merged.app_secret || ""),
+      records_per_page: String(merged.records_per_page || EMPTY_OMIE_FORM.records_per_page),
+      max_pages: String(merged.max_pages || EMPTY_OMIE_FORM.max_pages),
+      omie_api_url: String(merged.omie_api_url || EMPTY_OMIE_FORM.omie_api_url),
+      dry_run: Boolean(merged.dry_run)
     };
   } catch {
-    return EMPTY_OMIE_FORM;
+    const fallback = asObject(readOmieCookieStorage() || {});
+    return {
+      app_key: String(fallback.app_key || ""),
+      app_secret: String(fallback.app_secret || ""),
+      records_per_page: String(fallback.records_per_page || EMPTY_OMIE_FORM.records_per_page),
+      max_pages: String(fallback.max_pages || EMPTY_OMIE_FORM.max_pages),
+      omie_api_url: String(fallback.omie_api_url || EMPTY_OMIE_FORM.omie_api_url),
+      dry_run: Boolean(fallback.dry_run)
+    };
   }
 }
 
@@ -992,6 +1038,7 @@ export default function SettingsModule() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(OMIE_STORAGE_KEY, JSON.stringify(omieForm));
+    writeOmieCookieStorage(omieForm);
   }, [omieForm]);
 
   useEffect(() => {
@@ -2202,6 +2249,7 @@ export default function SettingsModule() {
   }
 
   function clearOmieCredentials() {
+    clearOmieCookieStorage();
     setOmieForm((prev) => ({
       ...prev,
       app_key: "",
@@ -4182,7 +4230,7 @@ export default function SettingsModule() {
       <article className="panel top-gap">
         <h2>Integração OMIE - Cadastro de clientes</h2>
         <p className="muted">
-          Sincronize empresas do OMIE para o CRM usando App Key e App Secret. As credenciais ficam salvas apenas neste navegador.
+          Sincronize empresas do OMIE para o CRM usando App Key e App Secret. As credenciais ficam salvas neste navegador e reaproveitadas no mesmo host (incluindo localhost em portas diferentes).
         </p>
         {omieError ? <p className="error-text">{omieError}</p> : null}
         {omieSuccess ? <p className="success-text">{omieSuccess}</p> : null}
