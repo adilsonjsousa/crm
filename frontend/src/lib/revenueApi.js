@@ -3139,6 +3139,18 @@ function buildReducedOmieLookupBody(body) {
   };
 }
 
+function buildReducedOmieReceivablesBody(body) {
+  const currentRecordsPerPage = Number(body?.records_per_page) || 500;
+  const currentMaxPages = Number(body?.max_pages) || 30;
+  const currentConcurrency = Number(body?.page_concurrency) || 4;
+  return {
+    ...body,
+    records_per_page: Math.max(50, Math.min(150, currentRecordsPerPage)),
+    max_pages: Math.max(6, Math.min(18, currentMaxPages)),
+    page_concurrency: Math.max(1, Math.min(2, currentConcurrency))
+  };
+}
+
 async function invokeOmiePurchasesWithRetry(supabase, body) {
   const firstAttempt = await supabase.functions.invoke("omie-customer-purchases-public", { body });
   if (!firstAttempt?.error) return firstAttempt;
@@ -3181,8 +3193,8 @@ function resolveOmieLookupContext(company, options = {}, defaults = {}) {
 export async function listCompanyOmiePurchases(company, options = {}) {
   const companyData = asObject(company);
   const { cnpjDigits, body, supabase } = resolveOmieLookupContext(company, options, {
-    records_per_page: 100,
-    max_pages: 60
+    records_per_page: 50,
+    max_pages: 20
   });
   const customerCodeHint = await readOmieCustomerCodeHint(supabase, companyData);
   const requestBody = customerCodeHint ? { ...body, customer_code_hint: customerCodeHint } : body;
@@ -3220,8 +3232,8 @@ export async function listCompanyOmiePurchases(company, options = {}) {
 export async function listCompanyOmieReceivables(company, options = {}) {
   const companyData = asObject(company);
   const { cnpjDigits, body, supabase } = resolveOmieLookupContext(company, options, {
-    records_per_page: 500,
-    max_pages: 30
+    records_per_page: 180,
+    max_pages: 20
   });
   const customerCodeHint = await readOmieCustomerCodeHint(supabase, companyData);
 
@@ -3232,13 +3244,19 @@ export async function listCompanyOmieReceivables(company, options = {}) {
     page_concurrency: Number.isFinite(concurrency) && concurrency > 0 ? Math.min(8, Math.max(1, Math.floor(concurrency))) : 4
   };
 
-  const payload = await invokeOmieReceivablesWithFallback(supabase, requestBody);
+  let payload = await invokeOmieReceivablesWithFallback(supabase, requestBody);
+  if (payload?.error && isEdgeFunctionNon2xx(payload.error)) {
+    payload = await invokeOmieReceivablesWithFallback(supabase, buildReducedOmieReceivablesBody(requestBody));
+  }
   if (payload?.error) {
     const normalizedMessage = normalizeError(payload.error, "").toLowerCase();
     if (normalizedMessage.includes("missing_omie_credentials")) {
       throw new Error(
         "Credenciais OMIE nao encontradas neste navegador. Preencha App Key/App Secret em Configuracoes ou configure OMIE_APP_KEY/OMIE_APP_SECRET no servidor."
       );
+    }
+    if (isEdgeFunctionNon2xx(payload.error)) {
+      throw new Error("A consulta OMIE de contas a receber ficou instavel neste lote. Tente novamente em alguns segundos.");
     }
     throw new Error(normalizeError(payload.error, "Falha ao consultar contas a receber no OMIE."));
   }
