@@ -623,6 +623,10 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
       ? omiePurchases.warnings
       : [];
     if (!omieExcludedNonFiscalCount) return baseWarnings;
+    const alreadyHasFiscalFilterWarning = baseWarnings.some((warning) =>
+      String(warning || "").toLowerCase().includes("filtro fiscal aplicado")
+    );
+    if (alreadyHasFiscalFilterWarning) return baseWarnings;
     return [
       ...baseWarnings,
       `Filtro fiscal aplicado no Cliente 360: ${omieExcludedNonFiscalCount} registro(s) sem nota fiscal foram ocultados.`

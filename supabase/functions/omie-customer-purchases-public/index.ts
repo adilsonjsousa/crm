@@ -671,20 +671,89 @@ async function callOmieApi({
   throw new Error("omie_http_500:Falha persistente ao consultar OMIE.");
 }
 
+function extractOmieCustomerCode(row: AnyRecord) {
+  return pickFirstNonEmpty(row, [
+    "codigo_cliente_omie",
+    "codigo_cliente",
+    "codigo_cliente_integracao",
+    "codigo",
+    "id"
+  ]);
+}
+
+function normalizeOmieCustomerCandidate(rowRaw: unknown, cnpj: string) {
+  const row = asObject(rowRaw);
+  const rowCnpj = normalizeCnpj(row.cnpj_cpf ?? row.cnpj ?? row.cpf_cnpj ?? row.cnpjCpf ?? row.documento);
+  if (rowCnpj !== cnpj) return null;
+
+  const externalId = extractOmieCustomerCode(row);
+  if (!externalId) return null;
+
+  return {
+    codigo_cliente_omie: externalId,
+    cnpj,
+    razao_social: pickFirstNonEmpty(row, ["razao_social", "nome_cliente", "nome"]),
+    nome_fantasia: pickFirstNonEmpty(row, ["nome_fantasia", "fantasia", "empresa", "nome"]),
+    inativo: safeString(row.inativo),
+    ativo: safeString(row.ativo),
+    bloqueado: safeString(row.bloqueado)
+  };
+}
+
+function isTruthyFlag(value: unknown) {
+  const raw = safeString(value).toLowerCase();
+  return ["s", "sim", "1", "true", "t", "y", "yes"].includes(raw);
+}
+
+function omieCustomerIsInactive(customer: AnyRecord) {
+  const inativo = safeString(customer.inativo);
+  if (inativo) return isTruthyFlag(inativo);
+
+  const ativo = safeString(customer.ativo);
+  if (ativo) return !isTruthyFlag(ativo);
+
+  const bloqueado = safeString(customer.bloqueado);
+  if (bloqueado) return isTruthyFlag(bloqueado);
+
+  return false;
+}
+
+function scoreOmieCustomerCandidate(customer: AnyRecord) {
+  const code = safeString(customer.codigo_cliente_omie);
+  const numericCode = Number(code);
+  const numericScore = Number.isFinite(numericCode) ? numericCode : 0;
+  const activeScore = omieCustomerIsInactive(customer) ? 0 : 1_000_000_000;
+  return activeScore + numericScore;
+}
+
 async function findOmieCustomer({
   appKey,
   appSecret,
   clientsUrl,
   cnpj,
-  maxFallbackPages
+  maxFallbackPages,
+  excludeCodes = [],
+  allowExcludedFallback = true
 }: {
   appKey: string;
   appSecret: string;
   clientsUrl: string;
   cnpj: string;
   maxFallbackPages: number;
+  excludeCodes?: string[];
+  allowExcludedFallback?: boolean;
 }) {
   const warnings: string[] = [];
+  const candidatesByCode = new Map<string, AnyRecord>();
+  const registerCandidates = (rows: unknown[]) => {
+    for (const rowRaw of rows) {
+      const candidate = normalizeOmieCustomerCandidate(rowRaw, cnpj);
+      if (!candidate) continue;
+      const candidateCode = safeString(candidate.codigo_cliente_omie);
+      if (!candidateCode || candidatesByCode.has(candidateCode)) continue;
+      candidatesByCode.set(candidateCode, candidate);
+    }
+  };
 
   const candidateCalls = [
     { call: "ListarClientesResumido", listKeys: ["clientes_cadastro_resumido", "clientes_cadastro", "clientes"] },
@@ -709,33 +778,7 @@ async function findOmieCustomer({
       });
 
       const rows = extractArrayByKeys(payload, candidate.listKeys);
-      for (const rowRaw of rows) {
-        const row = asObject(rowRaw);
-        const rowCnpj = normalizeCnpj(
-          row.cnpj_cpf ?? row.cnpj ?? row.cpf_cnpj ?? row.cnpjCpf ?? row.documento
-        );
-        if (rowCnpj !== cnpj) continue;
-
-        const externalId = pickFirstNonEmpty(row, [
-          "codigo_cliente_omie",
-          "codigo_cliente",
-          "codigo_cliente_integracao",
-          "codigo",
-          "id"
-        ]);
-
-        if (!externalId) continue;
-
-        return {
-          customer: {
-            codigo_cliente_omie: externalId,
-            cnpj,
-            razao_social: pickFirstNonEmpty(row, ["razao_social", "nome_cliente", "nome"]),
-            nome_fantasia: pickFirstNonEmpty(row, ["nome_fantasia", "fantasia", "empresa", "nome"])
-          },
-          warnings
-        };
-      }
+      registerCandidates(rows);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha ao buscar cliente OMIE.";
       warnings.push(`${candidate.call}: ${message}`);
@@ -761,41 +804,30 @@ async function findOmieCustomer({
 
     const rows = extractArrayByKeys(payload, ["clientes_cadastro", "clientes", "cadastro"]);
     totalPages = Math.max(totalPages, extractTotalPages(payload, page, rows.length, recordsPerPage));
-
-    for (const rowRaw of rows) {
-      const row = asObject(rowRaw);
-      const rowCnpj = normalizeCnpj(
-        row.cnpj_cpf ?? row.cnpj ?? row.cpf_cnpj ?? row.cnpjCpf ?? row.documento
-      );
-      if (rowCnpj !== cnpj) continue;
-
-      const externalId = pickFirstNonEmpty(row, [
-        "codigo_cliente_omie",
-        "codigo_cliente",
-        "codigo_cliente_integracao",
-        "codigo",
-        "id"
-      ]);
-
-      if (!externalId) continue;
-
+    const beforeScanCount = candidatesByCode.size;
+    registerCandidates(rows);
+    const afterScanCount = candidatesByCode.size;
+    if (afterScanCount > beforeScanCount) {
       warnings.push("Cliente encontrado por varredura de páginas.");
-      return {
-        customer: {
-          codigo_cliente_omie: externalId,
-          cnpj,
-          razao_social: pickFirstNonEmpty(row, ["razao_social", "nome_cliente", "nome"]),
-          nome_fantasia: pickFirstNonEmpty(row, ["nome_fantasia", "fantasia", "empresa", "nome"])
-        },
-        warnings
-      };
     }
 
     page += 1;
   }
 
+  const allCandidates = [...candidatesByCode.values()].sort((a, b) => scoreOmieCustomerCandidate(b) - scoreOmieCustomerCandidate(a));
+  const excluded = new Set(excludeCodes.map((value) => safeString(value)).filter(Boolean));
+  const nonExcludedCandidates = allCandidates.filter((candidate) => !excluded.has(safeString(candidate.codigo_cliente_omie)));
+  const eligible = nonExcludedCandidates.length ? nonExcludedCandidates : allowExcludedFallback ? allCandidates : [];
+  const selected = eligible[0] || null;
+
+  if (selected && allCandidates.length > 1) {
+    warnings.push(
+      `CNPJ com ${allCandidates.length} cadastro(s) no OMIE. Selecionado codigo ${safeString(selected.codigo_cliente_omie)}.`
+    );
+  }
+
   return {
-    customer: null,
+    customer: selected,
     warnings
   };
 }
@@ -1025,7 +1057,7 @@ Deno.serve(async (request: Request) => {
             razao_social: "",
             nome_fantasia: ""
           },
-          warnings: ["Consulta OMIE priorizou o codigo de cliente vinculado no CRM."]
+          warnings: []
         }
       : {
           customer: null,
@@ -1078,22 +1110,77 @@ Deno.serve(async (request: Request) => {
         ...orderResult,
         warnings: Array.isArray(orderResult.warnings) ? orderResult.warnings : []
       };
+
+      const shouldFallbackByCnpj =
+        Boolean(customerCodeHint) &&
+        Number(orderLookup.orders.length || 0) === 0 &&
+        Number(orderLookup.filtered_non_fiscal_count || 0) > 0;
+
+      if (shouldFallbackByCnpj) {
+        try {
+          const currentCode = safeString(customerLookup.customer?.codigo_cliente_omie);
+          const fallbackLookup = await findOmieCustomer({
+            appKey,
+            appSecret,
+            clientsUrl,
+            cnpj,
+            maxFallbackPages,
+            excludeCodes: [currentCode],
+            allowExcludedFallback: false
+          });
+
+          const fallbackCode = safeString(fallbackLookup.customer?.codigo_cliente_omie);
+          if (fallbackCode && fallbackCode !== currentCode) {
+            const fallbackOrderResult = await listOmieOrdersByCustomer({
+              appKey,
+              appSecret,
+              ordersUrl,
+              customerCode: fallbackCode,
+              recordsPerPage,
+              maxPages
+            });
+
+            if (Array.isArray(fallbackOrderResult.orders) && fallbackOrderResult.orders.length > 0) {
+              customerLookup = fallbackLookup;
+              orderLookup = {
+                ...fallbackOrderResult,
+                warnings: [
+                  ...orderLookup.warnings,
+                  ...fallbackLookup.warnings,
+                  "Consulta OMIE priorizou o codigo de cliente vinculado no CRM.",
+                  "Codigo OMIE vinculado sem notas fiscais. Compras fiscais recuperadas via busca por CNPJ."
+                ]
+              };
+            } else if (fallbackLookup.warnings.length) {
+              orderLookup.warnings.push(...fallbackLookup.warnings);
+            }
+          } else if (fallbackLookup.warnings.length) {
+            orderLookup.warnings.push(...fallbackLookup.warnings);
+          }
+        } catch (fallbackError) {
+          const fallbackMessage =
+            fallbackError instanceof Error ? fallbackError.message : "Falha ao tentar fallback fiscal por CNPJ.";
+          orderLookup.warnings.push(`Fallback fiscal por CNPJ: ${fallbackMessage}`);
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha ao listar pedidos no OMIE.";
       orderLookup.warnings.push(`ListarPedidos (base fiscal): ${message}`);
 
       if (customerCodeHint) {
         try {
+          const currentCode = safeString(customerLookup.customer?.codigo_cliente_omie);
           const fallbackLookup = await findOmieCustomer({
             appKey,
             appSecret,
             clientsUrl,
             cnpj,
-            maxFallbackPages
+            maxFallbackPages,
+            excludeCodes: [currentCode],
+            allowExcludedFallback: false
           });
 
           const fallbackCode = safeString(fallbackLookup.customer?.codigo_cliente_omie);
-          const currentCode = safeString(customerLookup.customer?.codigo_cliente_omie);
           if (fallbackCode && fallbackCode !== currentCode) {
             const fallbackOrderResult = await listOmieOrdersByCustomer({
               appKey,
@@ -1109,6 +1196,7 @@ Deno.serve(async (request: Request) => {
               warnings: [
                 ...orderLookup.warnings,
                 ...fallbackLookup.warnings,
+                "Consulta OMIE priorizou o codigo de cliente vinculado no CRM.",
                 "Pedidos fiscais recuperados via busca de cliente por CNPJ."
               ]
             };
