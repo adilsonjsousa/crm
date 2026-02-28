@@ -1122,11 +1122,23 @@ export async function listOpportunities(options = {}) {
 export async function createOpportunity(payload, options = {}) {
   const supabase = ensureSupabase();
   const fallbackOwnerUserId = String(options?.ownerUserId || "").trim();
+  const sourcePayload = asObject(payload);
   const normalizedPayload = {
-    ...payload,
-    title: String(payload?.title || "").trim().replace(/\s+/g, " "),
-    owner_user_id: String(payload?.owner_user_id || "").trim() || fallbackOwnerUserId || null,
-    line_items: normalizeOpportunityLineItems(payload?.line_items)
+    company_id: sourcePayload.company_id || null,
+    primary_contact_id: sourcePayload.primary_contact_id || null,
+    title: String(sourcePayload.title || "").trim().replace(/\s+/g, " "),
+    stage: String(sourcePayload.stage || "").trim() || "lead",
+    status: String(sourcePayload.status || "").trim() || "open",
+    expected_close_date: sourcePayload.expected_close_date || null,
+    estimated_value: sourcePayload.estimated_value ?? 0,
+    close_probability:
+      sourcePayload.close_probability === null || sourcePayload.close_probability === undefined
+        ? null
+        : Number.isFinite(Number(sourcePayload.close_probability))
+        ? Number(sourcePayload.close_probability)
+        : null,
+    owner_user_id: String(sourcePayload.owner_user_id || "").trim() || fallbackOwnerUserId || null,
+    line_items: normalizeOpportunityLineItems(sourcePayload.line_items)
   };
 
   const opportunityTitleKey = normalizeOpportunityTitleKey(normalizedPayload.title);

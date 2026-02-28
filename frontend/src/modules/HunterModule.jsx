@@ -949,7 +949,6 @@ export default function HunterModule() {
       await createOpportunity({
         company_id: selectedCompany.id,
         owner_user_id: ownerUserId,
-        created_by_user_id: viewerUserId || ownerUserId,
         title,
         stage,
         status: stageStatus(stage),
