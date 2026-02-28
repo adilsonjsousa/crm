@@ -1499,9 +1499,14 @@ export default function HunterModule() {
                   return Math.max(max, days);
                 }, 0);
 
-                const owners = [...new Set(companyOpps.map((row) => ownerDisplayName(userById[row.owner_user_id])))]
-                  .filter(Boolean)
-                  .slice(0, 2);
+                const owners = [
+                  ...new Set(
+                    [
+                      ...companyOpps.map((row) => ownerDisplayName(userById[row.owner_user_id])),
+                      ...companyTasks.map((row) => ownerDisplayName(userById[row.assignee_user_id]))
+                    ].filter(Boolean)
+                  )
+                ].slice(0, 2);
 
                 return (
                   <tr key={company.id}>
