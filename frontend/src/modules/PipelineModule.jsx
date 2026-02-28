@@ -1416,6 +1416,10 @@ function parseOpportunityLineItems(opportunity = {}) {
     .filter((entry) => isOpportunityItemComplete(entry));
 }
 
+function hasQualificationLinkedItem(opportunity = {}) {
+  return parseOpportunityLineItems(opportunity).length > 0;
+}
+
 function ensureProposalItems(items = [], fallbackItem = null) {
   const normalizedItems = (items || []).map((entry) => normalizeOpportunityItem(entry)).filter((entry) => isOpportunityItemComplete(entry));
   if (normalizedItems.length) return normalizedItems;
@@ -2273,6 +2277,12 @@ export default function PipelineModule({
 
     if (!canMoveToStage(currentOpportunity.stage, targetStage)) {
       setError(`Movimento invalido. Avance para a proxima etapa do funil (${stageLabel(currentOpportunity.stage)}).`);
+      return;
+    }
+    if (currentOpportunity.stage === "lead" && targetStage === "qualification" && !hasQualificationLinkedItem(currentOpportunity)) {
+      setError(
+        "Antes de mover LEAD para QUALIFICAÇÃO, vincule ao menos um item/equipamento na oportunidade para garantir a integridade da informação."
+      );
       return;
     }
 
