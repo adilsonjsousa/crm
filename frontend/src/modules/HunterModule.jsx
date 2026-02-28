@@ -947,8 +947,8 @@ export default function HunterModule() {
 
   return (
     <section className="module hunter-module">
-      {error ? <p className="error-text">{error}</p> : null}
-      {success ? <p className="success-text">{success}</p> : null}
+      {!selectedCompany && error ? <p className="error-text">{error}</p> : null}
+      {!selectedCompany && success ? <p className="success-text">{success}</p> : null}
 
       <article className="panel hunter-panel">
         <h2>Fluxo de Oportunidades - Fase 1</h2>
@@ -1073,209 +1073,280 @@ export default function HunterModule() {
       </div>
 
       {selectedCompany ? (
-        <article className="panel hunter-quick-panel">
-          <div className="hunter-quick-header">
-            <div>
-              <h3>Ações rápidas - {selectedCompany.trade_name || "Empresa"}</h3>
-              <p className="muted">
-                CNPJ {formatCnpj(selectedCompany.cnpj)} · {resolveCompanyCity(selectedCompany) || "-"}/{resolveCompanyState(selectedCompany) || "-"}
-              </p>
+        <div className="edit-company-modal-overlay" role="presentation" onClick={closeQuickAction}>
+          <article
+            className="edit-company-modal-card hunter-quick-modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Ações rápidas para ${selectedCompany.trade_name || "empresa"}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="hunter-quick-header">
+              <div>
+                <h3>Ações rápidas - {selectedCompany.trade_name || "Empresa"}</h3>
+                <p className="muted">
+                  CNPJ {formatCnpj(selectedCompany.cnpj)} · {resolveCompanyCity(selectedCompany) || "-"}/{resolveCompanyState(selectedCompany) || "-"}
+                </p>
+              </div>
+              <button type="button" className="btn-ghost btn-table-action" onClick={closeQuickAction}>
+                Fechar
+              </button>
             </div>
-            <button type="button" className="btn-ghost btn-table-action" onClick={closeQuickAction}>
-              Fechar
-            </button>
-          </div>
 
-          <div className="hunter-quick-tabs">
-            <button
-              type="button"
-              className={quickActionType === "interaction" ? "btn-primary btn-table-action" : "btn-ghost btn-table-action"}
-              onClick={() => setQuickActionType("interaction")}
-            >
-              Registrar contato
-            </button>
-            <button
-              type="button"
-              className={quickActionType === "visit" ? "btn-primary btn-table-action" : "btn-ghost btn-table-action"}
-              onClick={() => setQuickActionType("visit")}
-            >
-              Criar visita
-            </button>
-            <button
-              type="button"
-              className={quickActionType === "opportunity" ? "btn-primary btn-table-action" : "btn-ghost btn-table-action"}
-              onClick={() => setQuickActionType("opportunity")}
-            >
-              Criar oportunidade
-            </button>
-            {canDistribute ? (
+            {error ? <p className="error-text">{error}</p> : null}
+            {success ? <p className="success-text">{success}</p> : null}
+
+            <div className="hunter-quick-tabs">
               <button
                 type="button"
-                className={quickActionType === "assign" ? "btn-primary btn-table-action" : "btn-ghost btn-table-action"}
-                onClick={() => setQuickActionType("assign")}
+                className={quickActionType === "interaction" ? "btn-primary btn-table-action" : "btn-ghost btn-table-action"}
+                onClick={() => setQuickActionType("interaction")}
               >
-                Atribuir vendedor
+                Registrar contato
               </button>
-            ) : null}
-          </div>
-
-          {quickActionType === "interaction" ? (
-            <form className="form-grid" onSubmit={handleSubmitInteraction}>
-              <div className="hunter-form-grid-two">
-                <label>
-                  Tipo
-                  <select
-                    value={interactionForm.interaction_type}
-                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, interaction_type: event.target.value }))}
-                  >
-                    <option value="whatsapp">WhatsApp</option>
-                    <option value="call">Chamada</option>
-                    <option value="note">Anotação</option>
-                  </select>
-                </label>
-
-                <label>
-                  Direção
-                  <select
-                    value={interactionForm.direction}
-                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, direction: event.target.value }))}
-                  >
-                    <option value="outbound">Saída</option>
-                    <option value="inbound">Entrada</option>
-                  </select>
-                </label>
-
-                <label>
-                  Ocorrido em
-                  <input
-                    type="datetime-local"
-                    value={interactionForm.occurred_at_local}
-                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, occurred_at_local: event.target.value }))}
-                  />
-                </label>
-
-                <label>
-                  Assunto
-                  <input
-                    placeholder="Resumo rápido"
-                    value={interactionForm.subject}
-                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, subject: event.target.value }))}
-                  />
-                </label>
-
-                <label>
-                  WhatsApp
-                  <input
-                    placeholder="(47) 99999-9999"
-                    value={interactionForm.whatsapp_number}
-                    onChange={(event) =>
-                      setInteractionForm((prev) => ({ ...prev, whatsapp_number: formatBrazilPhone(event.target.value) }))
-                    }
-                  />
-                </label>
-
-                <label>
-                  Telefone
-                  <input
-                    placeholder="(47) 3333-3333"
-                    value={interactionForm.phone_number}
-                    onChange={(event) =>
-                      setInteractionForm((prev) => ({ ...prev, phone_number: formatBrazilPhone(event.target.value) }))
-                    }
-                  />
-                </label>
-              </div>
-
-              <label>
-                Conteúdo da interação
-                <textarea
-                  value={interactionForm.content}
-                  onChange={(event) => setInteractionForm((prev) => ({ ...prev, content: event.target.value }))}
-                  placeholder="Descreva o que foi tratado e próximos passos."
-                  required
-                />
-              </label>
-
-              <button type="submit" className="btn-primary" disabled={savingAction}>
-                {savingAction ? "Salvando..." : "Salvar interação"}
+              <button
+                type="button"
+                className={quickActionType === "visit" ? "btn-primary btn-table-action" : "btn-ghost btn-table-action"}
+                onClick={() => setQuickActionType("visit")}
+              >
+                Criar visita
               </button>
-            </form>
-          ) : null}
+              <button
+                type="button"
+                className={quickActionType === "opportunity" ? "btn-primary btn-table-action" : "btn-ghost btn-table-action"}
+                onClick={() => setQuickActionType("opportunity")}
+              >
+                Criar oportunidade
+              </button>
+              {canDistribute ? (
+                <button
+                  type="button"
+                  className={quickActionType === "assign" ? "btn-primary btn-table-action" : "btn-ghost btn-table-action"}
+                  onClick={() => setQuickActionType("assign")}
+                >
+                  Atribuir vendedor
+                </button>
+              ) : null}
+            </div>
 
-          {quickActionType === "visit" ? (
-            <form className="form-grid" onSubmit={handleSubmitVisit}>
-              <div className="hunter-form-grid-two">
-                <label>
-                  Responsável da visita
-                  <select
-                    value={visitForm.assignee_user_id}
-                    onChange={(event) => setVisitForm((prev) => ({ ...prev, assignee_user_id: event.target.value }))}
-                    disabled={!canDistribute}
-                  >
-                    {(canDistribute ? sellerUsers : activeUsers.filter((user) => user.user_id === viewerUserId)).map((user) => (
-                      <option key={user.user_id} value={user.user_id}>
-                        {ownerDisplayName(user)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+            {quickActionType === "interaction" ? (
+              <form className="form-grid" onSubmit={handleSubmitInteraction}>
+                <div className="hunter-form-grid-two">
+                  <label>
+                    Tipo
+                    <select
+                      value={interactionForm.interaction_type}
+                      onChange={(event) => setInteractionForm((prev) => ({ ...prev, interaction_type: event.target.value }))}
+                    >
+                      <option value="whatsapp">WhatsApp</option>
+                      <option value="call">Chamada</option>
+                      <option value="note">Anotação</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Direção
+                    <select
+                      value={interactionForm.direction}
+                      onChange={(event) => setInteractionForm((prev) => ({ ...prev, direction: event.target.value }))}
+                    >
+                      <option value="outbound">Saída</option>
+                      <option value="inbound">Entrada</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Ocorrido em
+                    <input
+                      type="datetime-local"
+                      value={interactionForm.occurred_at_local}
+                      onChange={(event) => setInteractionForm((prev) => ({ ...prev, occurred_at_local: event.target.value }))}
+                    />
+                  </label>
+
+                  <label>
+                    Assunto
+                    <input
+                      placeholder="Resumo rápido"
+                      value={interactionForm.subject}
+                      onChange={(event) => setInteractionForm((prev) => ({ ...prev, subject: event.target.value }))}
+                    />
+                  </label>
+
+                  <label>
+                    WhatsApp
+                    <input
+                      placeholder="(47) 99999-9999"
+                      value={interactionForm.whatsapp_number}
+                      onChange={(event) =>
+                        setInteractionForm((prev) => ({ ...prev, whatsapp_number: formatBrazilPhone(event.target.value) }))
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Telefone
+                    <input
+                      placeholder="(47) 3333-3333"
+                      value={interactionForm.phone_number}
+                      onChange={(event) =>
+                        setInteractionForm((prev) => ({ ...prev, phone_number: formatBrazilPhone(event.target.value) }))
+                      }
+                    />
+                  </label>
+                </div>
 
                 <label>
-                  Data da visita
-                  <input
-                    type="date"
-                    value={visitForm.due_date}
-                    onChange={(event) => setVisitForm((prev) => ({ ...prev, due_date: event.target.value }))}
+                  Conteúdo da interação
+                  <textarea
+                    value={interactionForm.content}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, content: event.target.value }))}
+                    placeholder="Descreva o que foi tratado e próximos passos."
                     required
                   />
                 </label>
 
+                <button type="submit" className="btn-primary" disabled={savingAction}>
+                  {savingAction ? "Salvando..." : "Salvar interação"}
+                </button>
+              </form>
+            ) : null}
+
+            {quickActionType === "visit" ? (
+              <form className="form-grid" onSubmit={handleSubmitVisit}>
+                <div className="hunter-form-grid-two">
+                  <label>
+                    Responsável da visita
+                    <select
+                      value={visitForm.assignee_user_id}
+                      onChange={(event) => setVisitForm((prev) => ({ ...prev, assignee_user_id: event.target.value }))}
+                      disabled={!canDistribute}
+                    >
+                      {(canDistribute ? sellerUsers : activeUsers.filter((user) => user.user_id === viewerUserId)).map((user) => (
+                        <option key={user.user_id} value={user.user_id}>
+                          {ownerDisplayName(user)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Data da visita
+                    <input
+                      type="date"
+                      value={visitForm.due_date}
+                      onChange={(event) => setVisitForm((prev) => ({ ...prev, due_date: event.target.value }))}
+                      required
+                    />
+                  </label>
+
+                  <label>
+                    Início (opcional)
+                    <input
+                      type="datetime-local"
+                      value={visitForm.scheduled_start_local}
+                      onChange={(event) => setVisitForm((prev) => ({ ...prev, scheduled_start_local: event.target.value }))}
+                    />
+                  </label>
+
+                  <label>
+                    Fim (opcional)
+                    <input
+                      type="datetime-local"
+                      value={visitForm.scheduled_end_local}
+                      onChange={(event) => setVisitForm((prev) => ({ ...prev, scheduled_end_local: event.target.value }))}
+                    />
+                  </label>
+                </div>
+
                 <label>
-                  Início (opcional)
-                  <input
-                    type="datetime-local"
-                    value={visitForm.scheduled_start_local}
-                    onChange={(event) => setVisitForm((prev) => ({ ...prev, scheduled_start_local: event.target.value }))}
+                  Objetivo da visita
+                  <textarea
+                    value={visitForm.description}
+                    onChange={(event) => setVisitForm((prev) => ({ ...prev, description: event.target.value }))}
+                    placeholder="Ex.: validar parque atual, mapear demanda, gerar próxima ação."
+                    required
                   />
                 </label>
 
+                <button type="submit" className="btn-primary" disabled={savingAction}>
+                  {savingAction ? "Salvando..." : "Criar visita"}
+                </button>
+              </form>
+            ) : null}
+
+            {quickActionType === "opportunity" ? (
+              <form className="form-grid" onSubmit={handleSubmitOpportunity}>
+                <div className="hunter-form-grid-two">
+                  <label>
+                    Responsável da oportunidade
+                    <select
+                      value={opportunityForm.owner_user_id}
+                      onChange={(event) => setOpportunityForm((prev) => ({ ...prev, owner_user_id: event.target.value }))}
+                      disabled={!canDistribute}
+                    >
+                      {(canDistribute ? sellerUsers : activeUsers.filter((user) => user.user_id === viewerUserId)).map((user) => (
+                        <option key={user.user_id} value={user.user_id}>
+                          {ownerDisplayName(user)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Etapa inicial
+                    <select
+                      value={opportunityForm.stage}
+                      onChange={(event) => setOpportunityForm((prev) => ({ ...prev, stage: event.target.value }))}
+                    >
+                      {PIPELINE_STAGES.map((stage) => (
+                        <option key={stage.value} value={stage.value}>
+                          {stage.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Valor previsto (R$)
+                    <input
+                      value={opportunityForm.estimated_value}
+                      onChange={(event) => setOpportunityForm((prev) => ({ ...prev, estimated_value: event.target.value }))}
+                      placeholder="Opcional"
+                    />
+                  </label>
+                </div>
+
                 <label>
-                  Fim (opcional)
+                  Título da oportunidade
                   <input
-                    type="datetime-local"
-                    value={visitForm.scheduled_end_local}
-                    onChange={(event) => setVisitForm((prev) => ({ ...prev, scheduled_end_local: event.target.value }))}
+                    value={opportunityForm.title}
+                    onChange={(event) => setOpportunityForm((prev) => ({ ...prev, title: event.target.value }))}
+                    placeholder="Ex.: Projeto Canon imagePRESS V700"
+                    required
                   />
                 </label>
-              </div>
 
-              <label>
-                Objetivo da visita
-                <textarea
-                  value={visitForm.description}
-                  onChange={(event) => setVisitForm((prev) => ({ ...prev, description: event.target.value }))}
-                  placeholder="Ex.: validar parque atual, mapear demanda, gerar próxima ação."
-                  required
-                />
-              </label>
+                <button type="submit" className="btn-primary" disabled={savingAction}>
+                  {savingAction ? "Salvando..." : "Criar oportunidade"}
+                </button>
+              </form>
+            ) : null}
 
-              <button type="submit" className="btn-primary" disabled={savingAction}>
-                {savingAction ? "Salvando..." : "Criar visita"}
-              </button>
-            </form>
-          ) : null}
+            {quickActionType === "assign" && canDistribute ? (
+              <form className="form-grid" onSubmit={handleSubmitAssign}>
+                <p className="muted">
+                  Se a empresa já tiver oportunidade aberta, o responsável será atualizado. Se não houver, o sistema cria uma tarefa de
+                  prospecção para o vendedor.
+                </p>
 
-          {quickActionType === "opportunity" ? (
-            <form className="form-grid" onSubmit={handleSubmitOpportunity}>
-              <div className="hunter-form-grid-two">
                 <label>
-                  Responsável da oportunidade
+                  Vendedor responsável
                   <select
-                    value={opportunityForm.owner_user_id}
-                    onChange={(event) => setOpportunityForm((prev) => ({ ...prev, owner_user_id: event.target.value }))}
-                    disabled={!canDistribute}
+                    value={assignForm.owner_user_id}
+                    onChange={(event) => setAssignForm((prev) => ({ ...prev, owner_user_id: event.target.value }))}
                   >
-                    {(canDistribute ? sellerUsers : activeUsers.filter((user) => user.user_id === viewerUserId)).map((user) => (
+                    {sellerUsers.map((user) => (
                       <option key={user.user_id} value={user.user_id}>
                         {ownerDisplayName(user)}
                       </option>
@@ -1283,73 +1354,13 @@ export default function HunterModule() {
                   </select>
                 </label>
 
-                <label>
-                  Etapa inicial
-                  <select
-                    value={opportunityForm.stage}
-                    onChange={(event) => setOpportunityForm((prev) => ({ ...prev, stage: event.target.value }))}
-                  >
-                    {PIPELINE_STAGES.map((stage) => (
-                      <option key={stage.value} value={stage.value}>
-                        {stage.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label>
-                  Valor previsto (R$)
-                  <input
-                    value={opportunityForm.estimated_value}
-                    onChange={(event) => setOpportunityForm((prev) => ({ ...prev, estimated_value: event.target.value }))}
-                    placeholder="Opcional"
-                  />
-                </label>
-              </div>
-
-              <label>
-                Título da oportunidade
-                <input
-                  value={opportunityForm.title}
-                  onChange={(event) => setOpportunityForm((prev) => ({ ...prev, title: event.target.value }))}
-                  placeholder="Ex.: Projeto Canon imagePRESS V700"
-                  required
-                />
-              </label>
-
-              <button type="submit" className="btn-primary" disabled={savingAction}>
-                {savingAction ? "Salvando..." : "Criar oportunidade"}
-              </button>
-            </form>
-          ) : null}
-
-          {quickActionType === "assign" && canDistribute ? (
-            <form className="form-grid" onSubmit={handleSubmitAssign}>
-              <p className="muted">
-                Se a empresa já tiver oportunidade aberta, o responsável será atualizado. Se não houver, o sistema cria uma tarefa de
-                prospecção para o vendedor.
-              </p>
-
-              <label>
-                Vendedor responsável
-                <select
-                  value={assignForm.owner_user_id}
-                  onChange={(event) => setAssignForm((prev) => ({ ...prev, owner_user_id: event.target.value }))}
-                >
-                  {sellerUsers.map((user) => (
-                    <option key={user.user_id} value={user.user_id}>
-                      {ownerDisplayName(user)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <button type="submit" className="btn-primary" disabled={savingAction}>
-                {savingAction ? "Salvando..." : "Atribuir vendedor"}
-              </button>
-            </form>
-          ) : null}
-        </article>
+                <button type="submit" className="btn-primary" disabled={savingAction}>
+                  {savingAction ? "Salvando..." : "Atribuir vendedor"}
+                </button>
+              </form>
+            ) : null}
+          </article>
+        </div>
       ) : null}
 
       <article className="panel">

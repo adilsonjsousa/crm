@@ -666,6 +666,10 @@ body {
   gap: 10px;
 }
 
+.hunter-quick-modal-card {
+  width: min(980px, 100%);
+}
+
 .hunter-quick-header {
   display: flex;
   align-items: flex-start;
