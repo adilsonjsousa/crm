@@ -2279,7 +2279,7 @@ export default function PipelineModule({
       setError(`Movimento invalido. Avance para a proxima etapa do funil (${stageLabel(currentOpportunity.stage)}).`);
       return;
     }
-    if (currentOpportunity.stage === "lead" && targetStage === "qualification" && !hasQualificationLinkedItem(currentOpportunity)) {
+    if (currentOpportunity.stage === "lead" && targetStage === "qualificacao" && !hasQualificationLinkedItem(currentOpportunity)) {
       setError(
         "Antes de mover LEAD para QUALIFICAÇÃO, vincule ao menos um item/equipamento na oportunidade para garantir a integridade da informação."
       );
