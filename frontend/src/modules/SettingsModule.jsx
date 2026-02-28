@@ -2862,7 +2862,7 @@ export default function SettingsModule() {
           proposta (CPP e condições comerciais) seguem abaixo.
         </p>
 
-        <div className="settings-library-grid top-gap">
+        <div className="settings-products-layout top-gap">
           <section className="settings-library-card">
             <h3>Produtos</h3>
             <p className="muted">
@@ -2871,8 +2871,8 @@ export default function SettingsModule() {
             {proposalProductProfilesError ? <p className="error-text">{proposalProductProfilesError}</p> : null}
             {proposalProductProfilesSuccess ? <p className="success-text">{proposalProductProfilesSuccess}</p> : null}
 
-            <form className="form-grid top-gap" onSubmit={handleCreateProposalProductProfile}>
-              <div className="settings-users-selects">
+            <form className="form-grid top-gap settings-product-create-form" onSubmit={handleCreateProposalProductProfile}>
+              <div className="settings-product-create-grid">
                 <label className="settings-field">
                   <span>Categoria</span>
                   <select
@@ -2918,28 +2918,16 @@ export default function SettingsModule() {
                     ))}
                   </select>
                 </label>
-              </div>
-              <input
-                required
-                placeholder="Nome do produto"
-                value={proposalProductProfileForm.product_name}
-                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))}
-              />
-              <textarea
-                className="settings-library-textarea"
-                required
-                placeholder="Descritivo do produto"
-                value={proposalProductProfileForm.technical_text}
-                onChange={(event) =>
-                  setProposalProductProfileForm((prev) => ({ ...prev, technical_text: event.target.value }))
-                }
-              />
-              <input
-                placeholder="Código no Omie (opcional)"
-                value={proposalProductProfileForm.product_code}
-                onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))}
-              />
-              <div className="settings-users-selects">
+                <label className="settings-field">
+                  <span>Código no Omie (opcional)</span>
+                  <input
+                    placeholder="Ex.: PRD00727"
+                    value={proposalProductProfileForm.product_code}
+                    onChange={(event) =>
+                      setProposalProductProfileForm((prev) => ({ ...prev, product_code: event.target.value }))
+                    }
+                  />
+                </label>
                 <label className="settings-field">
                   <span>Valor base</span>
                   <input
@@ -2950,35 +2938,63 @@ export default function SettingsModule() {
                     onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, base_price: event.target.value }))}
                   />
                 </label>
+                <label className="settings-field settings-field-wide">
+                  <span>Nome do produto</span>
+                  <input
+                    required
+                    placeholder="Nome do produto"
+                    value={proposalProductProfileForm.product_name}
+                    onChange={(event) =>
+                      setProposalProductProfileForm((prev) => ({ ...prev, product_name: event.target.value }))
+                    }
+                  />
+                </label>
+                <label className="settings-field settings-field-wide">
+                  <span>Descritivo do produto</span>
+                  <textarea
+                    className="settings-library-textarea settings-product-description"
+                    required
+                    placeholder="Descreva o produto para uso em propostas."
+                    value={proposalProductProfileForm.technical_text}
+                    onChange={(event) =>
+                      setProposalProductProfileForm((prev) => ({ ...prev, technical_text: event.target.value }))
+                    }
+                  />
+                </label>
               </div>
-              <label className="checkbox-inline">
-                <input
-                  type="checkbox"
-                  checked={proposalProductProfileForm.is_active}
-                  onChange={(event) => setProposalProductProfileForm((prev) => ({ ...prev, is_active: event.target.checked }))}
-                />
-                Produto ativo
-              </label>
-              <div className="inline-actions">
-                <button type="submit" className="btn-primary" disabled={creatingProposalProductProfile}>
-                  {creatingProposalProductProfile ? "Salvando..." : "Cadastrar produto"}
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={loadProposalProductProfiles}
-                  disabled={proposalProductProfilesLoading || creatingProposalProductProfile}
-                >
-                  {proposalProductProfilesLoading ? "Atualizando..." : "Atualizar produtos"}
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={handleSyncLegacyProductCatalog}
-                  disabled={syncingLegacyProductCatalog || creatingProposalProductProfile || proposalProductProfilesLoading}
-                >
-                  {syncingLegacyProductCatalog ? "Reimportando..." : "Reimportar catálogo legado"}
-                </button>
+
+              <div className="settings-product-create-toolbar">
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={proposalProductProfileForm.is_active}
+                    onChange={(event) =>
+                      setProposalProductProfileForm((prev) => ({ ...prev, is_active: event.target.checked }))
+                    }
+                  />
+                  Produto ativo
+                </label>
+                <div className="inline-actions">
+                  <button type="submit" className="btn-primary" disabled={creatingProposalProductProfile}>
+                    {creatingProposalProductProfile ? "Salvando..." : "Cadastrar produto"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={loadProposalProductProfiles}
+                    disabled={proposalProductProfilesLoading || creatingProposalProductProfile}
+                  >
+                    {proposalProductProfilesLoading ? "Atualizando..." : "Atualizar produtos"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={handleSyncLegacyProductCatalog}
+                    disabled={syncingLegacyProductCatalog || creatingProposalProductProfile || proposalProductProfilesLoading}
+                  >
+                    {syncingLegacyProductCatalog ? "Reimportando..." : "Reimportar catálogo legado"}
+                  </button>
+                </div>
               </div>
             </form>
 
@@ -3178,7 +3194,9 @@ export default function SettingsModule() {
 
           </section>
 
-          <section className="settings-library-card">
+        </div>
+
+        <section className="settings-library-card top-gap">
             <h3>Linhas CPP por produto</h3>
             <p className="muted">
               {proposalCppRows.length} linha(s) para{" "}
@@ -3456,8 +3474,7 @@ export default function SettingsModule() {
                 </div>
               </form>
             ) : null}
-          </section>
-        </div>
+        </section>
 
         <section className="settings-library-card top-gap">
           <h3>Condições comerciais</h3>
