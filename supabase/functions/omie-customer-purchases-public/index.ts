@@ -279,6 +279,13 @@ function normalizeOmieOrder(rawOrder: unknown) {
   const etapa = pickFirstNonEmpty(row, ["etapa"]) || pickFirstNonEmpty(header, ["etapa"]);
   const status =
     pickFirstNonEmpty(row, ["status_pedido", "status"]) || pickFirstNonEmpty(header, ["status_pedido", "status"]);
+  const situacao =
+    pickFirstNonEmpty(row, ["situacao", "situacao_pedido"]) || pickFirstNonEmpty(header, ["situacao", "situacao_pedido"]);
+  const statusNf =
+    pickFirstNonEmpty(row, ["status_nf", "situacao_nf"]) || pickFirstNonEmpty(header, ["status_nf", "situacao_nf"]);
+  const statusFaturamento =
+    pickFirstNonEmpty(row, ["status_faturamento", "situacao_faturamento"]) ||
+    pickFirstNonEmpty(header, ["status_faturamento", "situacao_faturamento"]);
   const numeroNfe =
     pickFirstNonEmpty(row, ["numero_nfe", "numero_nf", "numero_nota_fiscal", "numero_nota"]) ||
     pickFirstNonEmpty(header, ["numero_nfe", "numero_nf", "numero_nota_fiscal", "numero_nota"]);
@@ -288,6 +295,12 @@ function normalizeOmieOrder(rawOrder: unknown) {
   const chaveNfe =
     pickFirstNonEmpty(row, ["chave_nfe", "chave_acesso_nfe", "chave_de_acesso"]) ||
     pickFirstNonEmpty(header, ["chave_nfe", "chave_acesso_nfe", "chave_de_acesso"]);
+  const serieNf =
+    pickFirstNonEmpty(row, ["serie_nf", "serie_nfe", "serie_nota_fiscal", "serie"]) ||
+    pickFirstNonEmpty(header, ["serie_nf", "serie_nfe", "serie_nota_fiscal", "serie"]);
+  const protocoloNfe =
+    pickFirstNonEmpty(row, ["protocolo_nfe", "protocolo_nf", "numero_protocolo_nfe"]) ||
+    pickFirstNonEmpty(header, ["protocolo_nfe", "protocolo_nf", "numero_protocolo_nfe"]);
   const dataFaturamentoIso =
     parseOmieDateToIso(pickFirstNonEmpty(header, ["data_faturamento"])) ||
     parseOmieDateToIso(pickFirstNonEmpty(row, ["data_faturamento"]));
@@ -302,6 +315,9 @@ function normalizeOmieOrder(rawOrder: unknown) {
     codigo_pedido_integracao: integracaoPedido || null,
     etapa: etapa || null,
     status: status || null,
+    situacao: situacao || null,
+    status_nf: statusNf || null,
+    status_faturamento: statusFaturamento || null,
     data_pedido_iso: orderDateIso,
     data_faturamento_iso: dataFaturamentoIso,
     data_emissao_iso: dataEmissaoIso,
@@ -313,6 +329,8 @@ function normalizeOmieOrder(rawOrder: unknown) {
     numero_nfe: numeroNfe || null,
     codigo_nfe: codigoNfe || null,
     chave_nfe: chaveNfe || null,
+    serie_nf: serieNf || null,
+    protocolo_nfe: protocoloNfe || null,
     codigo_cliente: pickFirstNonEmpty(row, ["codigo_cliente"]) || pickFirstNonEmpty(header, ["codigo_cliente"]) || null,
     itens: items,
     items
@@ -376,11 +394,11 @@ function resolveOrderPurchaseDateIso(order: AnyRecord) {
 
 function hasInvoiceStatusHint(order: AnyRecord) {
   const statusText = normalizeStatusText(
-    [order.etapa, order.status, order.situacao_nf, order.status_nf, order.status_faturamento].filter(Boolean).join(" ")
+    [order.etapa, order.status, order.situacao, order.situacao_nf, order.status_nf, order.status_faturamento].filter(Boolean).join(" ")
   );
   if (!statusText) return false;
 
-  const negativeHints = ["orcament", "cotac", "propost", "rascunh", "cancel", "nao fatur"];
+  const negativeHints = ["orcament", "cotac", "propost", "rascunh", "cancel", "nao fatur", "pedido aberto"];
   if (negativeHints.some((token) => statusText.includes(token))) return false;
 
   return (
@@ -394,10 +412,18 @@ function hasInvoiceStatusHint(order: AnyRecord) {
 
 function isFiscalOrder(order: AnyRecord) {
   const hasInvoiceId = Boolean(
-    safeString(order.numero_nfe || order.chave_nfe || order.codigo_nfe || order.numero_documento_fiscal)
+    safeString(order.numero_nfe || order.chave_nfe || order.codigo_nfe || order.numero_documento_fiscal || order.protocolo_nfe)
   );
   if (hasInvoiceId) return true;
   if (parseOmieDateToIso(order.data_faturamento_iso)) return true;
+  const statusText = normalizeStatusText(
+    [order.etapa, order.status, order.situacao, order.situacao_nf, order.status_nf, order.status_faturamento]
+      .filter(Boolean)
+      .join(" ")
+  );
+  const hasEmissionDate = Boolean(parseOmieDateToIso(order.data_emissao_iso));
+  const hasCommercialValue = parseOmieMoney(order.valor_total) > 0;
+  if (hasEmissionDate && hasCommercialValue && !statusText.includes("orcament") && !statusText.includes("cotac")) return true;
   return hasInvoiceStatusHint(order);
 }
 

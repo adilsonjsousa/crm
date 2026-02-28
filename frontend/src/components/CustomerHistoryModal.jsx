@@ -239,19 +239,38 @@ function isReceivableOverdue(receivable) {
 function isOmieFiscalOrder(order) {
   const source = order && typeof order === "object" ? order : {};
   const hasInvoiceId = Boolean(
-    String(source.numero_nfe || source.chave_nfe || source.codigo_nfe || source.numero_documento_fiscal || "").trim()
+    String(
+      source.numero_nfe ||
+        source.chave_nfe ||
+        source.codigo_nfe ||
+        source.numero_documento_fiscal ||
+        source.protocolo_nfe ||
+        ""
+    ).trim()
   );
   if (hasInvoiceId) return true;
   if (source.data_faturamento_iso) return true;
 
-  const statusText = normalizeText([source.etapa, source.status, source.situacao_nf, source.status_nf].filter(Boolean).join(" "));
+  const statusText = normalizeText(
+    [source.etapa, source.status, source.situacao, source.situacao_nf, source.status_nf, source.status_faturamento]
+      .filter(Boolean)
+      .join(" ")
+  );
   if (!statusText) return false;
-  if (statusText.includes("orcament") || statusText.includes("cotac") || statusText.includes("propost") || statusText.includes("rascunh")) {
+  if (
+    statusText.includes("orcament") ||
+    statusText.includes("cotac") ||
+    statusText.includes("propost") ||
+    statusText.includes("rascunh")
+  ) {
     return false;
   }
   if (statusText.includes("fatur") || statusText.includes("nota fiscal") || statusText.includes("nfe") || statusText.includes("emitid")) {
     return true;
   }
+  const hasEmissionDate = Boolean(source.data_emissao_iso);
+  const hasCommercialValue = Number(source.valor_total || 0) > 0;
+  if (hasEmissionDate && hasCommercialValue) return true;
 
   return false;
 }
