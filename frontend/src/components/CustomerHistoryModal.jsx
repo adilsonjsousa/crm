@@ -236,45 +236,6 @@ function isReceivableOverdue(receivable) {
   return normalizedStatus.includes("atras");
 }
 
-function isOmieFiscalOrder(order) {
-  const source = order && typeof order === "object" ? order : {};
-  const hasInvoiceId = Boolean(
-    String(
-      source.numero_nfe ||
-        source.chave_nfe ||
-        source.codigo_nfe ||
-        source.numero_documento_fiscal ||
-        source.protocolo_nfe ||
-        ""
-    ).trim()
-  );
-  if (hasInvoiceId) return true;
-  if (source.data_faturamento_iso) return true;
-
-  const statusText = normalizeText(
-    [source.etapa, source.status, source.situacao, source.situacao_nf, source.status_nf, source.status_faturamento]
-      .filter(Boolean)
-      .join(" ")
-  );
-  if (!statusText) return false;
-  if (
-    statusText.includes("orcament") ||
-    statusText.includes("cotac") ||
-    statusText.includes("propost") ||
-    statusText.includes("rascunh")
-  ) {
-    return false;
-  }
-  if (statusText.includes("fatur") || statusText.includes("nota fiscal") || statusText.includes("nfe") || statusText.includes("emitid")) {
-    return true;
-  }
-  const hasEmissionDate = Boolean(source.data_emissao_iso);
-  const hasCommercialValue = Number(source.valor_total || 0) > 0;
-  if (hasEmissionDate && hasCommercialValue) return true;
-
-  return false;
-}
-
 function resolveOmieOrderDateIso(order) {
   return String(order?.data_faturamento_iso || order?.data_emissao_iso || order?.data_pedido_iso || "").trim() || null;
 }
@@ -550,7 +511,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     () => (Array.isArray(omiePurchases.orders) ? omiePurchases.orders : []),
     [omiePurchases.orders]
   );
-  const omieOrders = useMemo(() => omieRawOrders.filter((order) => isOmieFiscalOrder(order)), [omieRawOrders]);
+  const omieOrders = useMemo(() => omieRawOrders, [omieRawOrders]);
   const omieSummary = useMemo(() => computeOmieOrdersSummary(omieOrders), [omieOrders]);
   const omieExcludedNonFiscalCount = useMemo(
     () => Math.max(0, Number(omieRawOrders.length || 0) - Number(omieOrders.length || 0)),

@@ -427,6 +427,27 @@ function isFiscalOrder(order: AnyRecord) {
   return hasInvoiceStatusHint(order);
 }
 
+function isCommercialOrderCandidate(order: AnyRecord) {
+  const statusText = normalizeStatusText(
+    [order.etapa, order.status, order.situacao, order.situacao_nf, order.status_nf, order.status_faturamento]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  const blockingHints = ["orcament", "cotac", "propost", "rascunh", "cancel", "reprov", "pedido aberto"];
+  if (blockingHints.some((token) => statusText.includes(token))) return false;
+
+  const totalAmount = parseOmieMoney(order.valor_total);
+  const hasValue = totalAmount > 0;
+  const hasItems = Array.isArray(order.items) ? order.items.length > 0 : Array.isArray(order.itens) ? order.itens.length > 0 : false;
+  const hasDate = Boolean(resolveOrderPurchaseDateIso(order));
+  const hasOrderIdentifier = Boolean(
+    safeString(order.codigo_pedido || order.numero_pedido || order.codigo_pedido_integracao || order.codigo_nfe || order.numero_nfe)
+  );
+
+  return hasItems || hasValue || (hasOrderIdentifier && hasDate);
+}
+
 function isOpenReceivableStatus(value: unknown) {
   const normalized = normalizeStatusText(value);
   if (!normalized) return null;
@@ -913,16 +934,23 @@ async function listOmieOrdersByCustomer({
     return bTime - aTime;
   });
   const fiscalOrders = sortedOrders.filter((order) => isFiscalOrder(order));
+  const fallbackCommercialOrders = fiscalOrders.length ? [] : sortedOrders.filter((order) => isCommercialOrderCandidate(order));
+  const effectiveOrders = fiscalOrders.length ? fiscalOrders : fallbackCommercialOrders;
   const filteredNonFiscalCount = Math.max(0, sortedOrders.length - fiscalOrders.length);
   const warnings: string[] = [];
-  if (filteredNonFiscalCount > 0) {
+  if (filteredNonFiscalCount > 0 && fiscalOrders.length > 0) {
     warnings.push(
       `Filtro fiscal aplicado: ${filteredNonFiscalCount} registro(s) sem faturamento/nota fiscal foram desconsiderados.`
     );
   }
+  if (!fiscalOrders.length && fallbackCommercialOrders.length > 0) {
+    warnings.push(
+      `Modo contingencia: sem nota fiscal no retorno do OMIE. ${fallbackCommercialOrders.length} pedido(s) comercial(is) validado(s) foram usados para montar o historico.`
+    );
+  }
 
   return {
-    orders: fiscalOrders,
+    orders: effectiveOrders,
     pages_processed: pagesProcessed,
     total_pages_detected: totalPages,
     warnings,
