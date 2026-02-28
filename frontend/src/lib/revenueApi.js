@@ -3199,23 +3199,47 @@ export async function listCompanyOmiePurchases(company, options = {}) {
   const customerCodeHint = await readOmieCustomerCodeHint(supabase, companyData);
   const requestBody = customerCodeHint ? { ...body, customer_code_hint: customerCodeHint } : body;
 
-  const { data, error } = await invokeOmiePurchasesWithRetry(supabase, requestBody);
-  if (error) {
-    const normalizedMessage = normalizeError(error, "").toLowerCase();
+  let payload = await invokeOmiePurchasesWithRetry(supabase, requestBody);
+  if (payload?.error) {
+    const normalizedMessage = normalizeError(payload.error, "").toLowerCase();
     if (normalizedMessage.includes("missing_omie_credentials")) {
       throw new Error(
         "Credenciais OMIE nao encontradas neste navegador. Preencha App Key/App Secret em Configuracoes ou configure OMIE_APP_KEY/OMIE_APP_SECRET no servidor."
       );
     }
-    if (isEdgeFunctionNon2xx(error)) {
+    if (isEdgeFunctionNon2xx(payload.error)) {
       throw new Error("A consulta de compras OMIE ficou instavel neste lote. Tente novamente em alguns segundos.");
     }
-    throw new Error(normalizeError(error, "Falha ao consultar historico de compras no OMIE."));
+    throw new Error(normalizeError(payload.error, "Falha ao consultar historico de compras no OMIE."));
   }
 
-  const purchasesData = asObject(data);
+  let purchasesData = asObject(payload?.data);
   if (purchasesData.error) {
     throw new Error(String(purchasesData.message || purchasesData.error || "Falha ao consultar historico de compras no OMIE."));
+  }
+
+  const firstOrders = Array.isArray(purchasesData.orders) ? purchasesData.orders : [];
+  const firstFilteredNonFiscal = Number(purchasesData.filtered_non_fiscal_count || 0);
+  const shouldRetryWithoutHint = Boolean(customerCodeHint) && firstOrders.length === 0 && firstFilteredNonFiscal > 0;
+
+  if (shouldRetryWithoutHint) {
+    const retryPayload = await invokeOmiePurchasesWithRetry(supabase, body);
+    if (!retryPayload?.error) {
+      const retryData = asObject(retryPayload?.data);
+      if (!retryData.error) {
+        const retryOrders = Array.isArray(retryData.orders) ? retryData.orders : [];
+        if (retryOrders.length > 0) {
+          const retryWarnings = Array.isArray(retryData.warnings) ? retryData.warnings.map((item) => String(item || "")) : [];
+          purchasesData = {
+            ...retryData,
+            warnings: [
+              ...retryWarnings,
+              "Consulta refeita sem codigo OMIE vinculado para priorizar notas fiscais por CNPJ."
+            ]
+          };
+        }
+      }
+    }
   }
 
   const purchaseWarnings = Array.isArray(purchasesData.warnings) ? purchasesData.warnings.map((item) => String(item || "")) : [];
