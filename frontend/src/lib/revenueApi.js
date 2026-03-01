@@ -584,6 +584,228 @@ export async function listAllCompaniesForReport() {
   }));
 }
 
+async function fetchAllRowsPaged({ supabase, table, select, pageSize = 1000, queryEnhancer = null }) {
+  let from = 0;
+  const rows = [];
+
+  while (true) {
+    let query = supabase.from(table).select(select).range(from, from + pageSize - 1);
+    if (typeof queryEnhancer === "function") {
+      query = queryEnhancer(query);
+    }
+    const { data, error } = await query;
+    if (error) throw new Error(normalizeError(error, `Falha ao consultar ${table}.`));
+    if (!Array.isArray(data) || data.length === 0) break;
+
+    rows.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return rows;
+}
+
+export async function listCompanyCleanupData() {
+  const supabase = ensureSupabase();
+
+  const [
+    companies,
+    opportunities,
+    tasks,
+    orders,
+    contacts,
+    interactions,
+    integrationLinks
+  ] = await Promise.all([
+    fetchAllRowsPaged({
+      supabase,
+      table: "companies",
+      select:
+        "id,cnpj,trade_name,legal_name,segmento,email,phone,address_full,city,state,created_at,updated_at,lifecycle_stage:company_lifecycle_stages!companies_lifecycle_stage_id_fkey(id,name,stage_order,is_active)",
+      pageSize: 500,
+      queryEnhancer: (query) => query.order("created_at", { ascending: false })
+    }),
+    fetchAllRowsPaged({
+      supabase,
+      table: "opportunities",
+      select: "id,company_id,status,created_at,updated_at",
+      pageSize: 1000
+    }),
+    fetchAllRowsPaged({
+      supabase,
+      table: "tasks",
+      select: "id,company_id,status,created_at,updated_at,due_date",
+      pageSize: 1000
+    }),
+    fetchAllRowsPaged({
+      supabase,
+      table: "sales_orders",
+      select: "id,company_id,status,created_at,updated_at,order_date",
+      pageSize: 1000
+    }),
+    fetchAllRowsPaged({
+      supabase,
+      table: "contacts",
+      select: "id,company_id,created_at,updated_at",
+      pageSize: 1000
+    }),
+    fetchAllRowsPaged({
+      supabase,
+      table: "company_interactions",
+      select: "id,company_id,occurred_at,created_at",
+      pageSize: 1000
+    }),
+    fetchAllRowsPaged({
+      supabase,
+      table: "integration_links",
+      select: "provider,local_entity_type,local_entity_id,updated_at,created_at",
+      pageSize: 1000,
+      queryEnhancer: (query) => query.eq("local_entity_type", "company")
+    })
+  ]);
+
+  const opportunitiesByCompany = new Map();
+  for (const row of opportunities) {
+    const companyId = String(row?.company_id || "").trim();
+    if (!companyId) continue;
+    const bucket = opportunitiesByCompany.get(companyId) || {
+      total: 0,
+      open: 0,
+      latest_at: ""
+    };
+    bucket.total += 1;
+    if (String(row?.status || "").trim() === "open") bucket.open += 1;
+    const candidateDate = String(row?.updated_at || row?.created_at || "").trim();
+    if (candidateDate && (!bucket.latest_at || candidateDate > bucket.latest_at)) bucket.latest_at = candidateDate;
+    opportunitiesByCompany.set(companyId, bucket);
+  }
+
+  const tasksByCompany = new Map();
+  for (const row of tasks) {
+    const companyId = String(row?.company_id || "").trim();
+    if (!companyId) continue;
+    const bucket = tasksByCompany.get(companyId) || {
+      total: 0,
+      open: 0,
+      latest_at: ""
+    };
+    bucket.total += 1;
+    const status = String(row?.status || "").trim();
+    if (status !== "done" && status !== "cancelled") bucket.open += 1;
+    const candidateDate = String(row?.updated_at || row?.created_at || "").trim();
+    if (candidateDate && (!bucket.latest_at || candidateDate > bucket.latest_at)) bucket.latest_at = candidateDate;
+    tasksByCompany.set(companyId, bucket);
+  }
+
+  const ordersByCompany = new Map();
+  for (const row of orders) {
+    const companyId = String(row?.company_id || "").trim();
+    if (!companyId) continue;
+    const bucket = ordersByCompany.get(companyId) || {
+      total: 0,
+      latest_at: ""
+    };
+    bucket.total += 1;
+    const candidateDate = String(row?.updated_at || row?.created_at || "").trim();
+    if (candidateDate && (!bucket.latest_at || candidateDate > bucket.latest_at)) bucket.latest_at = candidateDate;
+    ordersByCompany.set(companyId, bucket);
+  }
+
+  const contactsByCompany = new Map();
+  for (const row of contacts) {
+    const companyId = String(row?.company_id || "").trim();
+    if (!companyId) continue;
+    const bucket = contactsByCompany.get(companyId) || {
+      total: 0,
+      latest_at: ""
+    };
+    bucket.total += 1;
+    const candidateDate = String(row?.updated_at || row?.created_at || "").trim();
+    if (candidateDate && (!bucket.latest_at || candidateDate > bucket.latest_at)) bucket.latest_at = candidateDate;
+    contactsByCompany.set(companyId, bucket);
+  }
+
+  const interactionsByCompany = new Map();
+  for (const row of interactions) {
+    const companyId = String(row?.company_id || "").trim();
+    if (!companyId) continue;
+    const bucket = interactionsByCompany.get(companyId) || {
+      total: 0,
+      latest_at: ""
+    };
+    bucket.total += 1;
+    const candidateDate = String(row?.occurred_at || row?.created_at || "").trim();
+    if (candidateDate && (!bucket.latest_at || candidateDate > bucket.latest_at)) bucket.latest_at = candidateDate;
+    interactionsByCompany.set(companyId, bucket);
+  }
+
+  const providerByCompany = new Map();
+  for (const row of integrationLinks) {
+    const companyId = String(row?.local_entity_id || "").trim();
+    if (!companyId) continue;
+    const provider = String(row?.provider || "").trim().toLowerCase();
+    if (!provider) continue;
+    const set = providerByCompany.get(companyId) || new Set();
+    set.add(provider);
+    providerByCompany.set(companyId, set);
+  }
+
+  return companies.map((company) => {
+    const companyId = String(company?.id || "").trim();
+    const cnpjDigits = cleanDigits(company?.cnpj);
+    const cnpjValid = cnpjDigits.length === 14 && isValidCnpjDigits(cnpjDigits);
+    const cnpjMissing = cnpjDigits.length === 0;
+    const cnpjInvalid = cnpjDigits.length > 0 && !cnpjValid;
+    const cityMissing = !String(company?.city || "").trim();
+    const addressMissing = !String(company?.address_full || "").trim();
+
+    const opportunitiesData = opportunitiesByCompany.get(companyId) || { total: 0, open: 0, latest_at: "" };
+    const tasksData = tasksByCompany.get(companyId) || { total: 0, open: 0, latest_at: "" };
+    const ordersData = ordersByCompany.get(companyId) || { total: 0, latest_at: "" };
+    const contactsData = contactsByCompany.get(companyId) || { total: 0, latest_at: "" };
+    const interactionsData = interactionsByCompany.get(companyId) || { total: 0, latest_at: "" };
+
+    const providerSet = providerByCompany.get(companyId) || new Set();
+    const providers = [...providerSet].sort();
+    const sourceLabel = providers.length ? providers.join(" + ").toUpperCase() : "MANUAL";
+
+    const activityCandidates = [
+      String(company?.updated_at || "").trim(),
+      opportunitiesData.latest_at,
+      tasksData.latest_at,
+      ordersData.latest_at,
+      contactsData.latest_at,
+      interactionsData.latest_at
+    ].filter(Boolean);
+    const lastActivityAt = activityCandidates.sort().slice(-1)[0] || String(company?.created_at || "").trim();
+
+    const hasInconsistency = cnpjInvalid || cnpjMissing || cityMissing || addressMissing;
+    const isDeleteBlocked = opportunitiesData.open > 0 || ordersData.total > 0;
+
+    return {
+      ...company,
+      cnpj_digits: cnpjDigits,
+      cnpj_valid: cnpjValid,
+      cnpj_missing: cnpjMissing,
+      cnpj_invalid: cnpjInvalid,
+      city_missing: cityMissing,
+      address_missing: addressMissing,
+      has_inconsistency: hasInconsistency,
+      source_label: sourceLabel,
+      source_providers: providers,
+      opportunities_total: opportunitiesData.total,
+      opportunities_open: opportunitiesData.open,
+      tasks_total: tasksData.total,
+      tasks_open: tasksData.open,
+      orders_total: ordersData.total,
+      contacts_total: contactsData.total,
+      interactions_total: interactionsData.total,
+      last_activity_at: lastActivityAt,
+      delete_blocked: isDeleteBlocked
+    };
+  });
+}
+
 export async function listPipelineAnalyticsForReport() {
   const supabase = ensureSupabase();
   const pageSize = 500;

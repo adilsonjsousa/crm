@@ -14,6 +14,7 @@ import {
   deleteProposalTemplate,
   importWhatsAppContactsBatch,
   listAllCompaniesForReport,
+  listCompanyCleanupData,
   listCompanyLifecycleStages,
   listCompanyOptions,
   listOmieCustomerSyncJobs,
@@ -73,6 +74,18 @@ const CNPJ_AUDIT_FILTER_OPTIONS = [
   { value: "invalid_dv", label: "Dígito verificador inválido" },
   { value: "invalid_format", label: "Formato inválido" },
   { value: "missing", label: "Sem CNPJ" }
+];
+const CLEANUP_SOURCE_FILTER_OPTIONS = [
+  { value: "all", label: "Todas as origens" },
+  { value: "manual", label: "Manual" },
+  { value: "rdstation", label: "RD Station" },
+  { value: "omie", label: "OMIE" }
+];
+const CLEANUP_ISSUE_FILTER_OPTIONS = [
+  { value: "all", label: "Todas" },
+  { value: "inconsistent", label: "Com inconsistência" },
+  { value: "invalid_cnpj", label: "CNPJ inválido/ausente" },
+  { value: "missing_city_or_address", label: "Sem cidade/endereço" }
 ];
 
 const EMPTY_STAGE_FORM = {
@@ -299,6 +312,15 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function daysSinceDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) return 0;
+  return Math.floor(diffMs / (24 * 60 * 60 * 1000));
+}
+
 function syncStatusLabel(status) {
   const map = {
     pending: "Pendente",
@@ -423,6 +445,57 @@ function cnpjAuditIssueLabel(issueType) {
   if (issueType === "invalid_format") return "Formato inválido";
   if (issueType === "missing") return "Sem CNPJ";
   return "Revisar";
+}
+
+function cleanupTextKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanupSourceLabel(row) {
+  const providers = Array.isArray(row?.source_providers) ? row.source_providers.map((item) => String(item || "").toLowerCase()) : [];
+  if (providers.length === 0) return "Manual";
+  if (providers.length === 1) {
+    if (providers[0] === "rdstation") return "RD Station";
+    if (providers[0] === "omie") return "OMIE";
+  }
+  const hasRd = providers.includes("rdstation");
+  const hasOmie = providers.includes("omie");
+  if (hasRd && hasOmie) return "RD Station + OMIE";
+  return String(row?.source_label || "").trim() || "Manual";
+}
+
+function cleanupMatchesSource(row, sourceFilter) {
+  if (sourceFilter === "all") return true;
+  const providers = Array.isArray(row?.source_providers) ? row.source_providers.map((item) => String(item || "").toLowerCase()) : [];
+  if (sourceFilter === "manual") return providers.length === 0;
+  if (sourceFilter === "rdstation") return providers.includes("rdstation");
+  if (sourceFilter === "omie") return providers.includes("omie");
+  return true;
+}
+
+function cleanupCanSafeDelete(row) {
+  const opportunitiesTotal = Number(row?.opportunities_total || 0);
+  const tasksTotal = Number(row?.tasks_total || 0);
+  const ordersTotal = Number(row?.orders_total || 0);
+  const contactsTotal = Number(row?.contacts_total || 0);
+  const interactionsTotal = Number(row?.interactions_total || 0);
+  return opportunitiesTotal === 0 && tasksTotal === 0 && ordersTotal === 0 && contactsTotal === 0 && interactionsTotal === 0;
+}
+
+function cleanupIssueTags(row) {
+  const tags = [];
+  if (row?.cnpj_missing) tags.push("Sem CNPJ");
+  else if (row?.cnpj_invalid) tags.push("CNPJ inválido");
+  if (row?.city_missing || row?.address_missing) tags.push("Sem cidade/endereço");
+  if (!tags.length && row?.has_inconsistency) tags.push("Com inconsistência");
+  if (!tags.length) tags.push("Sem inconsistência");
+  return tags;
 }
 
 function buildCnpjAuditIssues(companies) {
@@ -975,6 +1048,20 @@ export default function SettingsModule() {
   const [cnpjAuditRunningAt, setCnpjAuditRunningAt] = useState("");
   const [cnpjAuditTotalCompanies, setCnpjAuditTotalCompanies] = useState(0);
   const [cnpjAuditFixingCompanyId, setCnpjAuditFixingCompanyId] = useState("");
+  const [cleanupRows, setCleanupRows] = useState([]);
+  const [cleanupLoading, setCleanupLoading] = useState(false);
+  const [cleanupError, setCleanupError] = useState("");
+  const [cleanupSuccess, setCleanupSuccess] = useState("");
+  const [cleanupRunningAt, setCleanupRunningAt] = useState("");
+  const [cleanupSourceFilter, setCleanupSourceFilter] = useState("all");
+  const [cleanupIssueFilter, setCleanupIssueFilter] = useState("all");
+  const [cleanupSearch, setCleanupSearch] = useState("");
+  const [cleanupInactiveDays, setCleanupInactiveDays] = useState("180");
+  const [cleanupOnlyInactive, setCleanupOnlyInactive] = useState(false);
+  const [cleanupOnlySafeDelete, setCleanupOnlySafeDelete] = useState(true);
+  const [cleanupSelectedIds, setCleanupSelectedIds] = useState({});
+  const [cleanupArchiving, setCleanupArchiving] = useState(false);
+  const [cleanupDeleting, setCleanupDeleting] = useState(false);
 
   const activeCount = useMemo(() => stages.filter((item) => item.is_active).length, [stages]);
   const omieResultSummary = useMemo(() => asObject(omieResult), [omieResult]);
@@ -1299,6 +1386,193 @@ export default function SettingsModule() {
     } finally {
       setCnpjAuditFixingCompanyId("");
     }
+  }
+
+  async function loadCleanupData() {
+    setCleanupLoading(true);
+    setCleanupError("");
+    setCleanupSuccess("");
+    try {
+      const rows = await listCompanyCleanupData();
+      setCleanupRows(rows);
+      setCleanupSelectedIds({});
+      setCleanupRunningAt(new Date().toISOString());
+
+      const inconsistent = rows.filter((row) => Boolean(row?.has_inconsistency)).length;
+      const safeDelete = rows.filter((row) => cleanupCanSafeDelete(row)).length;
+      setCleanupSuccess(
+        `Diagnóstico concluído: ${rows.length} empresa(s), ${inconsistent} com inconsistência e ${safeDelete} apta(s) para exclusão segura.`
+      );
+    } catch (err) {
+      setCleanupError(err.message || "Falha ao carregar diagnóstico de limpeza.");
+      setCleanupRows([]);
+      setCleanupSelectedIds({});
+    } finally {
+      setCleanupLoading(false);
+    }
+  }
+
+  function handleToggleCleanupRowSelection(rowId) {
+    const normalizedRowId = String(rowId || "").trim();
+    if (!normalizedRowId) return;
+    setCleanupSelectedIds((previous) => ({
+      ...previous,
+      [normalizedRowId]: !Boolean(previous[normalizedRowId])
+    }));
+  }
+
+  function handleToggleCleanupVisibleSelection() {
+    if (!cleanupVisibleIds.length) return;
+    setCleanupSelectedIds((previous) => {
+      const next = { ...previous };
+      if (cleanupAllVisibleSelected) {
+        for (const rowId of cleanupVisibleIds) {
+          delete next[rowId];
+        }
+      } else {
+        for (const rowId of cleanupVisibleIds) {
+          next[rowId] = true;
+        }
+      }
+      return next;
+    });
+  }
+
+  function clearCleanupSelection() {
+    setCleanupSelectedIds({});
+  }
+
+  async function handleArchiveSelectedCleanup(rowsOverride = null) {
+    const selectedRows = Array.isArray(rowsOverride)
+      ? rowsOverride.filter(Boolean)
+      : Object.entries(cleanupSelectedIds)
+          .filter(([, checked]) => Boolean(checked))
+          .map(([rowId]) => cleanupRowById.get(String(rowId || "").trim()))
+          .filter(Boolean);
+
+    if (!selectedRows.length) {
+      setCleanupError("Selecione ao menos uma empresa para arquivar.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Arquivar ${selectedRows.length} empresa(s)?\n\nA ação marca o segmento com prefixo ARQUIVADO para facilitar filtros e evitar exclusões acidentais.`
+    );
+    if (!confirmed) return;
+
+    setCleanupError("");
+    setCleanupSuccess("");
+    setCleanupArchiving(true);
+
+    let archived = 0;
+    let unchanged = 0;
+    const failures = [];
+
+    try {
+      for (const row of selectedRows) {
+        const rowId = String(row?.id || "").trim();
+        if (!rowId) continue;
+        const currentSegment = String(row?.segmento || "").trim();
+        const currentSegmentKey = cleanupTextKey(currentSegment);
+        const nextSegment =
+          !currentSegment || currentSegmentKey.startsWith("arquivado")
+            ? currentSegment || "ARQUIVADO"
+            : `ARQUIVADO · ${currentSegment}`;
+
+        if (nextSegment === currentSegment) {
+          unchanged += 1;
+          continue;
+        }
+
+        try {
+          await updateCompany(rowId, { segmento: nextSegment });
+          archived += 1;
+        } catch (error) {
+          const companyName = String(row?.trade_name || row?.legal_name || "Empresa").trim();
+          failures.push(`${companyName}: ${String(error?.message || "Falha ao arquivar.")}`);
+        }
+      }
+
+      await loadCleanupData();
+      setCleanupSuccess(`Arquivamento concluído: ${archived} atualizada(s), ${unchanged} já arquivada(s).`);
+      if (failures.length) {
+        setCleanupError(`Falhas em ${failures.length} empresa(s). Primeira: ${failures[0]}`);
+      }
+    } finally {
+      setCleanupArchiving(false);
+    }
+  }
+
+  async function handleDeleteSelectedCleanup(rowsOverride = null) {
+    const selectedRows = Array.isArray(rowsOverride)
+      ? rowsOverride.filter(Boolean)
+      : Object.entries(cleanupSelectedIds)
+          .filter(([, checked]) => Boolean(checked))
+          .map(([rowId]) => cleanupRowById.get(String(rowId || "").trim()))
+          .filter(Boolean);
+
+    if (!selectedRows.length) {
+      setCleanupError("Selecione ao menos uma empresa para excluir.");
+      return;
+    }
+
+    const eligibleRows = selectedRows.filter((row) => cleanupCanSafeDelete(row));
+    const skippedUnsafe = selectedRows.length - eligibleRows.length;
+    if (!eligibleRows.length) {
+      setCleanupError("Nenhuma selecionada está apta para exclusão segura (existem vínculos na conta).");
+      return;
+    }
+
+    const confirmed = await confirmStrongDelete({
+      entityLabel: "as empresas selecionadas",
+      itemLabel: `${eligibleRows.length} empresa(s)`
+    });
+    if (!confirmed) return;
+
+    setCleanupError("");
+    setCleanupSuccess("");
+    setCleanupDeleting(true);
+
+    let deleted = 0;
+    const failures = [];
+
+    try {
+      for (const row of eligibleRows) {
+        const rowId = String(row?.id || "").trim();
+        if (!rowId) continue;
+        try {
+          await deleteCompany(rowId);
+          deleted += 1;
+        } catch (error) {
+          const companyName = String(row?.trade_name || row?.legal_name || "Empresa").trim();
+          failures.push(`${companyName}: ${String(error?.message || "Falha ao excluir.")}`);
+        }
+      }
+
+      await loadCleanupData();
+      const baseMessage =
+        skippedUnsafe > 0
+          ? `Exclusão em lote: ${deleted} removida(s), ${skippedUnsafe} ignorada(s) por segurança.`
+          : `Exclusão em lote concluída: ${deleted} removida(s).`;
+      setCleanupSuccess(baseMessage);
+      if (failures.length) {
+        setCleanupError(`Falhas em ${failures.length} empresa(s). Primeira: ${failures[0]}`);
+      }
+    } finally {
+      setCleanupDeleting(false);
+    }
+  }
+
+  async function handleArchiveCleanupRow(row) {
+    const rowId = String(row?.id || "").trim();
+    if (!rowId) return;
+    await handleArchiveSelectedCleanup([row]);
+  }
+
+  async function handleDeleteCleanupRow(row) {
+    const rowId = String(row?.id || "").trim();
+    if (!rowId) return;
+    await handleDeleteSelectedCleanup([row]);
   }
 
   useEffect(() => {
@@ -2616,6 +2890,80 @@ export default function SettingsModule() {
     });
   }, [cnpjAuditRows, cnpjAuditFilter, cnpjAuditSearch]);
 
+  const cleanupInactiveDaysThreshold = useMemo(() => clampInteger(cleanupInactiveDays, 0, 3650, 180), [cleanupInactiveDays]);
+  const cleanupRowById = useMemo(() => {
+    const next = new Map();
+    for (const row of cleanupRows) {
+      const rowId = String(row?.id || "").trim();
+      if (!rowId) continue;
+      next.set(rowId, row);
+    }
+    return next;
+  }, [cleanupRows]);
+  const filteredCleanupRows = useMemo(() => {
+    const normalizedSearch = cleanupTextKey(cleanupSearch);
+    return cleanupRows.filter((row) => {
+      if (!cleanupMatchesSource(row, cleanupSourceFilter)) return false;
+
+      if (cleanupIssueFilter === "inconsistent" && !row?.has_inconsistency) return false;
+      if (cleanupIssueFilter === "invalid_cnpj" && !(row?.cnpj_invalid || row?.cnpj_missing)) return false;
+      if (cleanupIssueFilter === "missing_city_or_address" && !(row?.city_missing || row?.address_missing)) return false;
+
+      const inactiveDays = daysSinceDate(row?.last_activity_at);
+      if (cleanupOnlyInactive && (inactiveDays === null || inactiveDays < cleanupInactiveDaysThreshold)) return false;
+      if (cleanupOnlySafeDelete && !cleanupCanSafeDelete(row)) return false;
+
+      if (!normalizedSearch) return true;
+      const haystack = cleanupTextKey(
+        [
+          row?.trade_name,
+          row?.legal_name,
+          row?.cnpj,
+          row?.city,
+          row?.state,
+          row?.segmento,
+          row?.email,
+          row?.phone,
+          cleanupSourceLabel(row)
+        ].join(" ")
+      );
+      return haystack.includes(normalizedSearch);
+    });
+  }, [
+    cleanupRows,
+    cleanupSearch,
+    cleanupSourceFilter,
+    cleanupIssueFilter,
+    cleanupOnlyInactive,
+    cleanupOnlySafeDelete,
+    cleanupInactiveDaysThreshold
+  ]);
+  const cleanupVisibleIds = useMemo(
+    () => filteredCleanupRows.map((row) => String(row?.id || "").trim()).filter(Boolean),
+    [filteredCleanupRows]
+  );
+  const cleanupSelectedCount = useMemo(
+    () =>
+      Object.entries(cleanupSelectedIds).reduce(
+        (acc, [rowId, checked]) => (checked && cleanupRowById.has(String(rowId || "")) ? acc + 1 : acc),
+        0
+      ),
+    [cleanupSelectedIds, cleanupRowById]
+  );
+  const cleanupVisibleSelectedCount = useMemo(
+    () => cleanupVisibleIds.reduce((acc, rowId) => (cleanupSelectedIds[rowId] ? acc + 1 : acc), 0),
+    [cleanupVisibleIds, cleanupSelectedIds]
+  );
+  const cleanupAllVisibleSelected = cleanupVisibleIds.length > 0 && cleanupVisibleSelectedCount === cleanupVisibleIds.length;
+  const cleanupSafeDeleteVisibleCount = useMemo(
+    () => filteredCleanupRows.filter((row) => cleanupCanSafeDelete(row)).length,
+    [filteredCleanupRows]
+  );
+  const cleanupInconsistentVisibleCount = useMemo(
+    () => filteredCleanupRows.filter((row) => Boolean(row?.has_inconsistency)).length,
+    [filteredCleanupRows]
+  );
+
   return (
     <section className="module">
       <article className="panel">
@@ -2939,6 +3287,247 @@ export default function SettingsModule() {
                 <tr>
                   <td colSpan={6} className="muted">
                     Nenhum problema encontrado com os filtros atuais.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article className="panel top-gap">
+        <h2>Limpeza em massa de empresas</h2>
+        <p className="muted">
+          Analise dados importados (RD/OMIE), filtre inconsistências e execute arquivamento/exclusão em lote com trava de segurança.
+        </p>
+        {cleanupError ? <p className="error-text">{cleanupError}</p> : null}
+        {cleanupSuccess ? <p className="success-text">{cleanupSuccess}</p> : null}
+
+        <div className="kpi-grid top-gap">
+          <article className="kpi-card">
+            <span className="kpi-label">Empresas diagnosticadas</span>
+            <strong className="kpi-value">{cleanupRows.length}</strong>
+          </article>
+          <article className="kpi-card">
+            <span className="kpi-label">Filtradas</span>
+            <strong className="kpi-value">{filteredCleanupRows.length}</strong>
+          </article>
+          <article className="kpi-card">
+            <span className="kpi-label">Selecionadas</span>
+            <strong className="kpi-value">{cleanupSelectedCount}</strong>
+          </article>
+          <article className="kpi-card">
+            <span className="kpi-label">Seguras para excluir</span>
+            <strong className="kpi-value">{cleanupSafeDeleteVisibleCount}</strong>
+          </article>
+          <article className="kpi-card">
+            <span className="kpi-label">Com inconsistência</span>
+            <strong className="kpi-value">{cleanupInconsistentVisibleCount}</strong>
+          </article>
+        </div>
+
+        <div className="settings-omie-grid top-gap">
+          <label className="settings-field">
+            <span>Origem</span>
+            <select value={cleanupSourceFilter} onChange={(event) => setCleanupSourceFilter(event.target.value)}>
+              {CLEANUP_SOURCE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-field">
+            <span>Tipo de problema</span>
+            <select value={cleanupIssueFilter} onChange={(event) => setCleanupIssueFilter(event.target.value)}>
+              {CLEANUP_ISSUE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-field">
+            <span>Inatividade (&gt; dias)</span>
+            <input
+              type="number"
+              min={0}
+              max={3650}
+              value={cleanupInactiveDays}
+              onChange={(event) => setCleanupInactiveDays(event.target.value)}
+            />
+          </label>
+          <label className="settings-field">
+            <span>Buscar por empresa/CNPJ/cidade</span>
+            <input
+              value={cleanupSearch}
+              onChange={(event) => setCleanupSearch(event.target.value)}
+              placeholder="Ex.: MERCURIO, 82.983.826/0001-82, Joinville"
+            />
+          </label>
+        </div>
+
+        <div className="inline-actions top-gap">
+          <label className="checkbox-inline">
+            <input type="checkbox" checked={cleanupOnlyInactive} onChange={(event) => setCleanupOnlyInactive(event.target.checked)} />
+            Mostrar apenas inativas (&gt;{cleanupInactiveDaysThreshold} dias)
+          </label>
+          <label className="checkbox-inline">
+            <input
+              type="checkbox"
+              checked={cleanupOnlySafeDelete}
+              onChange={(event) => setCleanupOnlySafeDelete(event.target.checked)}
+            />
+            Mostrar apenas exclusão segura
+          </label>
+        </div>
+
+        <div className="inline-actions top-gap">
+          <button type="button" className="btn-primary" onClick={loadCleanupData} disabled={cleanupLoading}>
+            {cleanupLoading ? "Carregando..." : "Rodar diagnóstico"}
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={handleToggleCleanupVisibleSelection}
+            disabled={!cleanupVisibleIds.length || cleanupLoading}
+          >
+            {cleanupAllVisibleSelected ? "Desmarcar filtradas" : "Selecionar filtradas"}
+          </button>
+          <button type="button" className="btn-ghost" onClick={clearCleanupSelection} disabled={!cleanupSelectedCount}>
+            Limpar seleção
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => handleArchiveSelectedCleanup()}
+            disabled={!cleanupSelectedCount || cleanupArchiving || cleanupDeleting}
+          >
+            {cleanupArchiving ? "Arquivando..." : "Arquivar selecionadas"}
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => handleDeleteSelectedCleanup()}
+            disabled={!cleanupSelectedCount || cleanupDeleting || cleanupArchiving}
+          >
+            {cleanupDeleting ? "Excluindo..." : "Excluir selecionadas"}
+          </button>
+          {cleanupRunningAt ? (
+            <span className="muted">Último diagnóstico: {formatDateTime(cleanupRunningAt)}</span>
+          ) : (
+            <span className="muted">Diagnóstico manual para evitar carga desnecessária.</span>
+          )}
+        </div>
+
+        <div className="table-wrap top-gap">
+          <table>
+            <thead>
+              <tr>
+                <th>
+                  <input
+                    type="checkbox"
+                    checked={cleanupAllVisibleSelected}
+                    onChange={handleToggleCleanupVisibleSelection}
+                    disabled={!cleanupVisibleIds.length}
+                    aria-label="Selecionar empresas filtradas"
+                  />
+                </th>
+                <th>Empresa</th>
+                <th>CNPJ</th>
+                <th>Origem</th>
+                <th>Cidade/UF</th>
+                <th>Vínculos</th>
+                <th>Última atividade</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredCleanupRows.map((row) => {
+                const rowId = String(row?.id || "").trim();
+                const canDelete = cleanupCanSafeDelete(row);
+                const inactiveDays = daysSinceDate(row?.last_activity_at);
+                const cityUf = [String(row?.city || "").trim(), String(row?.state || "").trim().toUpperCase()]
+                  .filter(Boolean)
+                  .join("/");
+                const statusTags = cleanupIssueTags(row);
+                const companyName = String(row?.trade_name || row?.legal_name || "Empresa sem nome").trim();
+
+                return (
+                  <tr key={rowId}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(cleanupSelectedIds[rowId])}
+                        onChange={() => handleToggleCleanupRowSelection(rowId)}
+                        aria-label={`Selecionar ${companyName}`}
+                      />
+                    </td>
+                    <td>{companyName}</td>
+                    <td>{formatCnpjDisplay(row?.cnpj || row?.cnpj_digits)}</td>
+                    <td>{cleanupSourceLabel(row)}</td>
+                    <td>{cityUf || "-"}</td>
+                    <td>
+                      <span className="muted">
+                        Oport.: {Number(row?.opportunities_total || 0)} (abertas {Number(row?.opportunities_open || 0)})
+                      </span>
+                      <br />
+                      <span className="muted">
+                        Tarefas: {Number(row?.tasks_total || 0)} (abertas {Number(row?.tasks_open || 0)}) • Pedidos:{" "}
+                        {Number(row?.orders_total || 0)}
+                      </span>
+                    </td>
+                    <td>
+                      {formatDateTime(row?.last_activity_at)}
+                      <br />
+                      <span className="muted">{inactiveDays === null ? "-" : `${inactiveDays} dia(s)`}</span>
+                    </td>
+                    <td>
+                      <div className="inline-actions">
+                        {statusTags.map((tag) => (
+                          <span
+                            key={`${rowId}-${tag}`}
+                            className={`badge ${
+                              tag === "Sem inconsistência" ? "badge-status-done" : tag.includes("inválido") ? "badge-priority-critical" : "badge-priority-medium"
+                            }`}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                        <span className={`badge ${canDelete ? "badge-status-done" : "badge-status-cancelled"}`}>
+                          {canDelete ? "Exclusão segura" : "Com vínculo"}
+                        </span>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="inline-actions">
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          onClick={() => handleArchiveCleanupRow(row)}
+                          disabled={cleanupArchiving || cleanupDeleting}
+                        >
+                          Arquivar
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          onClick={() => handleDeleteCleanupRow(row)}
+                          disabled={!canDelete || cleanupDeleting || cleanupArchiving}
+                        >
+                          Excluir
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {!filteredCleanupRows.length ? (
+                <tr>
+                  <td colSpan={9} className="muted">
+                    Nenhuma empresa encontrada com os filtros atuais. Rode o diagnóstico ou ajuste os filtros.
                   </td>
                 </tr>
               ) : null}
