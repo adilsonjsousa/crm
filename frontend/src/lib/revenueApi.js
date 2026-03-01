@@ -47,6 +47,29 @@ function formatCnpj(value) {
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
 }
 
+function isValidCnpjDigits(value) {
+  const digits = cleanDigits(value);
+  if (!/^\d{14}$/.test(digits)) return false;
+  if (/^(\d)\1{13}$/.test(digits)) return false;
+
+  function calculateDigit(base) {
+    let factor = base.length - 7;
+    let sum = 0;
+    for (const char of base) {
+      sum += Number(char) * factor;
+      factor -= 1;
+      if (factor < 2) factor = 9;
+    }
+    const mod = sum % 11;
+    return mod < 2 ? 0 : 11 - mod;
+  }
+
+  const base = digits.slice(0, 12);
+  const digit1 = calculateDigit(base);
+  const digit2 = calculateDigit(`${base}${digit1}`);
+  return digits === `${base}${digit1}${digit2}`;
+}
+
 function formatCnpjSearchPattern(value) {
   const digits = cleanDigits(value).slice(0, 14);
   if (!digits) return "";
@@ -3544,18 +3567,19 @@ export async function searchGlobalRecords(term) {
   if (!normalized || normalized.length < 2) return [];
 
   const pattern = `%${normalized}%`;
+  const asciiTerm = normalizeSearchAscii(normalized);
   const cnpjDigitsTerm = cleanDigits(normalized);
   const looseFallbackTerm = buildLooseSearchFallbackTerm(normalized);
 
-  const [companiesInitialRes, contactsRes, opportunitiesRes, ordersRes, ticketsRes, tasksRes] = await Promise.all([
+  const [companiesInitialRes, contactsInitialRes, opportunitiesRes, ordersRes, ticketsRes, tasksRes] = await Promise.all([
     supabase
       .from("companies")
-      .select("id,trade_name,cnpj")
+      .select("id,trade_name,legal_name,cnpj,city,state")
       .or(`trade_name.ilike.${pattern},legal_name.ilike.${pattern},cnpj.ilike.${pattern}`)
       .limit(8),
     supabase
       .from("contacts")
-      .select("id,company_id,full_name,email,companies:company_id(trade_name)")
+      .select("id,company_id,full_name,email,whatsapp,companies:company_id(trade_name,legal_name,city,state)")
       .or(`full_name.ilike.${pattern},email.ilike.${pattern},whatsapp.ilike.${pattern}`)
       .limit(8),
     supabase
@@ -3581,6 +3605,7 @@ export async function searchGlobalRecords(term) {
   ]);
 
   let companiesRes = companiesInitialRes;
+  let contactsRes = contactsInitialRes;
   if (!companiesRes.error && (!Array.isArray(companiesRes.data) || companiesRes.data.length === 0) && cnpjDigitsTerm.length >= 4) {
     const cnpjRawPattern = `%${cnpjDigitsTerm}%`;
     const cnpjFormattedPattern = `%${formatCnpjSearchPattern(cnpjDigitsTerm)}%`;
@@ -3602,11 +3627,62 @@ export async function searchGlobalRecords(term) {
     const loosePattern = `%${looseFallbackTerm}%`;
     const fallbackRes = await supabase
       .from("companies")
-      .select("id,trade_name,cnpj")
+      .select("id,trade_name,legal_name,cnpj,city,state")
       .or(`trade_name.ilike.${loosePattern},legal_name.ilike.${loosePattern}`)
       .limit(8);
     if (!fallbackRes.error && Array.isArray(fallbackRes.data) && fallbackRes.data.length > 0) {
       companiesRes = fallbackRes;
+    }
+  }
+
+  if (!companiesRes.error && (!Array.isArray(companiesRes.data) || companiesRes.data.length === 0) && asciiTerm) {
+    const accentFallbackCompaniesRes = await supabase
+      .from("companies")
+      .select("id,trade_name,legal_name,cnpj,city,state")
+      .order("updated_at", { ascending: false })
+      .limit(500);
+
+    if (!accentFallbackCompaniesRes.error && Array.isArray(accentFallbackCompaniesRes.data)) {
+      const accentMatchedCompanies = accentFallbackCompaniesRes.data
+        .filter((item) => {
+          const normalizedName = normalizeSearchAscii(`${item?.trade_name || ""} ${item?.legal_name || ""}`);
+          const digits = cleanDigits(item?.cnpj);
+          return normalizedName.includes(asciiTerm) || (cnpjDigitsTerm.length >= 4 && digits.includes(cnpjDigitsTerm));
+        })
+        .slice(0, 8);
+      if (accentMatchedCompanies.length > 0) {
+        companiesRes = { data: accentMatchedCompanies, error: null };
+      }
+    }
+  }
+
+  if (!contactsRes.error && (!Array.isArray(contactsRes.data) || contactsRes.data.length === 0) && asciiTerm) {
+    const accentFallbackContactsRes = await supabase
+      .from("contacts")
+      .select("id,company_id,full_name,email,whatsapp,companies:company_id(trade_name,legal_name,city,state)")
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (!accentFallbackContactsRes.error && Array.isArray(accentFallbackContactsRes.data)) {
+      const accentMatchedContacts = accentFallbackContactsRes.data
+        .filter((item) => {
+          const normalizedName = normalizeSearchAscii(item?.full_name || "");
+          const normalizedEmail = normalizeSearchAscii(item?.email || "");
+          const normalizedWhatsapp = cleanDigits(item?.whatsapp);
+          const normalizedCompany = normalizeSearchAscii(
+            `${item?.companies?.trade_name || ""} ${item?.companies?.legal_name || ""}`
+          );
+          return (
+            normalizedName.includes(asciiTerm) ||
+            normalizedEmail.includes(asciiTerm) ||
+            normalizedCompany.includes(asciiTerm) ||
+            (cnpjDigitsTerm.length >= 4 && normalizedWhatsapp.includes(cnpjDigitsTerm))
+          );
+        })
+        .slice(0, 8);
+      if (accentMatchedContacts.length > 0) {
+        contactsRes = { data: accentMatchedContacts, error: null };
+      }
     }
   }
 
@@ -3617,39 +3693,64 @@ export async function searchGlobalRecords(term) {
   if (ticketsRes.error) throw new Error(normalizeError(ticketsRes.error, "Falha na busca global (assistência)."));
   if (tasksRes.error) throw new Error(normalizeError(tasksRes.error, "Falha na busca global (tarefas)."));
 
-  const mappedCompanies = [];
-  const seenCompanyKeys = new Set();
+  const companiesByIdentity = new Map();
   for (const item of companiesRes.data || []) {
-    const cnpjDigits = cleanDigits(item?.cnpj);
-    const tradeNameKey = normalizeSearchAscii(item?.trade_name || "empresa").replace(/\s+/g, " ").trim();
-    const dedupeKey = cnpjDigits.length === 14 ? `cnpj:${cnpjDigits}` : `name:${tradeNameKey}`;
-    if (seenCompanyKeys.has(dedupeKey)) continue;
-    seenCompanyKeys.add(dedupeKey);
+    const normalizedName = normalizeSearchAscii(item?.trade_name || item?.legal_name || "").trim();
+    const normalizedCity = normalizeSearchAscii(item?.city || "").trim();
+    const normalizedState = String(item?.state || "").trim().toUpperCase();
+    const identity = normalizedName
+      ? `name:${normalizedName}::${normalizedCity}::${normalizedState}`
+      : `id:${String(item?.id || "")}`;
+    const bucket = companiesByIdentity.get(identity) || [];
+    bucket.push(item);
+    companiesByIdentity.set(identity, bucket);
+  }
 
-    mappedCompanies.push({
-      id: `company-${item.id}`,
-      entity_type: "company",
-      company_id: item.id,
-      company_name: item.trade_name || "Empresa",
-      type: "Empresa",
-      title: item.trade_name || "Empresa",
-      subtitle: item.cnpj ? `CNPJ ${formatCnpj(item.cnpj)}` : "Sem CNPJ",
+  const mappedCompanies = [];
+  for (const bucket of companiesByIdentity.values()) {
+    const validCnpjRows = bucket.filter((item) => {
+      const digits = cleanDigits(item?.cnpj);
+      return digits.length === 14 && isValidCnpjDigits(digits);
+    });
+    const chosenRows = validCnpjRows.length > 0 ? validCnpjRows : bucket.slice(0, 1);
+
+    for (const item of chosenRows) {
+      mappedCompanies.push({
+        id: `company-${item.id}`,
+        entity_type: "company",
+        company_id: item.id,
+        company_name: item.trade_name || item.legal_name || "Empresa",
+        type: "Empresa",
+        title: item.trade_name || item.legal_name || "Empresa",
+        subtitle: item.cnpj ? `CNPJ ${formatCnpj(item.cnpj)}` : "Sem CNPJ",
+        tab: "companies"
+      });
+    }
+  }
+
+  const seenContactKeys = new Set();
+  const mappedContacts = [];
+  for (const item of contactsRes.data || []) {
+    const normalizedFullName = normalizeSearchAscii(item?.full_name || "");
+    const normalizedEmail = normalizeSearchAscii(item?.email || "");
+    const normalizedCompanyName = normalizeSearchAscii(item?.companies?.trade_name || item?.companies?.legal_name || "");
+    const dedupeKey = `${normalizedFullName}::${normalizedEmail}::${normalizedCompanyName}`;
+    if (dedupeKey !== ":::" && seenContactKeys.has(dedupeKey)) continue;
+    if (dedupeKey !== ":::") seenContactKeys.add(dedupeKey);
+
+    mappedContacts.push({
+      id: `contact-${item.id}`,
+      entity_type: "contact",
+      contact_id: item.id,
+      contact_email: item.email || "",
+      company_id: item.company_id || null,
+      company_name: item.companies?.trade_name || "",
+      type: "Contato",
+      title: item.full_name || "Contato",
+      subtitle: item.companies?.trade_name || "Sem vínculo com empresa",
       tab: "companies"
     });
   }
-
-  const mappedContacts = (contactsRes.data || []).map((item) => ({
-    id: `contact-${item.id}`,
-    entity_type: "contact",
-    contact_id: item.id,
-    contact_email: item.email || "",
-    company_id: item.company_id || null,
-    company_name: item.companies?.trade_name || "",
-    type: "Contato",
-    title: item.full_name || "Contato",
-    subtitle: item.companies?.trade_name || "Sem vínculo com empresa",
-    tab: "companies"
-  }));
 
   const mappedOpportunities = (opportunitiesRes.data || []).map((item) => ({
     id: `opportunity-${item.id}`,

@@ -6,6 +6,7 @@ import {
   createProposalProductProfile,
   createProposalTemplate,
   createSystemUser,
+  deleteCompany,
   deleteCompanyLifecycleStage,
   deleteProposalCommercialTerms,
   deleteProposalCppRow,
@@ -1268,7 +1269,33 @@ export default function SettingsModule() {
       setCnpjAuditSuccess(`CNPJ atualizado para ${formatCnpjDisplay(normalizedDigits)} em ${issueRow.company_name}.`);
       await runCnpjAudit();
     } catch (err) {
-      setCnpjAuditError(err.message || "Falha ao corrigir CNPJ.");
+      const message = String(err?.message || "").trim();
+      const isDuplicateCnpj = message.toLowerCase().includes("já existe empresa cadastrada com este cnpj");
+
+      if (isDuplicateCnpj && issueRow?.suggested_company_id) {
+        const confirmDeleteInvalid = window.confirm(
+          `Já existe outra empresa com este CNPJ válido.\n\nDeseja excluir este cadastro inválido (${issueRow.company_name}) para limpar a busca global?`
+        );
+        if (confirmDeleteInvalid) {
+          try {
+            await deleteCompany(companyId);
+            setCnpjAuditSuccess(
+              `Cadastro inválido removido (${issueRow.company_name}). O cadastro válido permanece ativo no CRM.`
+            );
+            await runCnpjAudit();
+            return;
+          } catch (deleteError) {
+            const deleteMessage = String(deleteError?.message || "").trim();
+            setCnpjAuditError(
+              deleteMessage ||
+                "Não foi possível excluir o cadastro inválido porque ele possui vínculos. Revise contatos/oportunidades/pedidos antes de excluir."
+            );
+            return;
+          }
+        }
+      }
+
+      setCnpjAuditError(message || "Falha ao corrigir CNPJ.");
     } finally {
       setCnpjAuditFixingCompanyId("");
     }
