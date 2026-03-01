@@ -410,6 +410,32 @@ function proposalProductDisplayLabel(profile) {
   return subcategoryLabel ? `${productName} (${categoryLabel} · ${subcategoryLabel})` : `${productName} (${categoryLabel})`;
 }
 
+function sortProposalProductsAlphabetically(rows = []) {
+  return [...rows].sort((left, right) => {
+    const leftCategory = proposalProductTypeLabel(left?.proposal_type);
+    const rightCategory = proposalProductTypeLabel(right?.proposal_type);
+    const byCategory = leftCategory.localeCompare(rightCategory, "pt-BR", { sensitivity: "base" });
+    if (byCategory !== 0) return byCategory;
+
+    const leftSubcategory = String(left?.product_subcategory || "").trim();
+    const rightSubcategory = String(right?.product_subcategory || "").trim();
+    const bySubcategory = leftSubcategory.localeCompare(rightSubcategory, "pt-BR", { sensitivity: "base" });
+    if (bySubcategory !== 0) return bySubcategory;
+
+    const leftProduct = String(left?.product_name || "").trim();
+    const rightProduct = String(right?.product_name || "").trim();
+    const byProduct = leftProduct.localeCompare(rightProduct, "pt-BR", { sensitivity: "base" });
+    if (byProduct !== 0) return byProduct;
+
+    const leftCode = String(left?.product_code || "").trim();
+    const rightCode = String(right?.product_code || "").trim();
+    const byCode = leftCode.localeCompare(rightCode, "pt-BR", { sensitivity: "base" });
+    if (byCode !== 0) return byCode;
+
+    return String(left?.id || "").localeCompare(String(right?.id || ""), "pt-BR", { sensitivity: "base" });
+  });
+}
+
 function cleanCnpjDigits(value) {
   return String(value || "").replace(/\D/g, "");
 }
@@ -1224,10 +1250,11 @@ export default function SettingsModule() {
     setProposalProductProfilesError("");
     try {
       const rows = await listProposalProductProfiles({ includeInactive: true });
-      setProposalProductProfiles(rows);
+      const sortedRows = sortProposalProductsAlphabetically(rows);
+      setProposalProductProfiles(sortedRows);
       setSelectedProposalCppProfileId((previous) => {
-        if (previous && rows.some((row) => row.id === previous)) return previous;
-        return rows[0]?.id || "";
+        if (previous && sortedRows.some((row) => row.id === previous)) return previous;
+        return sortedRows[0]?.id || "";
       });
     } catch (err) {
       setProposalProductProfilesError(err.message);
