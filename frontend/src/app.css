@@ -1108,6 +1108,54 @@ a.btn-table-action {
   z-index: 1;
 }
 
+.reports-company-table {
+  table-layout: fixed;
+  min-width: 1160px;
+}
+
+.reports-company-table .reports-company-col-name {
+  width: 26%;
+}
+
+.reports-company-table .reports-company-col-cnpj {
+  width: 14%;
+}
+
+.reports-company-table .reports-company-col-stage {
+  width: 10%;
+}
+
+.reports-company-table .reports-company-col-phone {
+  width: 11%;
+}
+
+.reports-company-table .reports-company-col-email {
+  width: 20%;
+}
+
+.reports-company-table .reports-company-col-city {
+  width: 10%;
+}
+
+.reports-company-table .reports-company-col-created {
+  width: 9%;
+}
+
+.reports-company-table th,
+.reports-company-table td {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.reports-company-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.reports-company-cell-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .reports-panel .reports-funnel-kpi-grid {
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
 }

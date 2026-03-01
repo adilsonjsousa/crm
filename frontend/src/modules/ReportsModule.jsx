@@ -1102,7 +1102,16 @@ export default function ReportsModule() {
         {companiesError ? <p className="error-text">{companiesError}</p> : null}
 
         <div className="table-wrap reports-table-wrap">
-          <table>
+          <table className="reports-company-table">
+            <colgroup>
+              <col className="reports-company-col reports-company-col-name" />
+              <col className="reports-company-col reports-company-col-cnpj" />
+              <col className="reports-company-col reports-company-col-stage" />
+              <col className="reports-company-col reports-company-col-phone" />
+              <col className="reports-company-col reports-company-col-email" />
+              <col className="reports-company-col reports-company-col-city" />
+              <col className="reports-company-col reports-company-col-created" />
+            </colgroup>
             <thead>
               <tr>
                 <th>Nome Fantasia</th>
@@ -1122,11 +1131,15 @@ export default function ReportsModule() {
               ) : null}
               {filteredCompanyRows.map((row) => (
                 <tr key={row.id}>
-                  <td>{row.trade_name || row.legal_name || "-"}</td>
+                  <td className="reports-company-cell-ellipsis" title={row.trade_name || row.legal_name || "-"}>
+                    {row.trade_name || row.legal_name || "-"}
+                  </td>
                   <td>{formatCnpj(row.cnpj)}</td>
                   <td>{row?.lifecycle_stage?.name || "Sem fase"}</td>
                   <td>{row.phone || "-"}</td>
-                  <td>{row.email || "-"}</td>
+                  <td className="reports-company-cell-ellipsis" title={row.email || "-"}>
+                    {row.email || "-"}
+                  </td>
                   <td>{[resolveCompanyCity(row), resolveCompanyState(row)].filter(Boolean).join("/") || "-"}</td>
                   <td>{formatDateTime(row.created_at)}</td>
                 </tr>
