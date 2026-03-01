@@ -977,6 +977,8 @@ export async function lookupCompanyDataByCnpj(cnpj) {
     email: payload.email || "",
     phone: formatBrazilPhone(payload.ddd_telefone_1 || payload.ddd_telefone_2 || ""),
     address_full: address,
+    city,
+    state: uf,
     segmento: inferSegmentoFromCnae(payload.cnae_fiscal_descricao)
   };
 }

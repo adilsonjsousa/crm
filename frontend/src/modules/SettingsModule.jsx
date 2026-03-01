@@ -17,6 +17,7 @@ import {
   listCompanyCleanupData,
   listCompanyLifecycleStages,
   listCompanyOptions,
+  lookupCompanyDataByCnpj,
   listOmieCustomerSyncJobs,
   listProposalCommercialTerms,
   listProposalCppRows,
@@ -504,6 +505,33 @@ function cleanupIssueTags(row) {
   if (!tags.length && row?.has_inconsistency) tags.push("Com inconsistência");
   if (!tags.length) tags.push("Sem inconsistência");
   return tags;
+}
+
+function hasCleanupFieldValue(value) {
+  return String(value ?? "").trim().length > 0;
+}
+
+function buildCompanyCompletionPatchFromLookup(companyRow, lookupData) {
+  const patch = {};
+  const tradeNameLookup = String(lookupData?.trade_name || "").trim().toUpperCase();
+  const legalNameLookup = String(lookupData?.legal_name || "").trim().toUpperCase();
+  const emailLookup = String(lookupData?.email || "").trim().toLowerCase();
+  const phoneLookup = String(lookupData?.phone || "").trim();
+  const addressLookup = String(lookupData?.address_full || "").trim().toUpperCase();
+  const cityLookup = String(lookupData?.city || "").trim().toUpperCase();
+  const stateLookup = String(lookupData?.state || "").trim().toUpperCase();
+  const segmentLookup = String(lookupData?.segmento || "").trim();
+
+  if (!hasCleanupFieldValue(companyRow?.trade_name) && tradeNameLookup) patch.trade_name = tradeNameLookup;
+  if (!hasCleanupFieldValue(companyRow?.legal_name) && legalNameLookup) patch.legal_name = legalNameLookup;
+  if (!hasCleanupFieldValue(companyRow?.email) && emailLookup) patch.email = emailLookup;
+  if (!hasCleanupFieldValue(companyRow?.phone) && phoneLookup) patch.phone = phoneLookup;
+  if (!hasCleanupFieldValue(companyRow?.address_full) && addressLookup) patch.address_full = addressLookup;
+  if (!hasCleanupFieldValue(companyRow?.city) && cityLookup) patch.city = cityLookup;
+  if (!hasCleanupFieldValue(companyRow?.state) && stateLookup) patch.state = stateLookup;
+  if (!hasCleanupFieldValue(companyRow?.segmento) && segmentLookup) patch.segmento = segmentLookup;
+
+  return patch;
 }
 
 function buildCnpjAuditIssues(companies) {
@@ -1071,6 +1099,7 @@ export default function SettingsModule() {
   const [cleanupSelectedIds, setCleanupSelectedIds] = useState({});
   const [cleanupArchiving, setCleanupArchiving] = useState(false);
   const [cleanupDeleting, setCleanupDeleting] = useState(false);
+  const [cleanupEnriching, setCleanupEnriching] = useState(false);
 
   const activeCount = useMemo(() => stages.filter((item) => item.is_active).length, [stages]);
   const omieResultSummary = useMemo(() => asObject(omieResult), [omieResult]);
@@ -1397,21 +1426,40 @@ export default function SettingsModule() {
     }
   }
 
+  function resolveCleanupScopeConfig(scopeValue = cleanupStateScope) {
+    const normalizedScope = String(scopeValue || "SC_PR_RS").trim();
+    const southStatesSet = new Set(RD_SYNC_SOUTH_STATES);
+    const useSouthScopeFilter = normalizedScope !== "ALL" && normalizedScope !== "ALL_EXCEPT_SC_PR_RS";
+    const allowedStates = useSouthScopeFilter ? resolveSouthStates(normalizedScope) : [];
+    const scopeLabel =
+      CLEANUP_STATE_SCOPE_OPTIONS.find((item) => item.value === normalizedScope)?.label || "Estados selecionados";
+    return {
+      scopeLabel,
+      allowedStates,
+      applyPostFilter(rows) {
+        if (normalizedScope === "ALL_EXCEPT_SC_PR_RS") {
+          return rows.filter((row) => !southStatesSet.has(String(row?.state || "").trim().toUpperCase()));
+        }
+        return rows;
+      }
+    };
+  }
+
+  async function loadCleanupRowsByScope(scopeValue = cleanupStateScope) {
+    const scopeConfig = resolveCleanupScopeConfig(scopeValue);
+    const sourceRows = await listCompanyCleanupData({ allowedStates: scopeConfig.allowedStates });
+    return {
+      rows: scopeConfig.applyPostFilter(sourceRows),
+      scopeLabel: scopeConfig.scopeLabel
+    };
+  }
+
   async function loadCleanupData() {
     setCleanupLoading(true);
     setCleanupError("");
     setCleanupSuccess("");
     try {
-      const southStatesSet = new Set(RD_SYNC_SOUTH_STATES);
-      const useSouthScopeFilter = cleanupStateScope !== "ALL" && cleanupStateScope !== "ALL_EXCEPT_SC_PR_RS";
-      const allowedStates = useSouthScopeFilter ? resolveSouthStates(cleanupStateScope) : [];
-      const scopeLabel =
-        CLEANUP_STATE_SCOPE_OPTIONS.find((item) => item.value === cleanupStateScope)?.label || "Estados selecionados";
-      const sourceRows = await listCompanyCleanupData({ allowedStates });
-      const rows =
-        cleanupStateScope === "ALL_EXCEPT_SC_PR_RS"
-          ? sourceRows.filter((row) => !southStatesSet.has(String(row?.state || "").trim().toUpperCase()))
-          : sourceRows;
+      const { rows, scopeLabel } = await loadCleanupRowsByScope(cleanupStateScope);
       setCleanupRows(rows);
       setCleanupSelectedIds({});
       setCleanupRunningAt(new Date().toISOString());
@@ -1427,6 +1475,89 @@ export default function SettingsModule() {
       setCleanupSelectedIds({});
     } finally {
       setCleanupLoading(false);
+    }
+  }
+
+  async function handleEnrichCompaniesFromValidCnpj() {
+    setCleanupError("");
+    setCleanupSuccess("");
+    setCleanupEnriching(true);
+    try {
+      const { rows, scopeLabel } = await loadCleanupRowsByScope(cleanupStateScope);
+      const candidates = rows.filter((row) => {
+        if (!Boolean(row?.cnpj_valid)) return false;
+        // Lookup only when at least one tracked field is missing.
+        return (
+          !hasCleanupFieldValue(row?.trade_name) ||
+          !hasCleanupFieldValue(row?.legal_name) ||
+          !hasCleanupFieldValue(row?.email) ||
+          !hasCleanupFieldValue(row?.phone) ||
+          !hasCleanupFieldValue(row?.address_full) ||
+          !hasCleanupFieldValue(row?.city) ||
+          !hasCleanupFieldValue(row?.state) ||
+          !hasCleanupFieldValue(row?.segmento)
+        );
+      });
+
+      if (!candidates.length) {
+        setCleanupRows(rows);
+        setCleanupSelectedIds({});
+        setCleanupSuccess(`Nenhuma empresa com CNPJ válido precisa de complementação no escopo ${scopeLabel}.`);
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `Consultar BrasilAPI e completar dados faltantes de ${candidates.length} empresa(s) com CNPJ válido no escopo ${scopeLabel}?`
+      );
+      if (!confirmed) return;
+
+      let processed = 0;
+      let updated = 0;
+      let unchanged = 0;
+      let notFound = 0;
+      const failures = [];
+
+      for (const company of candidates) {
+        const cnpjDigits = cleanCnpjDigits(company?.cnpj || company?.cnpj_digits);
+        if (cnpjDigits.length !== 14 || !isValidCnpjDigits(cnpjDigits)) {
+          continue;
+        }
+
+        processed += 1;
+        if (processed % 20 === 0) {
+          setCleanupSuccess(`Completando dados por CNPJ... ${processed}/${candidates.length}`);
+        }
+
+        try {
+          const lookupData = await lookupCompanyDataByCnpj(cnpjDigits);
+          if (!lookupData) {
+            notFound += 1;
+            continue;
+          }
+          const patch = buildCompanyCompletionPatchFromLookup(company, lookupData);
+          if (!Object.keys(patch).length) {
+            unchanged += 1;
+            continue;
+          }
+          await updateCompany(company.id, patch);
+          updated += 1;
+        } catch (error) {
+          const companyName = String(company?.trade_name || company?.legal_name || "Empresa").trim();
+          failures.push(`${companyName}: ${String(error?.message || "Falha ao consultar/atualizar.")}`);
+        }
+      }
+
+      await loadCleanupData();
+      setCleanupSuccess(
+        `Complementação concluída (${scopeLabel}): ${updated} atualizada(s), ${unchanged} sem mudança e ${notFound} sem retorno na BrasilAPI.`
+      );
+      if (failures.length) {
+        setCleanupError(`Falhas em ${failures.length} empresa(s). Primeira: ${failures[0]}`);
+      }
+    } catch (err) {
+      setCleanupError(err.message || "Falha ao completar dados por CNPJ.");
+    } finally {
+      setCleanupEnriching(false);
     }
   }
 
@@ -3411,25 +3542,38 @@ export default function SettingsModule() {
         </div>
 
         <div className="inline-actions top-gap">
-          <button type="button" className="btn-primary" onClick={loadCleanupData} disabled={cleanupLoading}>
+          <button type="button" className="btn-primary" onClick={loadCleanupData} disabled={cleanupLoading || cleanupEnriching}>
             {cleanupLoading ? "Carregando..." : "Rodar diagnóstico"}
           </button>
           <button
             type="button"
             className="btn-ghost"
+            onClick={handleEnrichCompaniesFromValidCnpj}
+            disabled={cleanupEnriching || cleanupLoading || cleanupArchiving || cleanupDeleting}
+          >
+            {cleanupEnriching ? "Completando dados..." : "Completar dados por CNPJ válido"}
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
             onClick={handleToggleCleanupVisibleSelection}
-            disabled={!cleanupVisibleIds.length || cleanupLoading}
+            disabled={!cleanupVisibleIds.length || cleanupLoading || cleanupEnriching}
           >
             {cleanupAllVisibleSelected ? "Desmarcar filtradas" : "Selecionar filtradas"}
           </button>
-          <button type="button" className="btn-ghost" onClick={clearCleanupSelection} disabled={!cleanupSelectedCount}>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={clearCleanupSelection}
+            disabled={!cleanupSelectedCount || cleanupEnriching}
+          >
             Limpar seleção
           </button>
           <button
             type="button"
             className="btn-ghost"
             onClick={() => handleArchiveSelectedCleanup()}
-            disabled={!cleanupSelectedCount || cleanupArchiving || cleanupDeleting}
+            disabled={!cleanupSelectedCount || cleanupArchiving || cleanupDeleting || cleanupEnriching}
           >
             {cleanupArchiving ? "Arquivando..." : "Arquivar selecionadas"}
           </button>
@@ -3437,7 +3581,7 @@ export default function SettingsModule() {
             type="button"
             className="btn-ghost"
             onClick={() => handleDeleteSelectedCleanup()}
-            disabled={!cleanupSelectedCount || cleanupDeleting || cleanupArchiving}
+            disabled={!cleanupSelectedCount || cleanupDeleting || cleanupArchiving || cleanupEnriching}
           >
             {cleanupDeleting ? "Excluindo..." : "Excluir selecionadas"}
           </button>
@@ -3534,7 +3678,7 @@ export default function SettingsModule() {
                           type="button"
                           className="btn-ghost btn-table-action"
                           onClick={() => handleArchiveCleanupRow(row)}
-                          disabled={cleanupArchiving || cleanupDeleting}
+                          disabled={cleanupArchiving || cleanupDeleting || cleanupEnriching}
                         >
                           Arquivar
                         </button>
@@ -3542,7 +3686,7 @@ export default function SettingsModule() {
                           type="button"
                           className="btn-ghost btn-table-action"
                           onClick={() => handleDeleteCleanupRow(row)}
-                          disabled={!canDelete || cleanupDeleting || cleanupArchiving}
+                          disabled={!canDelete || cleanupDeleting || cleanupArchiving || cleanupEnriching}
                         >
                           Excluir
                         </button>
