@@ -89,6 +89,7 @@ const CLEANUP_ISSUE_FILTER_OPTIONS = [
 ];
 const CLEANUP_STATE_SCOPE_OPTIONS = [
   { value: "SC_PR_RS", label: "SC + PR + RS (recomendado)" },
+  { value: "ALL_EXCEPT_SC_PR_RS", label: "Todos os estados exceto SC + PR + RS" },
   { value: "SC", label: "Apenas SC" },
   { value: "PR", label: "Apenas PR" },
   { value: "RS", label: "Apenas RS" },
@@ -1401,10 +1402,16 @@ export default function SettingsModule() {
     setCleanupError("");
     setCleanupSuccess("");
     try {
-      const allowedStates = cleanupStateScope === "ALL" ? [] : resolveSouthStates(cleanupStateScope);
+      const southStatesSet = new Set(RD_SYNC_SOUTH_STATES);
+      const useSouthScopeFilter = cleanupStateScope !== "ALL" && cleanupStateScope !== "ALL_EXCEPT_SC_PR_RS";
+      const allowedStates = useSouthScopeFilter ? resolveSouthStates(cleanupStateScope) : [];
       const scopeLabel =
         CLEANUP_STATE_SCOPE_OPTIONS.find((item) => item.value === cleanupStateScope)?.label || "Estados selecionados";
-      const rows = await listCompanyCleanupData({ allowedStates });
+      const sourceRows = await listCompanyCleanupData({ allowedStates });
+      const rows =
+        cleanupStateScope === "ALL_EXCEPT_SC_PR_RS"
+          ? sourceRows.filter((row) => !southStatesSet.has(String(row?.state || "").trim().toUpperCase()))
+          : sourceRows;
       setCleanupRows(rows);
       setCleanupSelectedIds({});
       setCleanupRunningAt(new Date().toISOString());
