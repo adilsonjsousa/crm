@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isSupabaseConfigured } from "./lib/supabase";
-import { deleteCompany, listSystemUsers, listUpcomingBirthdays, searchGlobalRecords } from "./lib/revenueApi";
+import {
+  deleteCompany,
+  listSystemUsers,
+  listUpcomingBirthdays,
+  listUserMentionNotifications,
+  markUserMentionNotificationRead,
+  searchGlobalRecords
+} from "./lib/revenueApi";
 import { toWhatsAppBrazilNumber } from "./lib/phone";
 import { confirmStrongDelete } from "./lib/confirmDelete";
 import { hasModulePermission, resolveSearchResultModule } from "./lib/accessControl";
@@ -147,6 +154,7 @@ function buildUserInitials(user) {
 
 export default function App() {
   const searchInputRef = useRef(null);
+  const mentionsPanelRef = useRef(null);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [companiesFocusTarget, setCompaniesFocusTarget] = useState("company");
   const [companiesFocusRequest, setCompaniesFocusRequest] = useState(0);
@@ -182,6 +190,11 @@ export default function App() {
   const [appUsersLoading, setAppUsersLoading] = useState(false);
   const [appUsersError, setAppUsersError] = useState("");
   const [appViewerUserId, setAppViewerUserId] = useState("");
+  const [mentionNotifications, setMentionNotifications] = useState([]);
+  const [mentionsLoading, setMentionsLoading] = useState(false);
+  const [mentionsError, setMentionsError] = useState("");
+  const [mentionsOpen, setMentionsOpen] = useState(false);
+  const [markingMentionId, setMarkingMentionId] = useState("");
   const [birthdayAlerts, setBirthdayAlerts] = useState([]);
   const [birthdayError, setBirthdayError] = useState("");
   const [theme, setTheme] = useState(() => {
@@ -297,6 +310,61 @@ export default function App() {
     () => appUsers.find((item) => String(item?.user_id || "").trim() === String(appViewerUserId || "").trim()) || null,
     [appUsers, appViewerUserId]
   );
+  const mentionsUnreadCount = useMemo(
+    () => mentionNotifications.filter((item) => !item.is_read).length,
+    [mentionNotifications]
+  );
+
+  useEffect(() => {
+    if (!mentionsOpen) return;
+    function handleDocumentClick(event) {
+      if (!mentionsPanelRef.current) return;
+      if (mentionsPanelRef.current.contains(event.target)) return;
+      setMentionsOpen(false);
+    }
+    document.addEventListener("mousedown", handleDocumentClick);
+    return () => document.removeEventListener("mousedown", handleDocumentClick);
+  }, [mentionsOpen]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadMentionNotifications(showLoading) {
+      const userId = String(appViewerUserId || "").trim();
+      if (!isSupabaseConfigured || !userId) {
+        if (active) {
+          setMentionNotifications([]);
+          setMentionsError("");
+          setMentionsLoading(false);
+        }
+        return;
+      }
+
+      if (showLoading) setMentionsLoading(true);
+      try {
+        const rows = await listUserMentionNotifications(userId, { limit: 40 });
+        if (!active) return;
+        setMentionNotifications(rows);
+        setMentionsError("");
+      } catch (err) {
+        if (!active) return;
+        setMentionNotifications([]);
+        setMentionsError(err.message || "Falha ao carregar menções.");
+      } finally {
+        if (active && showLoading) setMentionsLoading(false);
+      }
+    }
+
+    loadMentionNotifications(true);
+    const timer = window.setInterval(() => {
+      loadMentionNotifications(false);
+    }, 30 * 1000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [appViewerUserId]);
 
   useEffect(() => {
     if (!appUsers.length) return;
@@ -452,10 +520,62 @@ export default function App() {
     }).format(new Date(`${dateValue}T00:00:00`));
   }
 
+  function formatMentionDateTime(value) {
+    if (!value) return "-";
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    }).format(new Date(value));
+  }
+
   function closeSearchFocus() {
     setSearchFocused(false);
     setSearchKeyboardNavigating(false);
     setSearchKeyboardIndex(-1);
+  }
+
+  async function handleMarkMentionAsRead(item) {
+    const notificationId = String(item?.id || "").trim();
+    const userId = String(appViewerUserId || "").trim();
+    if (!notificationId || !userId || item?.is_read) return;
+
+    setMarkingMentionId(notificationId);
+    try {
+      const result = await markUserMentionNotificationRead(notificationId, userId);
+      const readAt = String(result?.read_at || "").trim() || new Date().toISOString();
+      setMentionNotifications((previous) =>
+        previous.map((entry) =>
+          String(entry?.id || "").trim() === notificationId
+            ? {
+                ...entry,
+                read_at: readAt,
+                is_read: true
+              }
+            : entry
+        )
+      );
+      setMentionsError("");
+    } catch (err) {
+      setMentionsError(err.message || "Falha ao marcar menção como lida.");
+    } finally {
+      setMarkingMentionId("");
+    }
+  }
+
+  async function handleOpenMention(item) {
+    if (!item) return;
+    await handleMarkMentionAsRead(item);
+    const companyId = String(item.company_id || "").trim();
+    if (!companyId) return;
+    setSearchCustomerHistoryModal({
+      open: true,
+      companyId,
+      companyName: item.company_name || "Cliente"
+    });
+    setMentionsOpen(false);
   }
 
   function focusGlobalSearchInput({ selectAll = true } = {}) {
@@ -1095,6 +1215,58 @@ export default function App() {
                 + Nova Empresa
               </button>
             ) : null}
+            <div className="crm-mentions" ref={mentionsPanelRef}>
+              <button
+                type="button"
+                className="crm-mentions-btn"
+                onClick={() => setMentionsOpen((previous) => !previous)}
+                aria-label="Menções internas"
+                title="Menções internas"
+              >
+                <span className="crm-mentions-icon">🔔</span>
+                <span>Mensagens</span>
+                <strong>{mentionsUnreadCount}</strong>
+              </button>
+              {mentionsOpen ? (
+                <section className="crm-mentions-panel">
+                  <div className="crm-mentions-header">
+                    <strong>Menções para {appViewerUser?.full_name || "usuário atual"}</strong>
+                    <span>{mentionsUnreadCount} não lida(s)</span>
+                  </div>
+                  {mentionsLoading ? <p className="muted">Carregando menções...</p> : null}
+                  {!mentionsLoading && mentionsError ? <p className="error-text">{mentionsError}</p> : null}
+                  {!mentionsLoading && !mentionsError && !mentionNotifications.length ? (
+                    <p className="muted">Nenhuma menção recente.</p>
+                  ) : null}
+                  {!mentionsLoading && !mentionsError && mentionNotifications.length ? (
+                    <ul className="crm-mentions-list">
+                      {mentionNotifications.map((item) => (
+                        <li key={item.id} className={item.is_read ? "crm-mentions-item" : "crm-mentions-item is-unread"}>
+                          <button type="button" className="crm-mentions-open-btn" onClick={() => handleOpenMention(item)}>
+                            <strong>{item.company_name || "Cliente"}</strong>
+                            <span>{item.subject || "Mensagem interna"}</span>
+                            <span>{item.created_by_user_name ? `De: ${item.created_by_user_name}` : "Equipe interna"}</span>
+                            <small>{formatMentionDateTime(item.happened_at)}</small>
+                          </button>
+                          {!item.is_read ? (
+                            <button
+                              type="button"
+                              className="btn-ghost btn-table-action"
+                              onClick={() => handleMarkMentionAsRead(item)}
+                              disabled={markingMentionId === item.id}
+                            >
+                              {markingMentionId === item.id ? "..." : "Marcar lida"}
+                            </button>
+                          ) : (
+                            <span className="crm-mentions-read">Lida</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </section>
+              ) : null}
+            </div>
             {appUsers.length ? (
               <label className="crm-viewer-select">
                 <span>Usuário ativo</span>

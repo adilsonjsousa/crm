@@ -390,6 +390,120 @@ body {
   font-weight: 700;
 }
 
+.crm-mentions {
+  position: relative;
+}
+
+.crm-mentions-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-surface-muted);
+  color: var(--text-main);
+  font-weight: 700;
+}
+
+.crm-mentions-btn strong {
+  display: inline-flex;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+  color: #fff;
+  font-size: 0.7rem;
+}
+
+.crm-mentions-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(420px, 92vw);
+  max-height: 62vh;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-panel);
+  z-index: 120;
+  display: grid;
+  gap: 8px;
+}
+
+.crm-mentions-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.crm-mentions-header strong {
+  font-size: 0.82rem;
+  color: var(--text-main);
+}
+
+.crm-mentions-header span {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.crm-mentions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.crm-mentions-item {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  background: var(--bg-surface-muted);
+}
+
+.crm-mentions-item.is-unread {
+  border-color: var(--accent-1);
+  background: var(--accent-soft);
+}
+
+.crm-mentions-open-btn {
+  border: 0;
+  padding: 0;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.crm-mentions-open-btn strong {
+  font-size: 0.84rem;
+  color: var(--text-main);
+}
+
+.crm-mentions-open-btn span {
+  font-size: 0.77rem;
+  color: var(--text-sub);
+}
+
+.crm-mentions-open-btn small {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.crm-mentions-read {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
 .crm-content {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-xl);

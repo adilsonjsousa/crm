@@ -2300,6 +2300,94 @@ export async function createCompanyInternalMessage(payload) {
   };
 }
 
+export async function listUserMentionNotifications(userId, { limit = 30, unreadOnly = false } = {}) {
+  const supabase = ensureSupabase();
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId) return [];
+
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(120, Math.floor(limit))) : 30;
+  let query = supabase
+    .from("event_log")
+    .select("id,event_name,payload,happened_at,actor_user_id")
+    .eq("entity_type", "user")
+    .eq("entity_id", normalizedUserId)
+    .eq("event_name", "company_internal_message_mention")
+    .order("happened_at", { ascending: false })
+    .limit(safeLimit);
+
+  const { data, error } = await query;
+  if (error) throw new Error(normalizeError(error, "Falha ao carregar notificações de menções."));
+
+  const rows = Array.isArray(data) ? data : [];
+  return rows
+    .map((row) => {
+      const payload = asObject(row?.payload);
+      const readAt = String(payload.read_at || "").trim();
+      return {
+        id: String(row?.id || "").trim(),
+        happened_at: row?.happened_at || null,
+        actor_user_id: String(row?.actor_user_id || "").trim() || null,
+        company_id: String(payload.company_id || "").trim() || null,
+        company_name: String(payload.company_name || "").trim() || null,
+        linked_opportunity_id: String(payload.linked_opportunity_id || "").trim() || null,
+        linked_opportunity_title: String(payload.linked_opportunity_title || "").trim() || null,
+        subject: String(payload.subject || "").trim() || null,
+        content: String(payload.content || "").trim() || "",
+        created_by_user_id: String(payload.created_by_user_id || "").trim() || null,
+        created_by_user_name: String(payload.created_by_user_name || "").trim() || null,
+        read_at: readAt || null,
+        is_read: Boolean(readAt)
+      };
+    })
+    .filter((item) => (unreadOnly ? !item.is_read : true));
+}
+
+export async function markUserMentionNotificationRead(notificationId, userId) {
+  const supabase = ensureSupabase();
+  const normalizedNotificationId = String(notificationId || "").trim();
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedNotificationId || !normalizedUserId) return null;
+
+  const { data: current, error: currentError } = await supabase
+    .from("event_log")
+    .select("id,payload")
+    .eq("id", normalizedNotificationId)
+    .eq("entity_type", "user")
+    .eq("entity_id", normalizedUserId)
+    .single();
+  if (currentError) throw new Error(normalizeError(currentError, "Falha ao localizar notificação para atualização."));
+
+  const payload = asObject(current?.payload);
+  if (String(payload.read_at || "").trim()) {
+    return {
+      id: current?.id || normalizedNotificationId,
+      read_at: String(payload.read_at || "").trim()
+    };
+  }
+
+  const nextPayload = {
+    ...payload,
+    read_at: new Date().toISOString(),
+    read_by_user_id: normalizedUserId
+  };
+
+  const { data: updated, error: updateError } = await supabase
+    .from("event_log")
+    .update({ payload: nextPayload })
+    .eq("id", normalizedNotificationId)
+    .eq("entity_type", "user")
+    .eq("entity_id", normalizedUserId)
+    .select("id,payload")
+    .single();
+  if (updateError) throw new Error(normalizeError(updateError, "Falha ao marcar notificação como lida."));
+
+  const updatedPayload = asObject(updated?.payload);
+  return {
+    id: updated?.id || normalizedNotificationId,
+    read_at: String(updatedPayload.read_at || "").trim() || null
+  };
+}
+
 export async function listOrders() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
