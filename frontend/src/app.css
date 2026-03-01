@@ -1167,6 +1167,17 @@ a.btn-table-action {
   align-items: end;
 }
 
+.reports-products-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.3fr) repeat(3, minmax(160px, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.reports-products-kpi-grid {
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+}
+
 .reports-filter-field {
   display: grid;
   gap: 4px;
@@ -2619,6 +2630,10 @@ tbody tr:hover {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
   }
 
+  .reports-products-toolbar {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
   .reports-panel .reports-funnel-kpi-grid {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
@@ -2633,6 +2648,10 @@ tbody tr:hover {
   }
 
   .reports-panel .reports-kpi-grid {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+
+  .reports-products-kpi-grid {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
 
@@ -2758,6 +2777,7 @@ tbody tr:hover {
   .reports-panel .reports-kpi-grid,
   .reports-toolbar,
   .reports-funnel-toolbar,
+  .reports-products-toolbar,
   .reports-panel .reports-funnel-kpi-grid {
     grid-template-columns: 1fr;
   }

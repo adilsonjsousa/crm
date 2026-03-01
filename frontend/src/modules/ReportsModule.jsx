@@ -5,6 +5,7 @@ import {
   listSystemUsers
 } from "../lib/revenueApi";
 import { PIPELINE_STAGES, stageLabel } from "../lib/pipelineStages";
+import { parseOpportunityItems } from "../lib/productCatalog";
 
 const ORIGIN_LABELS = {
   all: "Todas as origens",
@@ -39,9 +40,45 @@ const STAGE_COLOR_BY_KEY = {
   perdido: "#dc2626"
 };
 
+const OPPORTUNITY_TYPE_LABELS = {
+  equipment: "Equipamentos",
+  supplies: "Suprimentos",
+  service: "Serviços",
+  unknown: "Não definido"
+};
+
 function asObject(value) {
   if (value && typeof value === "object" && !Array.isArray(value)) return value;
   return {};
+}
+
+function normalizeOpportunityType(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "equipment" || normalized === "supplies" || normalized === "service") return normalized;
+  return "unknown";
+}
+
+function opportunityTypeLabel(value) {
+  return OPPORTUNITY_TYPE_LABELS[normalizeOpportunityType(value)] || OPPORTUNITY_TYPE_LABELS.unknown;
+}
+
+function normalizeOpportunityProductLineItems(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const safe = asObject(item);
+      const productName = String(safe.title_product || "").trim();
+      const subcategory = String(safe.title_subcategory || "").trim();
+      if (!productName && !subcategory) return null;
+      const estimated = Number(safe.estimated_value || 0);
+      return {
+        opportunity_type: normalizeOpportunityType(safe.opportunity_type),
+        title_subcategory: subcategory || "Sem sub-categoria",
+        title_product: productName || "Sem produto definido",
+        estimated_value: Number.isFinite(estimated) && estimated >= 0 ? estimated : 0
+      };
+    })
+    .filter(Boolean);
 }
 
 function normalizeText(value) {
@@ -384,6 +421,10 @@ export default function ReportsModule() {
   const [funnelMinValue, setFunnelMinValue] = useState("");
   const [funnelMaxValue, setFunnelMaxValue] = useState("");
   const [funnelOnlyOpen, setFunnelOnlyOpen] = useState(false);
+  const [productSearchFilter, setProductSearchFilter] = useState("");
+  const [productStageFilter, setProductStageFilter] = useState("all");
+  const [productTypeFilter, setProductTypeFilter] = useState("all");
+  const [productSubcategoryFilter, setProductSubcategoryFilter] = useState("all");
 
   async function loadCompaniesReport() {
     setCompaniesLoading(true);
@@ -535,6 +576,7 @@ export default function ReportsModule() {
       const expectedCloseDelayDays = expectedCloseDate && expectedCloseDate < todayYmd()
         ? diffDays(expectedCloseDate, todayYmd()) || 0
         : 0;
+      const normalizedLineItems = normalizeOpportunityProductLineItems(safeOpportunity.line_items);
 
       return {
         ...safeOpportunity,
@@ -552,6 +594,7 @@ export default function ReportsModule() {
         created_at: safeOpportunity.created_at,
         updated_at: safeOpportunity.updated_at,
         title: String(safeOpportunity.title || "").trim() || "Sem título",
+        line_items: normalizedLineItems,
         company_trade_name: String(company.trade_name || "").trim() || "Sem empresa",
         company_segment: String(company.segmento || "").trim(),
         company_city: resolveCompanyCity(company),
@@ -603,7 +646,7 @@ export default function ReportsModule() {
     setFunnelSegmentFilters((previous) => previous.filter((segment) => funnelSegmentOptions.includes(segment)));
   }, [funnelSegmentOptions]);
 
-  const filteredFunnelRows = useMemo(() => {
+  const baseFilteredFunnelRows = useMemo(() => {
     const startMs = toDateMs(funnelStartDate, false);
     const endMs = toDateMs(funnelEndDate, true);
     const minValue = parseMoneyFilter(funnelMinValue);
@@ -624,7 +667,6 @@ export default function ReportsModule() {
           return false;
         }
       }
-      if (funnelStageFilter !== "all" && row.stage !== funnelStageFilter) return false;
       if (funnelSegmentFilters.length && !funnelSegmentFilters.includes(row.company_segment)) return false;
       if (funnelOriginFilter !== "all" && row.origin_key !== funnelOriginFilter) return false;
       if (!matchesCityUfFilter({ city: row.company_city, state: row.company_state }, funnelCityFilterParsed)) return false;
@@ -640,13 +682,212 @@ export default function ReportsModule() {
     funnelEndDate,
     funnelOnlyOpen,
     funnelOwnerFilter,
-    funnelStageFilter,
     funnelSegmentFilters,
     funnelOriginFilter,
     funnelCityFilterParsed,
     funnelMinValue,
     funnelMaxValue
   ]);
+
+  const filteredFunnelRows = useMemo(
+    () =>
+      baseFilteredFunnelRows.filter((row) => {
+        if (funnelStageFilter !== "all" && row.stage !== funnelStageFilter) return false;
+        return true;
+      }),
+    [baseFilteredFunnelRows, funnelStageFilter]
+  );
+
+  const productRowsBase = useMemo(() => {
+    const rows = baseFilteredFunnelRows.filter((row) => {
+      if (productStageFilter !== "all" && row.stage !== productStageFilter) return false;
+      return true;
+    });
+
+    return rows.map((row) => {
+      const parsedLineItems = normalizeOpportunityProductLineItems(row.line_items);
+      const fallbackItems = parsedLineItems.length
+        ? parsedLineItems
+        : parseOpportunityItems(row.title).map((item) => ({
+            opportunity_type: normalizeOpportunityType(item.opportunity_type),
+            title_subcategory: String(item.title_subcategory || "").trim() || "Sem sub-categoria",
+            title_product: String(item.title_product || "").trim() || "Sem produto definido",
+            estimated_value: 0
+          }));
+
+      const normalizedItems = fallbackItems.length
+        ? fallbackItems
+        : [
+            {
+              opportunity_type: "unknown",
+              title_subcategory: "Sem sub-categoria",
+              title_product: "Sem produto definido",
+              estimated_value: 0
+            }
+          ];
+
+      const totalExplicit = normalizedItems.reduce(
+        (sum, item) => sum + (Number(item.estimated_value || 0) > 0 ? Number(item.estimated_value || 0) : 0),
+        0
+      );
+      const missingValueItems = normalizedItems.filter((item) => Number(item.estimated_value || 0) <= 0);
+      const estimatedOpportunityValue = Number(row.estimated_value || 0);
+      const remainingValue = Math.max(0, estimatedOpportunityValue - totalExplicit);
+      const distributeOnlyMissing = totalExplicit > 0 && missingValueItems.length > 0;
+      const equalShareValue =
+        estimatedOpportunityValue > 0 && normalizedItems.length
+          ? estimatedOpportunityValue / normalizedItems.length
+          : 0;
+      const missingShareValue = distributeOnlyMissing ? remainingValue / missingValueItems.length : 0;
+
+      const itemsWithValue = normalizedItems.map((item) => {
+        const explicitValue = Number(item.estimated_value || 0);
+        if (explicitValue > 0) {
+          return { ...item, item_value: explicitValue };
+        }
+        if (distributeOnlyMissing) {
+          return { ...item, item_value: missingShareValue };
+        }
+        return { ...item, item_value: equalShareValue };
+      });
+
+      return {
+        ...row,
+        report_items: itemsWithValue
+      };
+    });
+  }, [baseFilteredFunnelRows, productStageFilter]);
+
+  const productSubcategoryOptions = useMemo(() => {
+    const set = new Set();
+    for (const row of productRowsBase) {
+      for (const item of row.report_items || []) {
+        if (productTypeFilter !== "all" && item.opportunity_type !== productTypeFilter) continue;
+        const subcategory = String(item.title_subcategory || "").trim();
+        if (subcategory) set.add(subcategory);
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [productRowsBase, productTypeFilter]);
+
+  useEffect(() => {
+    if (productSubcategoryFilter === "all") return;
+    if (productSubcategoryOptions.includes(productSubcategoryFilter)) return;
+    setProductSubcategoryFilter("all");
+  }, [productSubcategoryFilter, productSubcategoryOptions]);
+
+  const pipelineByProductRows = useMemo(() => {
+    const grouped = new Map();
+    const normalizedSearch = normalizeText(productSearchFilter);
+
+    for (const row of productRowsBase) {
+      for (const item of row.report_items || []) {
+        const normalizedType = normalizeOpportunityType(item.opportunity_type);
+        const subcategory = String(item.title_subcategory || "").trim() || "Sem sub-categoria";
+        const productName = String(item.title_product || "").trim() || "Sem produto definido";
+
+        if (productTypeFilter !== "all" && normalizedType !== productTypeFilter) continue;
+        if (productSubcategoryFilter !== "all" && subcategory !== productSubcategoryFilter) continue;
+
+        if (normalizedSearch) {
+          const haystack = normalizeText(
+            `${opportunityTypeLabel(normalizedType)} ${subcategory} ${productName} ${row.company_trade_name}`
+          );
+          if (!haystack.includes(normalizedSearch)) continue;
+        }
+
+        const key = `${normalizedType}::${normalizeText(subcategory)}::${normalizeText(productName)}`;
+        if (!grouped.has(key)) {
+          const stageSets = PIPELINE_STAGES.reduce((acc, stage) => {
+            acc[stage.value] = new Set();
+            return acc;
+          }, {});
+          grouped.set(key, {
+            key,
+            opportunity_type: normalizedType,
+            opportunity_type_label: opportunityTypeLabel(normalizedType),
+            title_subcategory: subcategory,
+            title_product: productName,
+            total_value: 0,
+            weighted_value: 0,
+            opportunity_ids: new Set(),
+            stage_sets: stageSets
+          });
+        }
+
+        const bucket = grouped.get(key);
+        const itemValue = Number(item.item_value || 0);
+        const probability = Number.isFinite(Number(row.close_probability)) ? Number(row.close_probability) : 0;
+
+        bucket.total_value += itemValue;
+        bucket.weighted_value += itemValue * (probability / 100);
+        bucket.opportunity_ids.add(row.id);
+        if (bucket.stage_sets[row.stage]) {
+          bucket.stage_sets[row.stage].add(row.id);
+        }
+      }
+    }
+
+    return Array.from(grouped.values())
+      .map((row) => {
+        const stageCounts = PIPELINE_STAGES.reduce((acc, stage) => {
+          acc[stage.value] = row.stage_sets[stage.value]?.size || 0;
+          return acc;
+        }, {});
+        return {
+          key: row.key,
+          opportunity_type: row.opportunity_type,
+          opportunity_type_label: row.opportunity_type_label,
+          title_subcategory: row.title_subcategory,
+          title_product: row.title_product,
+          opportunities_count: row.opportunity_ids.size,
+          total_value: row.total_value,
+          weighted_value: row.weighted_value,
+          stage_counts: stageCounts
+        };
+      })
+      .sort((a, b) => {
+        if (b.total_value !== a.total_value) return b.total_value - a.total_value;
+        if (b.opportunities_count !== a.opportunities_count) return b.opportunities_count - a.opportunities_count;
+        return a.title_product.localeCompare(b.title_product, "pt-BR");
+      });
+  }, [productRowsBase, productSearchFilter, productSubcategoryFilter, productTypeFilter]);
+
+  const pipelineByProductKpis = useMemo(() => {
+    const totals = {
+      products_count: pipelineByProductRows.length,
+      opportunities_count: 0,
+      total_value: 0,
+      weighted_value: 0
+    };
+    const normalizedProductSearch = normalizeText(productSearchFilter);
+    const opportunityIds = new Set();
+
+    for (const row of pipelineByProductRows) {
+      totals.total_value += Number(row.total_value || 0);
+      totals.weighted_value += Number(row.weighted_value || 0);
+    }
+
+    for (const row of productRowsBase) {
+      for (const item of row.report_items || []) {
+        const normalizedType = normalizeOpportunityType(item.opportunity_type);
+        const subcategory = String(item.title_subcategory || "").trim() || "Sem sub-categoria";
+        const productName = String(item.title_product || "").trim() || "Sem produto definido";
+        if (productTypeFilter !== "all" && normalizedType !== productTypeFilter) continue;
+        if (productSubcategoryFilter !== "all" && subcategory !== productSubcategoryFilter) continue;
+        if (normalizedProductSearch) {
+          const haystack = normalizeText(
+            `${opportunityTypeLabel(normalizedType)} ${subcategory} ${productName} ${row.company_trade_name}`
+          );
+          if (!haystack.includes(normalizedProductSearch)) continue;
+        }
+        opportunityIds.add(row.id);
+      }
+    }
+
+    totals.opportunities_count = opportunityIds.size;
+    return totals;
+  }, [pipelineByProductRows, productRowsBase, productTypeFilter, productSubcategoryFilter, productSearchFilter]);
 
   const funnelKpis = useMemo(() => {
     const total = filteredFunnelRows.length;
@@ -1031,6 +1272,21 @@ export default function ReportsModule() {
       "Atualizada em": formatDate(row.updated_at)
     }));
 
+    const productRows = pipelineByProductRows.map((row) => ({
+      Categoria: row.opportunity_type_label,
+      "Sub-categoria": row.title_subcategory,
+      Produto: row.title_product,
+      Oportunidades: row.opportunities_count,
+      "Valor total": row.total_value,
+      "Forecast ponderado": row.weighted_value,
+      LEAD: Number(row.stage_counts.lead || 0),
+      QUALIFICAÇÃO: Number(row.stage_counts.qualificacao || 0),
+      PROPOSTA: Number(row.stage_counts.proposta || 0),
+      "FOLLOW-UP": Number(row.stage_counts.follow_up || 0),
+      GANHO: Number(row.stage_counts.ganho || 0),
+      PERDIDO: Number(row.stage_counts.perdido || 0)
+    }));
+
     const XLSX = await import("xlsx");
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), "Resumo");
@@ -1040,6 +1296,7 @@ export default function ReportsModule() {
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(segmentRows), "Por segmento");
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(lossRows), "Perdas por etapa");
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(riskSheetRows), "Riscos");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(productRows), "Pipeline por produto");
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(opportunitiesRows), "Oportunidades");
 
     XLSX.writeFile(workbook, `relatorio_funil_analitico_${todayYmd()}.xlsx`);
@@ -1482,6 +1739,113 @@ export default function ReportsModule() {
               </tbody>
             </table>
           </div>
+        </div>
+
+        <h3 className="top-gap">Pipeline por produto</h3>
+        <div className="reports-products-toolbar">
+          <label className="reports-filter-field">
+            <span>Buscar produto/sub-categoria</span>
+            <input
+              value={productSearchFilter}
+              onChange={(event) => setProductSearchFilter(event.target.value)}
+              placeholder="Ex.: Canon imagePRESS V700"
+            />
+          </label>
+          <label className="reports-filter-field">
+            <span>Etapa da oportunidade</span>
+            <select value={productStageFilter} onChange={(event) => setProductStageFilter(event.target.value)}>
+              <option value="all">Todas as etapas</option>
+              {PIPELINE_STAGES.map((stage) => (
+                <option key={`product-stage-${stage.value}`} value={stage.value}>
+                  {stage.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="reports-filter-field">
+            <span>Categoria</span>
+            <select value={productTypeFilter} onChange={(event) => setProductTypeFilter(event.target.value)}>
+              <option value="all">Todas</option>
+              <option value="equipment">Equipamentos</option>
+              <option value="supplies">Suprimentos</option>
+              <option value="service">Serviços</option>
+              <option value="unknown">Não definido</option>
+            </select>
+          </label>
+          <label className="reports-filter-field">
+            <span>Sub-categoria</span>
+            <select value={productSubcategoryFilter} onChange={(event) => setProductSubcategoryFilter(event.target.value)}>
+              <option value="all">Todas</option>
+              {productSubcategoryOptions.map((subcategory) => (
+                <option key={`product-sub-${subcategory}`} value={subcategory}>
+                  {subcategory}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="kpi-grid reports-kpi-grid reports-products-kpi-grid top-gap">
+          <div className="kpi-card">
+            <span className="kpi-label">Produtos distintos</span>
+            <strong className="kpi-value">{pipelineByProductKpis.products_count}</strong>
+          </div>
+          <div className="kpi-card">
+            <span className="kpi-label">Oportunidades relacionadas</span>
+            <strong className="kpi-value">{pipelineByProductKpis.opportunities_count}</strong>
+          </div>
+          <div className="kpi-card">
+            <span className="kpi-label">Valor total (itens)</span>
+            <strong className="kpi-value">{formatCurrency(pipelineByProductKpis.total_value)}</strong>
+          </div>
+          <div className="kpi-card">
+            <span className="kpi-label">Forecast ponderado (itens)</span>
+            <strong className="kpi-value">{formatCurrency(pipelineByProductKpis.weighted_value)}</strong>
+          </div>
+        </div>
+
+        <div className="table-wrap reports-table-wrap top-gap">
+          <table>
+            <thead>
+              <tr>
+                <th>Categoria</th>
+                <th>Sub-categoria</th>
+                <th>Produto</th>
+                <th>Oportunidades</th>
+                <th>Valor total</th>
+                <th>Forecast</th>
+                <th>LEAD</th>
+                <th>QUALIFICAÇÃO</th>
+                <th>PROPOSTA</th>
+                <th>FOLLOW-UP</th>
+                <th>GANHO</th>
+                <th>PERDIDO</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!pipelineByProductRows.length ? (
+                <tr>
+                  <td colSpan={12}>Nenhum produto encontrado com os filtros atuais.</td>
+                </tr>
+              ) : null}
+              {pipelineByProductRows.map((row) => (
+                <tr key={`product-pipeline-${row.key}`}>
+                  <td>{row.opportunity_type_label}</td>
+                  <td>{row.title_subcategory}</td>
+                  <td>{row.title_product}</td>
+                  <td>{row.opportunities_count}</td>
+                  <td>{formatCurrency(row.total_value)}</td>
+                  <td>{formatCurrency(row.weighted_value)}</td>
+                  <td>{row.stage_counts.lead || 0}</td>
+                  <td>{row.stage_counts.qualificacao || 0}</td>
+                  <td>{row.stage_counts.proposta || 0}</td>
+                  <td>{row.stage_counts.follow_up || 0}</td>
+                  <td>{row.stage_counts.ganho || 0}</td>
+                  <td>{row.stage_counts.perdido || 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
         <h3 className="top-gap">Oportunidades em risco (prioridade de ação)</h3>

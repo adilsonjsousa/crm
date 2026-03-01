@@ -848,7 +848,7 @@ export async function listPipelineAnalyticsForReport() {
     const { data, error } = await supabase
       .from("opportunities")
       .select(
-        "id,company_id,owner_user_id,title,stage,status,estimated_value,close_probability,expected_close_date,created_at,updated_at,companies:company_id(id,trade_name,segmento,city,state,address_full)"
+        "id,company_id,owner_user_id,title,stage,status,estimated_value,close_probability,expected_close_date,line_items,created_at,updated_at,companies:company_id(id,trade_name,segmento,city,state,address_full)"
       )
       .order("created_at", { ascending: false })
       .range(fromOpportunities, fromOpportunities + pageSize - 1);
