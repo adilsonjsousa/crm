@@ -87,6 +87,13 @@ const CLEANUP_ISSUE_FILTER_OPTIONS = [
   { value: "invalid_cnpj", label: "CNPJ inválido/ausente" },
   { value: "missing_city_or_address", label: "Sem cidade/endereço" }
 ];
+const CLEANUP_STATE_SCOPE_OPTIONS = [
+  { value: "SC_PR_RS", label: "SC + PR + RS (recomendado)" },
+  { value: "SC", label: "Apenas SC" },
+  { value: "PR", label: "Apenas PR" },
+  { value: "RS", label: "Apenas RS" },
+  { value: "ALL", label: "Todos os estados" }
+];
 
 const EMPTY_STAGE_FORM = {
   name: "",
@@ -1055,6 +1062,7 @@ export default function SettingsModule() {
   const [cleanupRunningAt, setCleanupRunningAt] = useState("");
   const [cleanupSourceFilter, setCleanupSourceFilter] = useState("all");
   const [cleanupIssueFilter, setCleanupIssueFilter] = useState("all");
+  const [cleanupStateScope, setCleanupStateScope] = useState("SC_PR_RS");
   const [cleanupSearch, setCleanupSearch] = useState("");
   const [cleanupInactiveDays, setCleanupInactiveDays] = useState("180");
   const [cleanupOnlyInactive, setCleanupOnlyInactive] = useState(false);
@@ -1393,7 +1401,10 @@ export default function SettingsModule() {
     setCleanupError("");
     setCleanupSuccess("");
     try {
-      const rows = await listCompanyCleanupData();
+      const allowedStates = cleanupStateScope === "ALL" ? [] : resolveSouthStates(cleanupStateScope);
+      const scopeLabel =
+        CLEANUP_STATE_SCOPE_OPTIONS.find((item) => item.value === cleanupStateScope)?.label || "Estados selecionados";
+      const rows = await listCompanyCleanupData({ allowedStates });
       setCleanupRows(rows);
       setCleanupSelectedIds({});
       setCleanupRunningAt(new Date().toISOString());
@@ -1401,7 +1412,7 @@ export default function SettingsModule() {
       const inconsistent = rows.filter((row) => Boolean(row?.has_inconsistency)).length;
       const safeDelete = rows.filter((row) => cleanupCanSafeDelete(row)).length;
       setCleanupSuccess(
-        `Diagnóstico concluído: ${rows.length} empresa(s), ${inconsistent} com inconsistência e ${safeDelete} apta(s) para exclusão segura.`
+        `Diagnóstico concluído (${scopeLabel}): ${rows.length} empresa(s), ${inconsistent} com inconsistência e ${safeDelete} apta(s) para exclusão segura.`
       );
     } catch (err) {
       setCleanupError(err.message || "Falha ao carregar diagnóstico de limpeza.");
@@ -3327,6 +3338,16 @@ export default function SettingsModule() {
         </div>
 
         <div className="settings-omie-grid top-gap">
+          <label className="settings-field">
+            <span>Estado (UF) para diagnóstico</span>
+            <select value={cleanupStateScope} onChange={(event) => setCleanupStateScope(event.target.value)}>
+              {CLEANUP_STATE_SCOPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="settings-field">
             <span>Origem</span>
             <select value={cleanupSourceFilter} onChange={(event) => setCleanupSourceFilter(event.target.value)}>

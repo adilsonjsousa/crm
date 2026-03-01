@@ -605,8 +605,11 @@ async function fetchAllRowsPaged({ supabase, table, select, pageSize = 1000, que
   return rows;
 }
 
-export async function listCompanyCleanupData() {
+export async function listCompanyCleanupData(options = {}) {
   const supabase = ensureSupabase();
+  const allowedStates = Array.isArray(options?.allowedStates)
+    ? [...new Set(options.allowedStates.map((item) => String(item || "").trim().toUpperCase()).filter((item) => /^[A-Z]{2}$/.test(item)))]
+    : [];
 
   const [
     companies,
@@ -623,7 +626,13 @@ export async function listCompanyCleanupData() {
       select:
         "id,cnpj,trade_name,legal_name,segmento,email,phone,address_full,city,state,created_at,updated_at,lifecycle_stage:company_lifecycle_stages!companies_lifecycle_stage_id_fkey(id,name,stage_order,is_active)",
       pageSize: 500,
-      queryEnhancer: (query) => query.order("created_at", { ascending: false })
+      queryEnhancer: (query) => {
+        let next = query.order("created_at", { ascending: false });
+        if (allowedStates.length) {
+          next = next.in("state", allowedStates);
+        }
+        return next;
+      }
     }),
     fetchAllRowsPaged({
       supabase,
