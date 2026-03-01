@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isSupabaseConfigured } from "./lib/supabase";
-import { listUpcomingBirthdays, searchGlobalRecords } from "./lib/revenueApi";
+import { deleteCompany, listUpcomingBirthdays, searchGlobalRecords } from "./lib/revenueApi";
 import { toWhatsAppBrazilNumber } from "./lib/phone";
+import { confirmStrongDelete } from "./lib/confirmDelete";
 import DashboardModule from "./modules/DashboardModule";
 import CompaniesModule from "./modules/CompaniesModule";
 import PipelineModule from "./modules/PipelineModule";
@@ -126,6 +127,7 @@ export default function App() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [deletingSearchCompanyId, setDeletingSearchCompanyId] = useState("");
   const [searchKeyboardIndex, setSearchKeyboardIndex] = useState(-1);
   const [searchKeyboardNavigating, setSearchKeyboardNavigating] = useState(false);
   const [searchCustomerHistoryModal, setSearchCustomerHistoryModal] = useState({
@@ -414,6 +416,11 @@ export default function App() {
     return Boolean(resolveSearchCompanyContext(item));
   }
 
+  function canQuickDeleteSearchItem(item) {
+    if (item?.entity_type !== "company") return false;
+    return Boolean(String(item?.company_id || "").trim());
+  }
+
   function quickEditLabel(item) {
     if (item?.entity_type === "company") return "Editar empresa";
     if (item?.entity_type === "contact") return "Editar contato";
@@ -468,6 +475,32 @@ export default function App() {
     setPipelinePrefillDraft(companyContext);
     setPipelinePrefillRequest((previous) => previous + 1);
     setActiveTab("pipeline");
+  }
+
+  async function handleQuickDeleteFromSearch(item) {
+    const companyId = String(item?.company_id || "").trim();
+    if (!companyId) {
+      setSearchError("Nao foi possivel identificar a empresa para exclusao.");
+      return;
+    }
+
+    const confirmed = await confirmStrongDelete({
+      entityLabel: "a empresa",
+      itemLabel: item?.company_name || item?.title || "Empresa"
+    });
+    if (!confirmed) return;
+
+    setSearchError("");
+    setDeletingSearchCompanyId(companyId);
+    try {
+      await deleteCompany(companyId);
+      setSearchResults((previous) => previous.filter((entry) => String(entry?.company_id || "") !== companyId));
+      await runGlobalSearch();
+    } catch (err) {
+      setSearchError(err.message || "Falha ao excluir empresa.");
+    } finally {
+      setDeletingSearchCompanyId("");
+    }
   }
 
   function openCustomerHistoryFromSearch(item) {
@@ -965,6 +998,16 @@ export default function App() {
                             Novo Negócio
                           </button>
                         </>
+                      ) : null}
+                      {canQuickDeleteSearchItem(item) ? (
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action search-result-action-btn"
+                          onClick={() => handleQuickDeleteFromSearch(item)}
+                          disabled={deletingSearchCompanyId === String(item?.company_id || "").trim()}
+                        >
+                          {deletingSearchCompanyId === String(item?.company_id || "").trim() ? "Excluindo..." : "Excluir"}
+                        </button>
                       ) : null}
                     </div>
                   </li>
