@@ -4253,6 +4253,8 @@ export default function PipelineModule({
         open={customerHistoryModal.open}
         companyId={customerHistoryModal.companyId}
         companyName={customerHistoryModal.companyName}
+        appUsers={pipelineUsers}
+        appViewerUser={viewerUser}
         onClose={closeCustomerHistoryModal}
       />
     </section>

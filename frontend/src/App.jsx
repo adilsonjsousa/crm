@@ -357,6 +357,8 @@ export default function App() {
           focusTarget={companiesFocusTarget}
           focusRequest={companiesFocusRequest}
           onRequestCreateCompany={handleRequestCreateCompany}
+          appUsers={appUsers}
+          appViewerUser={appViewerUser}
           prefillCompanyDraft={companiesPrefillDraft}
           prefillCompanyRequest={companiesPrefillRequest}
           editCompanyId={companiesEditCompanyId}
@@ -370,6 +372,8 @@ export default function App() {
           focusTarget="contact"
           focusRequest={contactsFocusRequest}
           onRequestCreateCompany={handleRequestCreateCompany}
+          appUsers={appUsers}
+          appViewerUser={appViewerUser}
           editContactId={contactsEditContactId}
           editContactRequest={contactsEditRequest}
           editContactPayload={contactsEditPayload}
@@ -1270,6 +1274,8 @@ export default function App() {
           open={searchCustomerHistoryModal.open}
           companyId={searchCustomerHistoryModal.companyId}
           companyName={searchCustomerHistoryModal.companyName}
+          appUsers={appUsers}
+          appViewerUser={appViewerUser}
           onClose={closeSearchCustomerHistoryModal}
           onRequestEditCompany={handleSearchRequestEditCompany}
         />

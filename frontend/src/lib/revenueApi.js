@@ -1910,7 +1910,7 @@ export async function listCompanyHistory({ companyId = "", eventName = "", limit
 
   let query = supabase
     .from("event_log")
-    .select("id,entity_id,event_name,payload,happened_at")
+    .select("id,entity_id,event_name,payload,happened_at,actor_user_id")
     .eq("entity_type", "company")
     .order("happened_at", { ascending: false })
     .limit(safeLimit);
@@ -2190,6 +2190,114 @@ export async function createCompanyInteraction(payload) {
 
   const { error } = await supabase.from("company_interactions").insert(normalizedPayload);
   if (error) throw new Error(normalizeError(error, "Falha ao registrar interação do cliente."));
+}
+
+function normalizeUuid(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized) ? normalized : "";
+}
+
+function normalizeUuidList(values) {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set();
+  const list = [];
+  for (const value of values) {
+    const normalized = normalizeUuid(value);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    list.push(normalized);
+  }
+  return list;
+}
+
+export async function createCompanyInternalMessage(payload) {
+  const supabase = ensureSupabase();
+  const companyId = normalizeUuid(payload?.company_id);
+  const createdByUserId = normalizeUuid(payload?.created_by_user_id);
+  const linkedOpportunityId = normalizeUuid(payload?.linked_opportunity_id);
+  const content = String(payload?.content || "").trim();
+  const subject = String(payload?.subject || "").trim() || null;
+  const createdByUserName = String(payload?.created_by_user_name || "").trim() || null;
+  const linkedOpportunityTitle = String(payload?.linked_opportunity_title || "").trim() || null;
+  const companyName = String(payload?.company_name || "").trim() || null;
+  const mentionedUserIds = normalizeUuidList(payload?.mentioned_user_ids);
+  const mentionedUserNames = Array.isArray(payload?.mentioned_user_names)
+    ? payload.mentioned_user_names
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .slice(0, 40)
+    : [];
+
+  if (!companyId) {
+    throw new Error("Selecione o cliente para registrar a mensagem interna.");
+  }
+  if (!createdByUserId) {
+    throw new Error("Usuário atual inválido para registrar a mensagem interna.");
+  }
+  if (!content) {
+    throw new Error("Descreva a mensagem interna.");
+  }
+
+  const eventPayload = {
+    subject,
+    content,
+    linked_opportunity_id: linkedOpportunityId || null,
+    linked_opportunity_title: linkedOpportunityTitle || null,
+    mentioned_user_ids: mentionedUserIds,
+    mentioned_user_names: mentionedUserNames,
+    created_by_user_id: createdByUserId,
+    created_by_user_name: createdByUserName,
+    company_name: companyName
+  };
+
+  const rows = [
+    {
+      entity_type: "company",
+      entity_id: companyId,
+      event_name: "company_internal_message",
+      payload: eventPayload,
+      actor_user_id: createdByUserId
+    }
+  ];
+
+  if (linkedOpportunityId) {
+    rows.push({
+      entity_type: "opportunity",
+      entity_id: linkedOpportunityId,
+      event_name: "company_internal_message",
+      payload: {
+        ...eventPayload,
+        company_id: companyId
+      },
+      actor_user_id: createdByUserId
+    });
+  }
+
+  for (const mentionedUserId of mentionedUserIds) {
+    rows.push({
+      entity_type: "user",
+      entity_id: mentionedUserId,
+      event_name: "company_internal_message_mention",
+      payload: {
+        company_id: companyId,
+        company_name: companyName,
+        linked_opportunity_id: linkedOpportunityId || null,
+        linked_opportunity_title: linkedOpportunityTitle || null,
+        subject,
+        content,
+        created_by_user_id: createdByUserId,
+        created_by_user_name: createdByUserName
+      },
+      actor_user_id: createdByUserId
+    });
+  }
+
+  const { error } = await supabase.from("event_log").insert(rows);
+  if (error) throw new Error(normalizeError(error, "Falha ao registrar mensagem interna."));
+
+  return {
+    mentions_count: mentionedUserIds.length
+  };
 }
 
 export async function listOrders() {

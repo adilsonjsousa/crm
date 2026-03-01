@@ -2187,6 +2187,23 @@ tbody tr:hover {
   border-radius: 4px;
 }
 
+.internal-message-mentions {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--bg-surface-soft);
+}
+
+.internal-message-mentions p {
+  margin: 0 0 8px;
+}
+
+.internal-message-mentions-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
 .proposal-model-header {
   display: flex;
   justify-content: space-between;

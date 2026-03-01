@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  createCompanyInternalMessage,
   createCompanyAsset,
   createCompanyAssetPhoto,
   getCompanyById,
@@ -40,6 +41,15 @@ function emptyAssetForm() {
     serial_number: "",
     location_description: "",
     notes: ""
+  };
+}
+
+function emptyInternalMessageForm() {
+  return {
+    linked_opportunity_id: "",
+    subject: "",
+    content: "",
+    mentioned_user_ids: []
   };
 }
 
@@ -140,6 +150,29 @@ function directionLabel(value) {
     outbound: "Saida"
   };
   return map[value] || "-";
+}
+
+function parseInternalMessageEvent(row) {
+  const payload = row?.payload && typeof row.payload === "object" ? row.payload : {};
+  const mentionedUserIds = Array.isArray(payload.mentioned_user_ids)
+    ? payload.mentioned_user_ids.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const mentionedUserNames = Array.isArray(payload.mentioned_user_names)
+    ? payload.mentioned_user_names.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+
+  return {
+    id: String(row?.id || "").trim(),
+    occurred_at: row?.happened_at || row?.created_at || null,
+    subject: String(payload.subject || "").trim() || null,
+    content: String(payload.content || "").trim() || "-",
+    linked_opportunity_id: String(payload.linked_opportunity_id || "").trim() || null,
+    linked_opportunity_title: String(payload.linked_opportunity_title || "").trim() || null,
+    created_by_user_id: String(payload.created_by_user_id || row?.actor_user_id || "").trim() || null,
+    created_by_user_name: String(payload.created_by_user_name || "").trim() || null,
+    mentioned_user_ids: mentionedUserIds,
+    mentioned_user_names: mentionedUserNames
+  };
 }
 
 function orderStatusLabel(value) {
@@ -280,7 +313,15 @@ function computeOmieOrdersSummary(orders = []) {
   };
 }
 
-export default function CustomerHistoryModal({ open, companyId, companyName, onClose, onRequestEditCompany = null }) {
+export default function CustomerHistoryModal({
+  open,
+  companyId,
+  companyName,
+  appUsers = [],
+  appViewerUser = null,
+  onClose,
+  onRequestEditCompany = null
+}) {
   const [selectedTab, setSelectedTab] = useState("overview");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -294,6 +335,8 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
   const [salesOrders, setSalesOrders] = useState([]);
   const [assets, setAssets] = useState([]);
   const [assetForm, setAssetForm] = useState(() => emptyAssetForm());
+  const [internalMessageForm, setInternalMessageForm] = useState(() => emptyInternalMessageForm());
+  const [savingInternalMessage, setSavingInternalMessage] = useState(false);
   const [savingAsset, setSavingAsset] = useState(false);
   const [uploadingAssetId, setUploadingAssetId] = useState("");
   const [assetFeedback, setAssetFeedback] = useState({ type: "", message: "" });
@@ -332,6 +375,7 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     setError("");
     setAssetFeedback({ type: "", message: "" });
     setAssetForm(emptyAssetForm());
+    setInternalMessageForm(emptyInternalMessageForm());
     setOmiePurchasesLoading(false);
     setOmiePurchasesError("");
     setOmiePurchasesFetched(false);
@@ -492,6 +536,30 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
   const openOpportunities = useMemo(
     () => opportunities.filter((item) => item.status === "open").length,
     [opportunities]
+  );
+
+  const mentionableUsers = useMemo(() => {
+    const normalized = Array.isArray(appUsers) ? appUsers : [];
+    const active = normalized.filter((item) => item?.status === "active");
+    return active.length ? active : normalized;
+  }, [appUsers]);
+  const userNameById = useMemo(() => {
+    const map = new Map();
+    for (const item of mentionableUsers) {
+      const userId = String(item?.user_id || "").trim();
+      if (!userId) continue;
+      const name = String(item?.full_name || item?.email || "Usuário").trim();
+      map.set(userId, name || "Usuário");
+    }
+    return map;
+  }, [mentionableUsers]);
+  const internalMessages = useMemo(
+    () =>
+      historyRows
+        .filter((row) => row?.event_name === "company_internal_message")
+        .map((row) => parseInternalMessageEvent(row))
+        .sort((a, b) => new Date(b.occurred_at || 0).getTime() - new Date(a.occurred_at || 0).getTime()),
+    [historyRows]
   );
 
   const latestInteraction = useMemo(() => interactions[0] || null, [interactions]);
@@ -666,6 +734,19 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
           note: payload.meeting_join_url || "-"
         };
       }
+      if (row.event_name === "company_internal_message") {
+        const parsed = parseInternalMessageEvent(row);
+        const authorName = parsed.created_by_user_name || userNameById.get(parsed.created_by_user_id) || "Usuário";
+        const linkedOpportunity = parsed.linked_opportunity_title ? ` · ${parsed.linked_opportunity_title}` : "";
+        return {
+          id: `event-${row.id}`,
+          happened_at: row.happened_at,
+          origin: "mensagem interna",
+          item: parsed.subject || "Mensagem interna",
+          details: `Equipe · ${authorName}${linkedOpportunity}`,
+          note: shortText(parsed.content)
+        };
+      }
       return {
         id: `event-${row.id}`,
         happened_at: row.happened_at,
@@ -706,7 +787,78 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
     return [...eventItems, ...stageItems, ...interactionItems, ...visitItems].sort(
       (a, b) => new Date(b.happened_at).getTime() - new Date(a.happened_at).getTime()
     );
-  }, [historyRows, interactions, opportunityStageRows, visitTasks]);
+  }, [historyRows, interactions, opportunityStageRows, userNameById, visitTasks]);
+
+  function handleToggleMentionUser(userId) {
+    const normalized = String(userId || "").trim();
+    if (!normalized) return;
+    setInternalMessageForm((prev) => {
+      const current = Array.isArray(prev.mentioned_user_ids) ? prev.mentioned_user_ids : [];
+      const exists = current.includes(normalized);
+      const next = exists ? current.filter((item) => item !== normalized) : [...current, normalized];
+      return {
+        ...prev,
+        mentioned_user_ids: next
+      };
+    });
+  }
+
+  async function handleCreateInternalMessage(event) {
+    event.preventDefault();
+    if (!companyId) {
+      setError("Cliente inválido para registrar mensagem interna.");
+      return;
+    }
+
+    const authorUserId = String(appViewerUser?.user_id || "").trim();
+    if (!authorUserId) {
+      setError("Selecione um usuário atual válido para registrar mensagem interna.");
+      return;
+    }
+
+    const content = String(internalMessageForm.content || "").trim();
+    if (!content) {
+      setError("Descreva a mensagem interna da equipe.");
+      return;
+    }
+
+    const linkedOpportunityId = String(internalMessageForm.linked_opportunity_id || "").trim();
+    const linkedOpportunity = opportunities.find((item) => item.id === linkedOpportunityId) || null;
+    const mentionedUserIds = Array.isArray(internalMessageForm.mentioned_user_ids)
+      ? internalMessageForm.mentioned_user_ids.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    const mentionedUserNames = mentionedUserIds.map((userId) => userNameById.get(userId) || "Usuário");
+
+    setSavingInternalMessage(true);
+    setError("");
+    try {
+      await createCompanyInternalMessage({
+        company_id: companyId,
+        company_name: companyProfile?.trade_name || companyName || "",
+        created_by_user_id: authorUserId,
+        created_by_user_name: String(appViewerUser?.full_name || appViewerUser?.email || "").trim() || "Usuário",
+        linked_opportunity_id: linkedOpportunity?.id || null,
+        linked_opportunity_title: linkedOpportunity?.title || null,
+        subject: String(internalMessageForm.subject || "").trim() || null,
+        content,
+        mentioned_user_ids: mentionedUserIds,
+        mentioned_user_names: mentionedUserNames
+      });
+
+      const [nextHistory, nextInteractions] = await Promise.all([
+        listCompanyHistory({ companyId, limit: 220 }),
+        listCompanyInteractions(companyId)
+      ]);
+      setHistoryRows(nextHistory);
+      setInteractions(nextInteractions);
+      setInternalMessageForm(emptyInternalMessageForm());
+      setSelectedTab("interactions");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSavingInternalMessage(false);
+    }
+  }
 
   async function reloadAssets() {
     if (!companyId) return;
@@ -1580,41 +1732,136 @@ export default function CustomerHistoryModal({ open, companyId, companyName, onC
         ) : null}
 
         {!loading && selectedTab === "interactions" ? (
-          <div className="table-wrap top-gap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Data/Hora</th>
-                  <th>Tipo</th>
-                  <th>Direcao</th>
-                  <th>Contato</th>
-                  <th>Canal</th>
-                  <th>Assunto</th>
-                  <th>Resumo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {interactions.map((row) => (
-                  <tr key={row.id}>
-                    <td>{formatDateTime(row.occurred_at || row.created_at)}</td>
-                    <td>{interactionTypeLabel(row.interaction_type)}</td>
-                    <td>{directionLabel(row.direction)}</td>
-                    <td>{row.contacts?.full_name || "-"}</td>
-                    <td>{formatBrazilPhone(row.whatsapp_number || row.phone_number) || "-"}</td>
-                    <td>{row.subject || "-"}</td>
-                    <td>{row.content || "-"}</td>
-                  </tr>
+          <>
+            <h4 className="top-gap">Mensagem interna da equipe</h4>
+            <form className="form-grid" onSubmit={handleCreateInternalMessage}>
+              <select
+                value={internalMessageForm.linked_opportunity_id}
+                onChange={(event) =>
+                  setInternalMessageForm((prev) => ({ ...prev, linked_opportunity_id: event.target.value }))
+                }
+              >
+                <option value="">Sem vinculo com oportunidade</option>
+                {opportunities.map((opportunity) => (
+                  <option key={`customer-modal-internal-opportunity-${opportunity.id}`} value={opportunity.id}>
+                    {opportunity.title} ({stageLabel(opportunity.stage)})
+                  </option>
                 ))}
-                {!interactions.length ? (
+              </select>
+              <input
+                placeholder="Assunto interno (opcional)"
+                value={internalMessageForm.subject}
+                onChange={(event) => setInternalMessageForm((prev) => ({ ...prev, subject: event.target.value }))}
+              />
+              <textarea
+                required
+                placeholder="Mensagem interna sobre cliente/negociacao"
+                value={internalMessageForm.content}
+                onChange={(event) => setInternalMessageForm((prev) => ({ ...prev, content: event.target.value }))}
+              />
+              <div className="internal-message-mentions">
+                <p className="muted">Mencionar usuarios (@)</p>
+                <div className="internal-message-mentions-grid">
+                  {mentionableUsers.map((user) => {
+                    const userId = String(user.user_id || "").trim();
+                    const checked = Array.isArray(internalMessageForm.mentioned_user_ids)
+                      ? internalMessageForm.mentioned_user_ids.includes(userId)
+                      : false;
+                    return (
+                      <label key={`customer-modal-mention-${userId}`} className="checkbox-inline">
+                        <input type="checkbox" checked={checked} onChange={() => handleToggleMentionUser(userId)} />
+                        <span>{user.full_name || user.email}</span>
+                      </label>
+                    );
+                  })}
+                  {!mentionableUsers.length ? <p className="muted">Nenhum usuário disponível para menção.</p> : null}
+                </div>
+              </div>
+              <div className="inline-actions">
+                <button type="submit" className="btn-primary" disabled={savingInternalMessage}>
+                  {savingInternalMessage ? "Salvando..." : "Salvar mensagem interna"}
+                </button>
+              </div>
+            </form>
+
+            <div className="table-wrap top-gap">
+              <h4 className="top-gap">Mensagens internas</h4>
+              <table>
+                <thead>
                   <tr>
-                    <td colSpan={7} className="muted">
-                      Sem interacoes registradas para este cliente.
-                    </td>
+                    <th>Data/Hora</th>
+                    <th>Autor</th>
+                    <th>Oportunidade</th>
+                    <th>Mencoes</th>
+                    <th>Assunto</th>
+                    <th>Mensagem</th>
                   </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {internalMessages.map((row) => {
+                    const authorName = row.created_by_user_name || userNameById.get(row.created_by_user_id) || "Usuário";
+                    const mentionNames = row.mentioned_user_names?.length
+                      ? row.mentioned_user_names
+                      : (row.mentioned_user_ids || []).map((userId) => userNameById.get(userId) || "Usuário");
+                    return (
+                      <tr key={`modal-internal-message-${row.id}`}>
+                        <td>{formatDateTime(row.occurred_at)}</td>
+                        <td>{authorName}</td>
+                        <td>{row.linked_opportunity_title || "-"}</td>
+                        <td>{mentionNames.length ? mentionNames.join(", ") : "-"}</td>
+                        <td>{row.subject || "-"}</td>
+                        <td>{row.content || "-"}</td>
+                      </tr>
+                    );
+                  })}
+                  {!internalMessages.length ? (
+                    <tr>
+                      <td colSpan={6} className="muted">
+                        Sem mensagens internas para este cliente.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="table-wrap top-gap">
+              <h4 className="top-gap">Interações de canais</h4>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Data/Hora</th>
+                    <th>Tipo</th>
+                    <th>Direcao</th>
+                    <th>Contato</th>
+                    <th>Canal</th>
+                    <th>Assunto</th>
+                    <th>Resumo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {interactions.map((row) => (
+                    <tr key={row.id}>
+                      <td>{formatDateTime(row.occurred_at || row.created_at)}</td>
+                      <td>{interactionTypeLabel(row.interaction_type)}</td>
+                      <td>{directionLabel(row.direction)}</td>
+                      <td>{row.contacts?.full_name || "-"}</td>
+                      <td>{formatBrazilPhone(row.whatsapp_number || row.phone_number) || "-"}</td>
+                      <td>{row.subject || "-"}</td>
+                      <td>{row.content || "-"}</td>
+                    </tr>
+                  ))}
+                  {!interactions.length ? (
+                    <tr>
+                      <td colSpan={7} className="muted">
+                        Sem interacoes registradas para este cliente.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </>
         ) : null}
       </article>
     </div>
