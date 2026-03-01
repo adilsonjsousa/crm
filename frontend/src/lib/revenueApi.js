@@ -1164,6 +1164,29 @@ export async function createOpportunity(payload, options = {}) {
     line_items: normalizeOpportunityLineItems(sourcePayload.line_items)
   };
 
+  if (normalizedPayload.company_id) {
+    const { data: companyRow, error: companyError } = await supabase
+      .from("companies")
+      .select("id,trade_name,legal_name,cnpj")
+      .eq("id", normalizedPayload.company_id)
+      .maybeSingle();
+
+    if (companyError) {
+      throw new Error(normalizeError(companyError, "Falha ao validar CNPJ da empresa da oportunidade."));
+    }
+    if (!companyRow) {
+      throw new Error("Empresa selecionada não encontrada. Atualize a lista e tente novamente.");
+    }
+
+    const companyCnpjDigits = cleanDigits(companyRow.cnpj);
+    const companyName = String(companyRow.trade_name || companyRow.legal_name || "Empresa").trim();
+    if (companyCnpjDigits.length !== 14 || !isValidCnpjDigits(companyCnpjDigits)) {
+      throw new Error(
+        `Não é permitido criar oportunidade para "${companyName}" porque o CNPJ está inválido. Corrija em Configurações > Auditoria de CNPJ.`
+      );
+    }
+  }
+
   const opportunityTitleKey = normalizeOpportunityTitleKey(normalizedPayload.title);
   if (
     normalizedPayload.company_id &&
@@ -3544,7 +3567,7 @@ export async function listCompanyOptions() {
   while (true) {
     const { data, error } = await supabase
       .from("companies")
-      .select("id,trade_name,cnpj")
+      .select("id,trade_name,legal_name,cnpj,city,state")
       .order("trade_name", { ascending: true })
       .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
@@ -3558,7 +3581,28 @@ export async function listCompanyOptions() {
     from += pageSize;
   }
 
-  return rows;
+  const groupsByName = new Map();
+  for (const row of rows) {
+    const normalizedName = normalizeSearchAscii(row?.trade_name || row?.legal_name || "").trim();
+    const key = normalizedName || `id:${String(row?.id || "")}`;
+    const bucket = groupsByName.get(key) || [];
+    bucket.push(row);
+    groupsByName.set(key, bucket);
+  }
+
+  const deduped = [];
+  for (const bucket of groupsByName.values()) {
+    const validRows = bucket.filter((item) => {
+      const digits = cleanDigits(item?.cnpj);
+      return digits.length === 14 && isValidCnpjDigits(digits);
+    });
+    const selectedRows = validRows.length > 0 ? validRows : bucket.slice(0, 1);
+    deduped.push(...selectedRows);
+  }
+
+  return deduped.sort((a, b) =>
+    String(a?.trade_name || a?.legal_name || "").localeCompare(String(b?.trade_name || b?.legal_name || ""), "pt-BR")
+  );
 }
 
 export async function searchGlobalRecords(term) {
@@ -3696,11 +3740,7 @@ export async function searchGlobalRecords(term) {
   const companiesByIdentity = new Map();
   for (const item of companiesRes.data || []) {
     const normalizedName = normalizeSearchAscii(item?.trade_name || item?.legal_name || "").trim();
-    const normalizedCity = normalizeSearchAscii(item?.city || "").trim();
-    const normalizedState = String(item?.state || "").trim().toUpperCase();
-    const identity = normalizedName
-      ? `name:${normalizedName}::${normalizedCity}::${normalizedState}`
-      : `id:${String(item?.id || "")}`;
+    const identity = normalizedName ? `name:${normalizedName}` : `id:${String(item?.id || "")}`;
     const bucket = companiesByIdentity.get(identity) || [];
     bucket.push(item);
     companiesByIdentity.set(identity, bucket);
