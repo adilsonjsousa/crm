@@ -12,6 +12,7 @@ import {
   deleteProposalProductProfile,
   deleteProposalTemplate,
   importWhatsAppContactsBatch,
+  listAllCompaniesForReport,
   listCompanyLifecycleStages,
   listCompanyOptions,
   listOmieCustomerSyncJobs,
@@ -26,6 +27,7 @@ import {
   syncRdStationCrm,
   syncLegacyProductCatalogToProposalProfiles,
   syncOmieCustomers,
+  updateCompany,
   updateCompanyLifecycleStage,
   updateProposalCommercialTerms,
   updateProposalCppRow,
@@ -64,6 +66,12 @@ const RD_DEAL_STAGE_FILTER_OPTIONS = [
   { value: "follow_up", label: "FOLLOW-UP" },
   { value: "ganho", label: "GANHO" },
   { value: "perdido", label: "PERDIDO" }
+];
+const CNPJ_AUDIT_FILTER_OPTIONS = [
+  { value: "all", label: "Todos os problemas" },
+  { value: "invalid_dv", label: "Dígito verificador inválido" },
+  { value: "invalid_format", label: "Formato inválido" },
+  { value: "missing", label: "Sem CNPJ" }
 ];
 
 const EMPTY_STAGE_FORM = {
@@ -353,6 +361,180 @@ function proposalProductDisplayLabel(profile) {
   const categoryLabel = proposalProductTypeLabel(profile?.proposal_type);
   const subcategoryLabel = String(profile?.product_subcategory || "").trim();
   return subcategoryLabel ? `${productName} (${categoryLabel} · ${subcategoryLabel})` : `${productName} (${categoryLabel})`;
+}
+
+function cleanCnpjDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function formatCnpjDisplay(value) {
+  const digits = cleanCnpjDigits(value);
+  if (digits.length !== 14) return String(value || "").trim() || "-";
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+}
+
+function isValidCnpjDigits(value) {
+  const digits = cleanCnpjDigits(value);
+  if (!/^\d{14}$/.test(digits)) return false;
+  if (/^(\d)\1{13}$/.test(digits)) return false;
+
+  function calculateDigit(base) {
+    let factor = base.length - 7;
+    let total = 0;
+    for (const char of base) {
+      total += Number(char) * factor;
+      factor -= 1;
+      if (factor < 2) factor = 9;
+    }
+    const remainder = total % 11;
+    return remainder < 2 ? 0 : 11 - remainder;
+  }
+
+  const base = digits.slice(0, 12);
+  const digit1 = calculateDigit(base);
+  const digit2 = calculateDigit(`${base}${digit1}`);
+  return digits === `${base}${digit1}${digit2}`;
+}
+
+function normalizeAuditText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cnpjDigitDistance(sourceValue, targetValue) {
+  const source = cleanCnpjDigits(sourceValue);
+  const target = cleanCnpjDigits(targetValue);
+  if (source.length !== 14 || target.length !== 14) return null;
+  let distance = 0;
+  for (let index = 0; index < 14; index += 1) {
+    if (source[index] !== target[index]) distance += 1;
+  }
+  return distance;
+}
+
+function cnpjAuditIssueLabel(issueType) {
+  if (issueType === "invalid_dv") return "Dígito verificador inválido";
+  if (issueType === "invalid_format") return "Formato inválido";
+  if (issueType === "missing") return "Sem CNPJ";
+  return "Revisar";
+}
+
+function buildCnpjAuditIssues(companies) {
+  const normalizedCompanies = (companies || []).map((row) => {
+    const tradeName = String(row?.trade_name || "").trim();
+    const legalName = String(row?.legal_name || "").trim();
+    const displayName = tradeName || legalName || "Empresa sem nome";
+    const cnpjRaw = String(row?.cnpj || "").trim();
+    const cnpjDigits = cleanCnpjDigits(cnpjRaw);
+    const city = String(row?.city || "").trim();
+    const state = String(row?.state || "").trim().toUpperCase();
+    return {
+      id: String(row?.id || ""),
+      trade_name: tradeName,
+      legal_name: legalName,
+      display_name: displayName,
+      name_key: normalizeAuditText(displayName),
+      city,
+      city_key: normalizeAuditText(city),
+      state,
+      cnpj_raw: cnpjRaw,
+      cnpj_digits: cnpjDigits,
+      cnpj_is_valid: isValidCnpjDigits(cnpjDigits)
+    };
+  });
+
+  const validByName = new Map();
+  for (const company of normalizedCompanies) {
+    if (!company.cnpj_is_valid || !company.name_key) continue;
+    const bucket = validByName.get(company.name_key) || [];
+    bucket.push(company);
+    validByName.set(company.name_key, bucket);
+  }
+
+  function findSuggestion(target) {
+    if (!target.name_key) return null;
+    const sameNameCandidates = (validByName.get(target.name_key) || []).filter((candidate) => candidate.id !== target.id);
+    if (!sameNameCandidates.length) return null;
+
+    const sameCityStateCandidates = sameNameCandidates.filter(
+      (candidate) => candidate.city_key && candidate.city_key === target.city_key && candidate.state === target.state
+    );
+    const rankedCandidates = sameCityStateCandidates.length ? sameCityStateCandidates : sameNameCandidates;
+
+    if (target.cnpj_digits.length === 14) {
+      const rankedByDistance = rankedCandidates
+        .map((candidate) => ({
+          candidate,
+          distance: cnpjDigitDistance(target.cnpj_digits, candidate.cnpj_digits)
+        }))
+        .filter((item) => item.distance !== null)
+        .sort((a, b) => a.distance - b.distance);
+
+      const best = rankedByDistance[0];
+      if (!best || best.distance === null || best.distance > 2) return null;
+      return {
+        cnpj_digits: best.candidate.cnpj_digits,
+        company_id: best.candidate.id,
+        company_name: best.candidate.display_name,
+        reason: `Mesmo nome${sameCityStateCandidates.length ? " e cidade/UF" : ""}; diferença de ${best.distance} dígito(s).`
+      };
+    }
+
+    if (rankedCandidates.length === 1) {
+      const onlyCandidate = rankedCandidates[0];
+      return {
+        cnpj_digits: onlyCandidate.cnpj_digits,
+        company_id: onlyCandidate.id,
+        company_name: onlyCandidate.display_name,
+        reason: `Mesmo nome${sameCityStateCandidates.length ? " e cidade/UF" : ""}.`
+      };
+    }
+    return null;
+  }
+
+  const issues = [];
+  for (const company of normalizedCompanies) {
+    let issueType = "";
+    if (!company.cnpj_digits) issueType = "missing";
+    else if (company.cnpj_digits.length !== 14) issueType = "invalid_format";
+    else if (!company.cnpj_is_valid) issueType = "invalid_dv";
+
+    if (!issueType) continue;
+
+    const suggestion = findSuggestion(company);
+    issues.push({
+      id: `${company.id}:${issueType}`,
+      issue_type: issueType,
+      issue_label: cnpjAuditIssueLabel(issueType),
+      company_id: company.id,
+      company_name: company.display_name,
+      city: company.city,
+      state: company.state,
+      cnpj_raw: company.cnpj_raw,
+      cnpj_digits: company.cnpj_digits,
+      suggested_cnpj: suggestion?.cnpj_digits || "",
+      suggested_company_id: suggestion?.company_id || "",
+      suggested_company_name: suggestion?.company_name || "",
+      suggestion_reason: suggestion?.reason || ""
+    });
+  }
+
+  const ordered = issues.sort((left, right) => {
+    const order = { invalid_dv: 0, invalid_format: 1, missing: 2 };
+    const byType = (order[left.issue_type] ?? 99) - (order[right.issue_type] ?? 99);
+    if (byType !== 0) return byType;
+    return left.company_name.localeCompare(right.company_name, "pt-BR");
+  });
+
+  return {
+    issues: ordered,
+    total_companies: normalizedCompanies.length
+  };
 }
 
 function userDeliveryMessage(delivery) {
@@ -783,6 +965,15 @@ export default function SettingsModule() {
   const [waImportSuccess, setWaImportSuccess] = useState("");
   const [waImporting, setWaImporting] = useState(false);
   const [waImportResult, setWaImportResult] = useState(null);
+  const [cnpjAuditRows, setCnpjAuditRows] = useState([]);
+  const [cnpjAuditFilter, setCnpjAuditFilter] = useState("all");
+  const [cnpjAuditSearch, setCnpjAuditSearch] = useState("");
+  const [cnpjAuditLoading, setCnpjAuditLoading] = useState(false);
+  const [cnpjAuditError, setCnpjAuditError] = useState("");
+  const [cnpjAuditSuccess, setCnpjAuditSuccess] = useState("");
+  const [cnpjAuditRunningAt, setCnpjAuditRunningAt] = useState("");
+  const [cnpjAuditTotalCompanies, setCnpjAuditTotalCompanies] = useState(0);
+  const [cnpjAuditFixingCompanyId, setCnpjAuditFixingCompanyId] = useState("");
 
   const activeCount = useMemo(() => stages.filter((item) => item.is_active).length, [stages]);
   const omieResultSummary = useMemo(() => asObject(omieResult), [omieResult]);
@@ -1009,6 +1200,77 @@ export default function SettingsModule() {
       setCompanyOptions([]);
     } finally {
       setCompanyOptionsLoading(false);
+    }
+  }
+
+  async function runCnpjAudit() {
+    setCnpjAuditLoading(true);
+    setCnpjAuditError("");
+    setCnpjAuditSuccess("");
+    try {
+      const companies = await listAllCompaniesForReport();
+      const result = buildCnpjAuditIssues(companies);
+      setCnpjAuditRows(result.issues);
+      setCnpjAuditTotalCompanies(Number(result.total_companies || 0));
+      setCnpjAuditRunningAt(new Date().toISOString());
+
+      const invalidDv = result.issues.filter((item) => item.issue_type === "invalid_dv").length;
+      const invalidFormat = result.issues.filter((item) => item.issue_type === "invalid_format").length;
+      const missing = result.issues.filter((item) => item.issue_type === "missing").length;
+      const withSuggestion = result.issues.filter((item) => Boolean(item.suggested_cnpj)).length;
+      setCnpjAuditSuccess(
+        `Auditoria concluída: ${invalidDv} com DV inválido, ${invalidFormat} com formato inválido, ${missing} sem CNPJ. ${withSuggestion} com sugestão de correção.`
+      );
+    } catch (err) {
+      setCnpjAuditError(err.message || "Falha ao auditar CNPJs.");
+      setCnpjAuditRows([]);
+      setCnpjAuditTotalCompanies(0);
+    } finally {
+      setCnpjAuditLoading(false);
+    }
+  }
+
+  async function handleFixCompanyCnpj(issueRow) {
+    const companyId = String(issueRow?.company_id || "").trim();
+    if (!companyId) return;
+
+    const currentDisplay = formatCnpjDisplay(issueRow?.cnpj_raw);
+    const suggested = String(issueRow?.suggested_cnpj || "").trim();
+    const defaultValue = suggested ? formatCnpjDisplay(suggested) : String(issueRow?.cnpj_raw || "").trim();
+    const typed = window.prompt(
+      `Informe o CNPJ correto para ${issueRow.company_name}.\nAtual: ${currentDisplay}`,
+      defaultValue
+    );
+    if (typed === null) return;
+
+    const normalizedDigits = cleanCnpjDigits(typed);
+    if (normalizedDigits.length !== 14) {
+      setCnpjAuditError("CNPJ deve conter 14 dígitos.");
+      return;
+    }
+    if (!isValidCnpjDigits(normalizedDigits)) {
+      setCnpjAuditError("CNPJ inválido (dígitos verificadores não conferem).");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Confirmar correção do CNPJ da empresa ${issueRow.company_name}?\n\nDe: ${currentDisplay}\nPara: ${formatCnpjDisplay(
+        normalizedDigits
+      )}`
+    );
+    if (!confirmed) return;
+
+    setCnpjAuditError("");
+    setCnpjAuditSuccess("");
+    setCnpjAuditFixingCompanyId(companyId);
+    try {
+      await updateCompany(companyId, { cnpj: normalizedDigits });
+      setCnpjAuditSuccess(`CNPJ atualizado para ${formatCnpjDisplay(normalizedDigits)} em ${issueRow.company_name}.`);
+      await runCnpjAudit();
+    } catch (err) {
+      setCnpjAuditError(err.message || "Falha ao corrigir CNPJ.");
+    } finally {
+      setCnpjAuditFixingCompanyId("");
     }
   }
 
@@ -2299,6 +2561,33 @@ export default function SettingsModule() {
   const rdResultAllowedStates = sanitizeAllowedStates(rdResultSummary.allowed_states);
   const rdCurrentAllowedStates = rdSouthOnlySelected ? resolveSouthStates(rdForm.south_state_scope) : [];
   const rdScopeSouthLabel = formatAllowedStatesLabel(rdResultAllowedStates.length ? rdResultAllowedStates : rdCurrentAllowedStates);
+  const cnpjAuditInvalidDvCount = useMemo(
+    () => cnpjAuditRows.filter((item) => item.issue_type === "invalid_dv").length,
+    [cnpjAuditRows]
+  );
+  const cnpjAuditInvalidFormatCount = useMemo(
+    () => cnpjAuditRows.filter((item) => item.issue_type === "invalid_format").length,
+    [cnpjAuditRows]
+  );
+  const cnpjAuditMissingCount = useMemo(
+    () => cnpjAuditRows.filter((item) => item.issue_type === "missing").length,
+    [cnpjAuditRows]
+  );
+  const cnpjAuditSuggestionCount = useMemo(
+    () => cnpjAuditRows.filter((item) => Boolean(item.suggested_cnpj)).length,
+    [cnpjAuditRows]
+  );
+  const filteredCnpjAuditRows = useMemo(() => {
+    const normalizedSearch = normalizeAuditText(cnpjAuditSearch);
+    return cnpjAuditRows.filter((row) => {
+      if (cnpjAuditFilter !== "all" && row.issue_type !== cnpjAuditFilter) return false;
+      if (!normalizedSearch) return true;
+      const haystack = normalizeAuditText(
+        [row.company_name, row.cnpj_raw, row.city, row.state, row.suggested_cnpj, row.suggested_company_name].join(" ")
+      );
+      return haystack.includes(normalizedSearch);
+    });
+  }, [cnpjAuditRows, cnpjAuditFilter, cnpjAuditSearch]);
 
   return (
     <section className="module">
@@ -2505,6 +2794,130 @@ export default function SettingsModule() {
             </div>
           </form>
         ) : null}
+      </article>
+
+      <article className="panel top-gap">
+        <h2>Auditoria de CNPJ</h2>
+        <p className="muted">
+          Identifique CNPJ inválidos e revise possíveis substituições por CNPJ válido sem corromper a base.
+        </p>
+        {cnpjAuditError ? <p className="error-text">{cnpjAuditError}</p> : null}
+        {cnpjAuditSuccess ? <p className="success-text">{cnpjAuditSuccess}</p> : null}
+
+        <div className="kpi-grid top-gap">
+          <article className="kpi-card">
+            <span className="kpi-label">Empresas analisadas</span>
+            <strong className="kpi-value">{Number(cnpjAuditTotalCompanies || 0)}</strong>
+          </article>
+          <article className="kpi-card">
+            <span className="kpi-label">DV inválido</span>
+            <strong className="kpi-value">{cnpjAuditInvalidDvCount}</strong>
+          </article>
+          <article className="kpi-card">
+            <span className="kpi-label">Formato inválido</span>
+            <strong className="kpi-value">{cnpjAuditInvalidFormatCount}</strong>
+          </article>
+          <article className="kpi-card">
+            <span className="kpi-label">Sem CNPJ</span>
+            <strong className="kpi-value">{cnpjAuditMissingCount}</strong>
+          </article>
+          <article className="kpi-card">
+            <span className="kpi-label">Com sugestão automática</span>
+            <strong className="kpi-value">{cnpjAuditSuggestionCount}</strong>
+          </article>
+        </div>
+
+        <div className="settings-omie-grid top-gap">
+          <label className="settings-field">
+            <span>Filtrar por tipo</span>
+            <select value={cnpjAuditFilter} onChange={(event) => setCnpjAuditFilter(event.target.value)}>
+              {CNPJ_AUDIT_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-field">
+            <span>Buscar empresa/CNPJ</span>
+            <input
+              value={cnpjAuditSearch}
+              onChange={(event) => setCnpjAuditSearch(event.target.value)}
+              placeholder="Ex.: JOANNEI, 76.686.389/0001-53"
+            />
+          </label>
+        </div>
+
+        <div className="inline-actions top-gap">
+          <button type="button" className="btn-primary" onClick={runCnpjAudit} disabled={cnpjAuditLoading}>
+            {cnpjAuditLoading ? "Auditando..." : "Rodar auditoria de CNPJ"}
+          </button>
+          {cnpjAuditRunningAt ? (
+            <span className="muted">Última auditoria: {formatDateTime(cnpjAuditRunningAt)}</span>
+          ) : (
+            <span className="muted">Rode a auditoria para listar inconsistências.</span>
+          )}
+        </div>
+
+        <div className="table-wrap top-gap">
+          <table>
+            <thead>
+              <tr>
+                <th>Empresa</th>
+                <th>CNPJ atual</th>
+                <th>Problema</th>
+                <th>Sugestão</th>
+                <th>Cidade/UF</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredCnpjAuditRows.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.company_name}</td>
+                  <td>{formatCnpjDisplay(row.cnpj_raw)}</td>
+                  <td>{row.issue_label}</td>
+                  <td>
+                    {row.suggested_cnpj ? (
+                      <>
+                        <strong>{formatCnpjDisplay(row.suggested_cnpj)}</strong>
+                        <br />
+                        <span className="muted">
+                          {row.suggestion_reason}
+                          {row.suggested_company_name ? ` Ref.: ${row.suggested_company_name}` : ""}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="muted">Sem sugestão automática</span>
+                    )}
+                  </td>
+                  <td>
+                    {[row.city, row.state].filter(Boolean).join("/")}
+                  </td>
+                  <td>
+                    <div className="inline-actions">
+                      <button
+                        type="button"
+                        className="btn-ghost btn-table-action"
+                        onClick={() => handleFixCompanyCnpj(row)}
+                        disabled={cnpjAuditFixingCompanyId === row.company_id}
+                      >
+                        {cnpjAuditFixingCompanyId === row.company_id ? "Salvando..." : "Corrigir CNPJ"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!filteredCnpjAuditRows.length ? (
+                <tr>
+                  <td colSpan={6} className="muted">
+                    Nenhum problema encontrado com os filtros atuais.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </article>
 
       <div className="two-col">
