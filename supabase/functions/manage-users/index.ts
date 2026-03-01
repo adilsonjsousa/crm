@@ -23,44 +23,67 @@ type AppUserRow = {
   updated_at: string | null;
 };
 
-const ACCESS_MODULES = ["dashboard", "pipeline", "companies", "contacts", "tasks", "reports", "settings"];
+const ACCESS_MODULES = [
+  "dashboard",
+  "pipeline",
+  "hunter",
+  "companies",
+  "contacts",
+  "tasks",
+  "reports",
+  "orders",
+  "service",
+  "settings"
+];
 const ACCESS_LEVELS = ["none", "read", "edit", "admin"];
 
 const DEFAULT_PERMISSIONS: Record<UserRole, UserPermissionMap> = {
   admin: {
     dashboard: "admin",
     pipeline: "admin",
+    hunter: "admin",
     companies: "admin",
     contacts: "admin",
     tasks: "admin",
     reports: "admin",
+    orders: "admin",
+    service: "admin",
     settings: "admin"
   },
   manager: {
     dashboard: "admin",
     pipeline: "admin",
+    hunter: "admin",
     companies: "admin",
     contacts: "admin",
     tasks: "admin",
     reports: "admin",
+    orders: "admin",
+    service: "admin",
     settings: "read"
   },
   sales: {
     dashboard: "read",
     pipeline: "edit",
+    hunter: "read",
     companies: "edit",
     contacts: "edit",
     tasks: "edit",
     reports: "read",
+    orders: "edit",
+    service: "edit",
     settings: "none"
   },
   backoffice: {
     dashboard: "read",
     pipeline: "read",
+    hunter: "edit",
     companies: "edit",
     contacts: "edit",
     tasks: "edit",
     reports: "edit",
+    orders: "read",
+    service: "edit",
     settings: "none"
   }
 };

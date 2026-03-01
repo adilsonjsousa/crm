@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isSupabaseConfigured } from "./lib/supabase";
-import { deleteCompany, listUpcomingBirthdays, searchGlobalRecords } from "./lib/revenueApi";
+import { deleteCompany, listSystemUsers, listUpcomingBirthdays, searchGlobalRecords } from "./lib/revenueApi";
 import { toWhatsAppBrazilNumber } from "./lib/phone";
 import { confirmStrongDelete } from "./lib/confirmDelete";
+import { hasModulePermission, resolveSearchResultModule } from "./lib/accessControl";
 import DashboardModule from "./modules/DashboardModule";
 import CompaniesModule from "./modules/CompaniesModule";
 import PipelineModule from "./modules/PipelineModule";
@@ -15,6 +16,7 @@ import ReportsModule from "./modules/ReportsModule";
 import CustomerHistoryModal from "./components/CustomerHistoryModal";
 
 const THEME_STORAGE_KEY = "crm-theme";
+const APP_VIEWER_STORAGE_KEY = "crm.app.viewer-user-id.v1";
 const CANONICAL_CRM_HOST = "crm-adilson-sousas-projects.vercel.app";
 const LEGACY_ALIAS_REDIRECT_HOSTS = new Set(["crm-kappa-peach.vercel.app"]);
 
@@ -102,6 +104,47 @@ function buildBirthdayWhatsAppUrl(alertItem) {
   return `https://wa.me/${normalizedNumber}?text=${text}`;
 }
 
+function normalizeLookupText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function pickDefaultAppViewerUser(users = [], savedViewerId = "") {
+  if (!users.length) return null;
+  const normalizedSavedId = String(savedViewerId || "").trim();
+  if (normalizedSavedId) {
+    const savedUser = users.find((item) => String(item?.user_id || "").trim() === normalizedSavedId);
+    if (savedUser) return savedUser;
+  }
+
+  const privilegedUser = users.find((item) => {
+    const role = String(item?.role || "").toLowerCase();
+    return role === "admin" || role === "manager";
+  });
+  if (privilegedUser) return privilegedUser;
+
+  const preferredName = users.find((item) => normalizeLookupText(item?.full_name || "").includes("adilson"));
+  if (preferredName) return preferredName;
+
+  return users[0];
+}
+
+function buildUserInitials(user) {
+  const source = String(user?.full_name || user?.email || "").trim();
+  if (!source) return "US";
+  const parts = source
+    .split(" ")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!parts.length) return source.slice(0, 2).toUpperCase();
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] || ""}${parts[parts.length - 1][0] || ""}`.toUpperCase();
+}
+
 export default function App() {
   const searchInputRef = useRef(null);
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -135,6 +178,10 @@ export default function App() {
     companyId: "",
     companyName: ""
   });
+  const [appUsers, setAppUsers] = useState([]);
+  const [appUsersLoading, setAppUsersLoading] = useState(false);
+  const [appUsersError, setAppUsersError] = useState("");
+  const [appViewerUserId, setAppViewerUserId] = useState("");
   const [birthdayAlerts, setBirthdayAlerts] = useState([]);
   const [birthdayError, setBirthdayError] = useState("");
   const [theme, setTheme] = useState(() => {
@@ -158,6 +205,60 @@ export default function App() {
     document.documentElement.setAttribute("data-theme", theme);
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadAppUsersContext() {
+      if (!isSupabaseConfigured) {
+        if (!active) return;
+        setAppUsers([]);
+        setAppUsersError("");
+        setAppViewerUserId("");
+        return;
+      }
+
+      setAppUsersLoading(true);
+      try {
+        const users = await listSystemUsers();
+        if (!active) return;
+        const activeUsers = users.filter((item) => item.status === "active");
+        const availableUsers = activeUsers.length ? activeUsers : users;
+        setAppUsers(availableUsers);
+        setAppUsersError("");
+
+        if (!availableUsers.length) {
+          setAppViewerUserId("");
+          return;
+        }
+
+        const savedViewerId =
+          typeof window === "undefined" ? "" : String(window.localStorage.getItem(APP_VIEWER_STORAGE_KEY) || "").trim();
+        const selectedViewer = pickDefaultAppViewerUser(availableUsers, savedViewerId) || availableUsers[0];
+        if (!selectedViewer) {
+          setAppViewerUserId("");
+          return;
+        }
+
+        setAppViewerUserId(selectedViewer.user_id);
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, String(selectedViewer.user_id || ""));
+        }
+      } catch (err) {
+        if (!active) return;
+        setAppUsers([]);
+        setAppViewerUserId("");
+        setAppUsersError(err?.message || "Falha ao carregar usuários para controle de acesso.");
+      } finally {
+        if (active) setAppUsersLoading(false);
+      }
+    }
+
+    loadAppUsersContext();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -192,7 +293,64 @@ export default function App() {
     };
   }, []);
 
+  const appViewerUser = useMemo(
+    () => appUsers.find((item) => String(item?.user_id || "").trim() === String(appViewerUserId || "").trim()) || null,
+    [appUsers, appViewerUserId]
+  );
+
+  useEffect(() => {
+    if (!appUsers.length) return;
+    if (appViewerUser) return;
+    const fallbackUser = pickDefaultAppViewerUser(appUsers) || appUsers[0];
+    const fallbackUserId = String(fallbackUser?.user_id || "").trim();
+    if (!fallbackUserId) return;
+    setAppViewerUserId(fallbackUserId);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, fallbackUserId);
+    }
+  }, [appUsers, appViewerUser]);
+
+  function hasAccessToModule(moduleId, requiredLevel = "read") {
+    if (!appUsers.length) return true;
+    return hasModulePermission(appViewerUser, moduleId, requiredLevel);
+  }
+
+  function notifyAccessDenied(message) {
+    setSearchError(message || "Seu usuário não possui permissão para esta ação.");
+    setSearchExecuted(true);
+    setSearchLoading(false);
+  }
+
+  function ensureModuleAccess(moduleId, requiredLevel = "read", denyMessage = "") {
+    if (hasAccessToModule(moduleId, requiredLevel)) return true;
+    notifyAccessDenied(denyMessage || "Seu usuário não possui permissão para esta ação.");
+    return false;
+  }
+
+  function canAccessSearchItem(item) {
+    const moduleId = resolveSearchResultModule(item);
+    if (!moduleId) return true;
+    return hasAccessToModule(moduleId, "read");
+  }
+
+  const accessibleNavItems = useMemo(() => NAV_ITEMS.filter((item) => hasAccessToModule(item.id, "read")), [appUsers, appViewerUser]);
+  const appUserInitials = useMemo(() => buildUserInitials(appViewerUser), [appViewerUser]);
+
+  useEffect(() => {
+    if (!accessibleNavItems.length) return;
+    if (accessibleNavItems.some((item) => item.id === activeTab)) return;
+    setActiveTab(accessibleNavItems[0].id);
+  }, [accessibleNavItems, activeTab]);
+
   const activeModule = useMemo(() => {
+    if (!hasAccessToModule(activeTab, "read")) {
+      return (
+        <section className="warning-box">
+          <strong>Acesso restrito:</strong> seu usuário não possui permissão para abrir este módulo.
+        </section>
+      );
+    }
+
     if (activeTab === "companies") {
       return (
         <CompaniesModule
@@ -244,6 +402,8 @@ export default function App() {
     return <DashboardModule />;
   }, [
     activeTab,
+    appUsers,
+    appViewerUser,
     companiesEditCompanyId,
     companiesEditRequest,
     companiesFocusRequest,
@@ -261,7 +421,7 @@ export default function App() {
   ]);
 
   const activeMeta = PAGE_META[activeTab] || PAGE_META.dashboard;
-  const activeNav = NAV_ITEMS.find((item) => item.id === activeTab) || NAV_ITEMS[0];
+  const activeNav = accessibleNavItems.find((item) => item.id === activeTab) || accessibleNavItems[0] || NAV_ITEMS[0];
   const todayLabel = useMemo(
     () =>
       new Intl.DateTimeFormat("pt-BR", {
@@ -325,7 +485,7 @@ export default function App() {
     try {
       setSearchLoading(true);
       const result = await searchGlobalRecords(term);
-      setSearchResults(result);
+      setSearchResults((result || []).filter((item) => canAccessSearchItem(item)));
     } catch (err) {
       setSearchError(err.message);
       setSearchResults([]);
@@ -350,6 +510,7 @@ export default function App() {
   function handleSearchRequestEditCompany(companyId) {
     const normalizedCompanyId = String(companyId || "").trim();
     if (!normalizedCompanyId) return;
+    if (!ensureModuleAccess("companies", "edit", "Seu usuário não possui permissão para editar empresas.")) return;
 
     closeSearchCustomerHistoryModal();
     setCompaniesFocusTarget("company");
@@ -362,6 +523,7 @@ export default function App() {
   function handleSearchRequestEditContact(contactId, item = null) {
     const normalizedContactId = String(contactId || "").trim();
     if (!normalizedContactId) return;
+    if (!ensureModuleAccess("contacts", "edit", "Seu usuário não possui permissão para editar contatos.")) return;
 
     const payload = item
       ? {
@@ -404,21 +566,23 @@ export default function App() {
 
   function canQuickEditSearchItem(item) {
     if (item?.entity_type === "company") {
-      return Boolean(String(item?.company_id || "").trim());
+      return hasAccessToModule("companies", "edit") && Boolean(String(item?.company_id || "").trim());
     }
     if (item?.entity_type === "contact") {
-      return Boolean(resolveSearchContactId(item));
+      return hasAccessToModule("contacts", "edit") && Boolean(resolveSearchContactId(item));
     }
     return false;
   }
 
   function canQuickCreateFromSearch(item) {
-    return Boolean(resolveSearchCompanyContext(item));
+    return hasAccessToModule("tasks", "edit") || hasAccessToModule("pipeline", "edit")
+      ? Boolean(resolveSearchCompanyContext(item))
+      : false;
   }
 
   function canQuickDeleteSearchItem(item) {
     if (item?.entity_type !== "company") return false;
-    return Boolean(String(item?.company_id || "").trim());
+    return hasAccessToModule("companies", "admin") && Boolean(String(item?.company_id || "").trim());
   }
 
   function quickEditLabel(item) {
@@ -452,6 +616,7 @@ export default function App() {
   }
 
   function openTaskQuickCreateFromSearch(item) {
+    if (!ensureModuleAccess("tasks", "edit", "Seu usuário não possui permissão para criar tarefas.")) return;
     const companyContext = resolveSearchCompanyContext(item);
     if (!companyContext) {
       setSearchError("Este resultado nao possui empresa vinculada para criar tarefa.");
@@ -465,6 +630,7 @@ export default function App() {
   }
 
   function openPipelineQuickCreateFromSearch(item) {
+    if (!ensureModuleAccess("pipeline", "edit", "Seu usuário não possui permissão para criar oportunidades.")) return;
     const companyContext = resolveSearchCompanyContext(item);
     if (!companyContext) {
       setSearchError("Este resultado nao possui empresa vinculada para criar oportunidade.");
@@ -478,6 +644,7 @@ export default function App() {
   }
 
   async function handleQuickDeleteFromSearch(item) {
+    if (!ensureModuleAccess("companies", "admin", "Seu usuário não possui permissão para excluir empresas.")) return;
     const companyId = String(item?.company_id || "").trim();
     if (!companyId) {
       setSearchError("Nao foi possivel identificar a empresa para exclusao.");
@@ -504,6 +671,7 @@ export default function App() {
   }
 
   function openCustomerHistoryFromSearch(item) {
+    if (!ensureModuleAccess("companies", "read", "Seu usuário não possui permissão para acessar o histórico do cliente.")) return false;
     const companyId = String(item?.company_id || "").trim();
     if (!companyId) {
       if (item?.entity_type === "contact") {
@@ -532,6 +700,10 @@ export default function App() {
 
   function handleSearchItemAction(item, { fromSuggestion = false } = {}) {
     if (!item) return;
+    if (!canAccessSearchItem(item)) {
+      notifyAccessDenied("Seu usuário não possui permissão para abrir este resultado.");
+      return;
+    }
 
     if (fromSuggestion) {
       closeSearchFocus();
@@ -547,38 +719,45 @@ export default function App() {
     }
 
     if (item.tab) {
+      if (!ensureModuleAccess(item.tab, "read", "Seu usuário não possui permissão para abrir este módulo.")) return;
       setActiveTab(item.tab);
     }
   }
 
   function openCompanyQuickAction(target) {
     if (target === "contact") {
+      if (!ensureModuleAccess("contacts", "edit", "Seu usuário não possui permissão para criar contatos.")) return;
       setContactsFocusRequest((previous) => previous + 1);
       setActiveTab("contacts");
       return;
     }
+    if (!ensureModuleAccess("companies", "edit", "Seu usuário não possui permissão para criar empresas.")) return;
     setCompaniesFocusTarget(target);
     setCompaniesFocusRequest((previous) => previous + 1);
     setActiveTab("companies");
   }
 
   function openPipelineQuickAction() {
+    if (!ensureModuleAccess("pipeline", "edit", "Seu usuário não possui permissão para criar oportunidades.")) return;
     setPipelinePrefillDraft(null);
     setPipelinePrefillRequest((previous) => previous + 1);
     setActiveTab("pipeline");
   }
 
   function openTasksQuickAction() {
+    if (!ensureModuleAccess("tasks", "edit", "Seu usuário não possui permissão para criar tarefas.")) return;
     setTasksPrefillDraft(null);
     setTasksPrefillRequest((previous) => previous + 1);
     setActiveTab("tasks");
   }
 
   function openServiceQuickAction() {
+    if (!ensureModuleAccess("service", "edit", "Seu usuário não possui permissão para abrir chamados.")) return;
     setActiveTab("service");
   }
 
   function handleRequestCreateCompany(prefill = null) {
+    if (!ensureModuleAccess("companies", "edit", "Seu usuário não possui permissão para criar empresas.")) return;
     const nextDraft = prefill && typeof prefill === "object" ? prefill : null;
     setCompaniesFocusTarget("company");
     setCompaniesFocusRequest((previous) => previous + 1);
@@ -593,67 +772,79 @@ export default function App() {
 
   const hasTypedSearchTerm = globalSearch.trim().length >= 2;
   const quickSearchActions = [
-    {
-      id: "quick-create-company",
-      type: "Atalho",
-      title: "Nova Empresa",
-      subtitle: "Abrir cadastro de empresa.",
-      onSelect: () => {
-        openCompanyQuickAction("company");
-        closeSearchFocus();
-      }
-    },
-    {
-      id: "quick-create-contact",
-      type: "Atalho",
-      title: "Novo Contato",
-      subtitle: "Abrir cadastro de contato.",
-      onSelect: () => {
-        openCompanyQuickAction("contact");
-        closeSearchFocus();
-      }
-    },
-    {
-      id: "quick-create-pipeline",
-      type: "Atalho",
-      title: "Novo Negócio",
-      subtitle: "Abrir Pipeline para cadastrar oportunidade.",
-      onSelect: () => {
-        openPipelineQuickAction();
-        closeSearchFocus();
-      }
-    },
-    {
-      id: "quick-create-task",
-      type: "Atalho",
-      title: "Nova Tarefa",
-      subtitle: "Abrir Agenda para nova tarefa.",
-      onSelect: () => {
-        openTasksQuickAction();
-        closeSearchFocus();
-      }
-    },
-    {
-      id: "quick-create-service",
-      type: "Atalho",
-      title: "Novo Chamado",
-      subtitle: "Abrir Assistência para registrar chamado.",
-      onSelect: () => {
-        openServiceQuickAction();
-        closeSearchFocus();
-      }
-    },
-    {
-      id: "quick-open-reports",
-      type: "Atalho",
-      title: "Ir para Relatórios",
-      subtitle: "Abrir extração e exportação de dados.",
-      onSelect: () => {
-        setActiveTab("reports");
-        closeSearchFocus();
-      }
-    }
-  ];
+    hasAccessToModule("companies", "edit")
+      ? {
+          id: "quick-create-company",
+          type: "Atalho",
+          title: "Nova Empresa",
+          subtitle: "Abrir cadastro de empresa.",
+          onSelect: () => {
+            openCompanyQuickAction("company");
+            closeSearchFocus();
+          }
+        }
+      : null,
+    hasAccessToModule("contacts", "edit")
+      ? {
+          id: "quick-create-contact",
+          type: "Atalho",
+          title: "Novo Contato",
+          subtitle: "Abrir cadastro de contato.",
+          onSelect: () => {
+            openCompanyQuickAction("contact");
+            closeSearchFocus();
+          }
+        }
+      : null,
+    hasAccessToModule("pipeline", "edit")
+      ? {
+          id: "quick-create-pipeline",
+          type: "Atalho",
+          title: "Novo Negócio",
+          subtitle: "Abrir Pipeline para cadastrar oportunidade.",
+          onSelect: () => {
+            openPipelineQuickAction();
+            closeSearchFocus();
+          }
+        }
+      : null,
+    hasAccessToModule("tasks", "edit")
+      ? {
+          id: "quick-create-task",
+          type: "Atalho",
+          title: "Nova Tarefa",
+          subtitle: "Abrir Agenda para nova tarefa.",
+          onSelect: () => {
+            openTasksQuickAction();
+            closeSearchFocus();
+          }
+        }
+      : null,
+    hasAccessToModule("service", "edit")
+      ? {
+          id: "quick-create-service",
+          type: "Atalho",
+          title: "Novo Chamado",
+          subtitle: "Abrir Assistência para registrar chamado.",
+          onSelect: () => {
+            openServiceQuickAction();
+            closeSearchFocus();
+          }
+        }
+      : null,
+    hasAccessToModule("reports", "read")
+      ? {
+          id: "quick-open-reports",
+          type: "Atalho",
+          title: "Ir para Relatórios",
+          subtitle: "Abrir extração e exportação de dados.",
+          onSelect: () => {
+            setActiveTab("reports");
+            closeSearchFocus();
+          }
+        }
+      : null
+  ].filter(Boolean);
   const searchDropdownItems = hasTypedSearchTerm
     ? searchSuggestions.map((item) => ({
         id: `suggestion-${item.type}-${item.id}`,
@@ -735,7 +926,7 @@ export default function App() {
         setSuggestionsLoading(true);
         const data = await searchGlobalRecords(term);
         if (!active) return;
-        setSearchSuggestions(data.slice(0, 8));
+        setSearchSuggestions((data || []).filter((item) => canAccessSearchItem(item)).slice(0, 8));
       } catch (_err) {
         if (!active) return;
         setSearchSuggestions([]);
@@ -748,7 +939,7 @@ export default function App() {
       active = false;
       clearTimeout(timer);
     };
-  }, [globalSearch]);
+  }, [appUsers, appViewerUser, globalSearch]);
 
   useEffect(() => {
     function handleGlobalShortcuts(event) {
@@ -781,7 +972,7 @@ export default function App() {
         </div>
 
         <nav className="crm-nav">
-          {NAV_ITEMS.map((item) => (
+          {accessibleNavItems.map((item) => (
             <button
               key={item.id}
               className={item.id === activeTab ? "crm-nav-btn active" : "crm-nav-btn"}
@@ -799,6 +990,9 @@ export default function App() {
               </span>
             </button>
           ))}
+          {!accessibleNavItems.length ? (
+            <p className="crm-sidebar-note">Nenhum módulo habilitado para este usuário.</p>
+          ) : null}
         </nav>
 
         <div className="crm-sidebar-footer">
@@ -877,21 +1071,56 @@ export default function App() {
             ) : null}
           </form>
           <div className="crm-topbar-actions">
-            <button type="button" className="btn-ghost" onClick={openPipelineQuickAction}>
-              + Novo Negócio
-            </button>
-            <button type="button" className="btn-ghost" onClick={openTasksQuickAction}>
-              + Nova Tarefa
-            </button>
-            <button type="button" className="btn-ghost" onClick={() => openCompanyQuickAction("contact")}>
-              + Novo Contato
-            </button>
-            <button type="button" className="btn-primary" onClick={() => openCompanyQuickAction("company")}>
-              + Nova Empresa
-            </button>
-            <span className="crm-user-pill">AS</span>
+            {hasAccessToModule("pipeline", "edit") ? (
+              <button type="button" className="btn-ghost" onClick={openPipelineQuickAction}>
+                + Novo Negócio
+              </button>
+            ) : null}
+            {hasAccessToModule("tasks", "edit") ? (
+              <button type="button" className="btn-ghost" onClick={openTasksQuickAction}>
+                + Nova Tarefa
+              </button>
+            ) : null}
+            {hasAccessToModule("contacts", "edit") ? (
+              <button type="button" className="btn-ghost" onClick={() => openCompanyQuickAction("contact")}>
+                + Novo Contato
+              </button>
+            ) : null}
+            {hasAccessToModule("companies", "edit") ? (
+              <button type="button" className="btn-primary" onClick={() => openCompanyQuickAction("company")}>
+                + Nova Empresa
+              </button>
+            ) : null}
+            {appUsers.length ? (
+              <label className="crm-viewer-select">
+                <span>Usuário ativo</span>
+                <select
+                  value={appViewerUserId}
+                  onChange={(event) => {
+                    const nextUserId = String(event.target.value || "").trim();
+                    setAppViewerUserId(nextUserId);
+                    if (typeof window !== "undefined") {
+                      window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, nextUserId);
+                      window.localStorage.setItem("crm.pipeline.viewer-user-id.v1", nextUserId);
+                      window.localStorage.setItem("crm.hunter.viewer-user-id.v1", nextUserId);
+                      window.localStorage.setItem("crm.tasks.creator-user-id.v1", nextUserId);
+                    }
+                  }}
+                  disabled={appUsersLoading}
+                >
+                  {appUsers.map((user) => (
+                    <option key={user.user_id || user.email} value={user.user_id}>
+                      {(user.full_name || user.email || "Usuário").trim()} ({String(user.role || "sales").toUpperCase()})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <span className="crm-user-pill">{appUserInitials}</span>
           </div>
         </header>
+
+        {appUsersError ? <section className="warning-box">{appUsersError}</section> : null}
 
         {!isSupabaseConfigured ? (
           <section className="warning-box">
@@ -983,20 +1212,24 @@ export default function App() {
                       ) : null}
                       {canQuickCreateFromSearch(item) ? (
                         <>
-                          <button
-                            type="button"
-                            className="btn-ghost btn-table-action search-result-action-btn"
-                            onClick={() => openTaskQuickCreateFromSearch(item)}
-                          >
-                            Nova Tarefa
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-ghost btn-table-action search-result-action-btn"
-                            onClick={() => openPipelineQuickCreateFromSearch(item)}
-                          >
-                            Novo Negócio
-                          </button>
+                          {hasAccessToModule("tasks", "edit") ? (
+                            <button
+                              type="button"
+                              className="btn-ghost btn-table-action search-result-action-btn"
+                              onClick={() => openTaskQuickCreateFromSearch(item)}
+                            >
+                              Nova Tarefa
+                            </button>
+                          ) : null}
+                          {hasAccessToModule("pipeline", "edit") ? (
+                            <button
+                              type="button"
+                              className="btn-ghost btn-table-action search-result-action-btn"
+                              onClick={() => openPipelineQuickCreateFromSearch(item)}
+                            >
+                              Novo Negócio
+                            </button>
+                          ) : null}
                         </>
                       ) : null}
                       {canQuickDeleteSearchItem(item) ? (

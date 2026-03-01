@@ -308,7 +308,18 @@ function normalizeStoragePart(value) {
     .toLowerCase();
 }
 
-const CRM_ACCESS_MODULES = ["dashboard", "pipeline", "companies", "contacts", "tasks", "reports", "settings"];
+const CRM_ACCESS_MODULES = [
+  "dashboard",
+  "pipeline",
+  "hunter",
+  "companies",
+  "contacts",
+  "tasks",
+  "reports",
+  "orders",
+  "service",
+  "settings"
+];
 const CRM_ACCESS_LEVELS = ["none", "read", "edit", "admin"];
 const OMIE_CUSTOMERS_STORAGE_KEY = "crm.settings.omie.customers.v1";
 const OMIE_CUSTOMERS_COOKIE_KEY = "crm.settings.omie.customers.cookie.v1";
@@ -319,37 +330,49 @@ const CRM_ROLE_DEFAULT_PERMISSIONS = {
   admin: {
     dashboard: "admin",
     pipeline: "admin",
+    hunter: "admin",
     companies: "admin",
     contacts: "admin",
     tasks: "admin",
     reports: "admin",
+    orders: "admin",
+    service: "admin",
     settings: "admin"
   },
   manager: {
     dashboard: "admin",
     pipeline: "admin",
+    hunter: "admin",
     companies: "admin",
     contacts: "admin",
     tasks: "admin",
     reports: "admin",
+    orders: "admin",
+    service: "admin",
     settings: "read"
   },
   sales: {
     dashboard: "read",
     pipeline: "edit",
+    hunter: "read",
     companies: "edit",
     contacts: "edit",
     tasks: "edit",
     reports: "read",
+    orders: "edit",
+    service: "edit",
     settings: "none"
   },
   backoffice: {
     dashboard: "read",
     pipeline: "read",
+    hunter: "edit",
     companies: "edit",
     contacts: "edit",
     tasks: "edit",
     reports: "edit",
+    orders: "read",
+    service: "edit",
     settings: "none"
   }
 };

@@ -37,6 +37,7 @@ const TASK_STATUSES = [
 ];
 
 const TASKS_CREATOR_STORAGE_KEY = "crm.tasks.creator-user-id.v1";
+const APP_VIEWER_STORAGE_KEY = "crm.app.viewer-user-id.v1";
 const TASKS_FORM_DEFAULTS_STORAGE_KEY = "crm.tasks.form-defaults.v1";
 const TASKS_NOTIFY_STORAGE_KEY = "crm.tasks.notify-whatsapp.v1";
 
@@ -377,7 +378,11 @@ export default function TasksModule({
 
       const savedCreatorUserId =
         typeof window === "undefined" ? "" : String(window.localStorage.getItem(TASKS_CREATOR_STORAGE_KEY) || "");
-      const selectedCreator = availableUsers.find((item) => item.user_id === savedCreatorUserId) || availableUsers[0];
+      const sharedViewerId = typeof window === "undefined" ? "" : String(window.localStorage.getItem(APP_VIEWER_STORAGE_KEY) || "");
+      const selectedCreator =
+        availableUsers.find((item) => item.user_id === savedCreatorUserId) ||
+        availableUsers.find((item) => item.user_id === sharedViewerId) ||
+        availableUsers[0];
       setCreatorUserId(selectedCreator.user_id);
       setForm((prev) => ({
         ...prev,
@@ -385,6 +390,10 @@ export default function TasksModule({
           ? prev.assignee_user_id
           : selectedCreator.user_id
       }));
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(TASKS_CREATOR_STORAGE_KEY, selectedCreator.user_id);
+        window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, selectedCreator.user_id);
+      }
     } catch (err) {
       setUsers([]);
       setCreatorUserId("");
@@ -614,6 +623,7 @@ export default function TasksModule({
     }));
     if (typeof window !== "undefined") {
       window.localStorage.setItem(TASKS_CREATOR_STORAGE_KEY, selected.user_id);
+      window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, selected.user_id);
     }
   }
 

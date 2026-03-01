@@ -37,6 +37,7 @@ const PROPOSAL_TEMPLATE_STORAGE_KEY = "crm.pipeline.proposal-template.v1";
 const PROPOSAL_TEMPLATE_PROFILES_STORAGE_KEY = "crm.pipeline.proposal-template-profiles.v1";
 const PROPOSAL_LOGO_STORAGE_KEY = "crm.pipeline.proposal-logo.v1";
 const PIPELINE_VIEWER_STORAGE_KEY = "crm.pipeline.viewer-user-id.v1";
+const APP_VIEWER_STORAGE_KEY = "crm.app.viewer-user-id.v1";
 const PIPELINE_FORM_DEFAULTS_STORAGE_KEY = "crm.pipeline.form-defaults.v1";
 const PIPELINE_OWNER_FILTER_ALL = "__all__";
 const ART_PRINTER_LOGO_CANDIDATES = [
@@ -958,30 +959,22 @@ function isPrivilegedPipelineRole(role) {
   return normalized === "admin" || normalized === "manager";
 }
 
-function pickPreferredViewerUser(users = [], savedViewerId = "") {
+function pickPreferredViewerUser(users = [], savedViewerId = "", sharedViewerUserId = "") {
   if (!users.length) return null;
   const normalizedSavedId = String(savedViewerId || "").trim();
+  const normalizedSharedId = String(sharedViewerUserId || "").trim();
   const savedUser = normalizedSavedId ? users.find((item) => String(item?.user_id || "").trim() === normalizedSavedId) || null : null;
-  const preferredNamedManager = users.find((item) => {
-    if (!isPrivilegedPipelineRole(item?.role)) return false;
-    const normalizedName = normalizeLookupText(item?.full_name || item?.email || "");
-    return normalizedName.includes("adilson joao");
-  });
+  if (savedUser) return savedUser;
 
-  if (savedUser && isPrivilegedPipelineRole(savedUser.role)) {
-    return savedUser;
-  }
-
-  if (preferredNamedManager) {
-    return preferredNamedManager;
-  }
+  const sharedUser = normalizedSharedId
+    ? users.find((item) => String(item?.user_id || "").trim() === normalizedSharedId) || null
+    : null;
+  if (sharedUser) return sharedUser;
 
   const anyPrivileged = users.find((item) => isPrivilegedPipelineRole(item?.role));
   if (anyPrivileged) {
     return anyPrivileged;
   }
-
-  if (savedUser) return savedUser;
   return users[0];
 }
 
@@ -1861,7 +1854,8 @@ export default function PipelineModule({
       }
 
       const savedViewerId = typeof window === "undefined" ? "" : String(window.localStorage.getItem(PIPELINE_VIEWER_STORAGE_KEY) || "");
-      const selectedViewer = pickPreferredViewerUser(availableUsers, savedViewerId) || availableUsers[0];
+      const sharedViewerUserId = typeof window === "undefined" ? "" : String(window.localStorage.getItem(APP_VIEWER_STORAGE_KEY) || "");
+      const selectedViewer = pickPreferredViewerUser(availableUsers, savedViewerId, sharedViewerUserId) || availableUsers[0];
 
       setViewerUserId(selectedViewer.user_id);
       setViewerRole(String(selectedViewer.role || "sales"));
@@ -1874,6 +1868,7 @@ export default function PipelineModule({
 
       if (typeof window !== "undefined") {
         window.localStorage.setItem(PIPELINE_VIEWER_STORAGE_KEY, String(selectedViewer.user_id || ""));
+        window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, String(selectedViewer.user_id || ""));
       }
     } catch (err) {
       setError(err.message);
@@ -2729,6 +2724,7 @@ export default function PipelineModule({
 
     if (typeof window !== "undefined") {
       window.localStorage.setItem(PIPELINE_VIEWER_STORAGE_KEY, nextViewer.user_id);
+      window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, nextViewer.user_id);
     }
   }
 

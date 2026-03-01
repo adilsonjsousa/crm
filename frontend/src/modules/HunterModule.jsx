@@ -13,6 +13,7 @@ import { PIPELINE_STAGES, stageLabel, stageStatus } from "../lib/pipelineStages"
 import { formatBrazilPhone } from "../lib/phone";
 
 const HUNTER_VIEWER_STORAGE_KEY = "crm.hunter.viewer-user-id.v1";
+const APP_VIEWER_STORAGE_KEY = "crm.app.viewer-user-id.v1";
 const HUNTER_VISIBILITY_ALL_ROLES = new Set(["admin", "manager", "backoffice"]);
 
 function normalizeLookupText(value) {
@@ -188,17 +189,20 @@ function canViewAllByRole(role) {
   return HUNTER_VISIBILITY_ALL_ROLES.has(normalizeUserRole(role));
 }
 
-function preferredViewerUser(users = []) {
+function preferredViewerUser(users = [], sharedViewerId = "") {
   if (!users.length) return null;
 
   const savedViewerId =
     typeof window === "undefined" ? "" : String(window.localStorage.getItem(HUNTER_VIEWER_STORAGE_KEY) || "").trim();
   const saved = savedViewerId ? users.find((item) => String(item.user_id || "") === savedViewerId) || null : null;
-  if (saved && canViewAllByRole(saved.role)) return saved;
+  if (saved) return saved;
+
+  const normalizedSharedId = String(sharedViewerId || "").trim();
+  const shared = normalizedSharedId ? users.find((item) => String(item.user_id || "") === normalizedSharedId) || null : null;
+  if (shared) return shared;
 
   const manager = users.find((item) => canViewAllByRole(item.role));
   if (manager) return manager;
-  if (saved) return saved;
   return users[0];
 }
 
@@ -631,12 +635,14 @@ export default function HunterModule() {
         return;
       }
 
-      const selectedViewer = preferredViewerUser(availableUsers) || availableUsers[0];
+      const sharedViewerUserId = typeof window === "undefined" ? "" : String(window.localStorage.getItem(APP_VIEWER_STORAGE_KEY) || "");
+      const selectedViewer = preferredViewerUser(availableUsers, sharedViewerUserId) || availableUsers[0];
       setViewerUserId(selectedViewer.user_id);
       setViewerRole(normalizeUserRole(selectedViewer.role));
 
       if (typeof window !== "undefined") {
         window.localStorage.setItem(HUNTER_VIEWER_STORAGE_KEY, selectedViewer.user_id);
+        window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, selectedViewer.user_id);
       }
     } catch (err) {
       setError(err.message);
@@ -738,6 +744,7 @@ export default function HunterModule() {
 
     if (typeof window !== "undefined") {
       window.localStorage.setItem(HUNTER_VIEWER_STORAGE_KEY, selectedViewer.user_id);
+      window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, selectedViewer.user_id);
     }
   }
 

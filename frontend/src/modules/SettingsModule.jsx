@@ -40,6 +40,14 @@ import {
 } from "../lib/revenueApi";
 import { confirmStrongDelete } from "../lib/confirmDelete";
 import { getSubcategoriesByType } from "../lib/productCatalog";
+import {
+  CRM_ACCESS_LEVELS,
+  CRM_ACCESS_MODULES,
+  CRM_MODULE_LABELS,
+  buildPermissionSummary,
+  roleDefaultPermissions,
+  sanitizeUserPermissions
+} from "../lib/accessControl";
 
 const OMIE_STORAGE_KEY = "crm.settings.omie.customers.v1";
 const OMIE_COOKIE_KEY = "crm.settings.omie.customers.cookie.v1";
@@ -138,21 +146,28 @@ const USER_STATUS_OPTIONS = [
   { value: "inactive", label: "Inativo" }
 ];
 
-const EMPTY_USER_FORM = {
-  full_name: "",
-  email: "",
-  whatsapp: "",
-  role: "sales",
-  status: "active"
+const ACCESS_LEVEL_LABELS = {
+  none: "Sem acesso",
+  read: "Leitura",
+  edit: "Edição",
+  admin: "Administração"
 };
 
-const EMPTY_EDIT_USER_FORM = {
-  full_name: "",
-  email: "",
-  whatsapp: "",
-  role: "sales",
-  status: "active"
-};
+function buildEmptyUserForm(role = "sales") {
+  const normalizedRole = String(role || "sales");
+  return {
+    full_name: "",
+    email: "",
+    whatsapp: "",
+    role: normalizedRole,
+    status: "active",
+    permissions: roleDefaultPermissions(normalizedRole)
+  };
+}
+
+function buildEmptyEditUserForm(role = "sales") {
+  return buildEmptyUserForm(role);
+}
 
 const PROPOSAL_TEMPLATE_TYPE_OPTIONS = [
   { value: "", label: "Todos os tipos" },
@@ -984,10 +999,10 @@ export default function SettingsModule() {
   const [usersError, setUsersError] = useState("");
   const [usersSuccess, setUsersSuccess] = useState("");
   const [usersActionLink, setUsersActionLink] = useState("");
-  const [userForm, setUserForm] = useState(EMPTY_USER_FORM);
+  const [userForm, setUserForm] = useState(() => buildEmptyUserForm("sales"));
   const [creatingUser, setCreatingUser] = useState(false);
   const [editingUserId, setEditingUserId] = useState("");
-  const [editUserForm, setEditUserForm] = useState(EMPTY_EDIT_USER_FORM);
+  const [editUserForm, setEditUserForm] = useState(() => buildEmptyEditUserForm("sales"));
   const [savingUserId, setSavingUserId] = useState("");
   const [resettingUserId, setResettingUserId] = useState("");
 
@@ -1788,7 +1803,7 @@ export default function SettingsModule() {
 
     try {
       const result = await createSystemUser(userForm);
-      setUserForm(EMPTY_USER_FORM);
+      setUserForm(buildEmptyUserForm("sales"));
       setUsersSuccess(userDeliveryMessage(result.delivery));
       if (result.action_link) setUsersActionLink(result.action_link);
       await loadUsers();
@@ -1812,13 +1827,62 @@ export default function SettingsModule() {
       email: String(user.email || ""),
       whatsapp: String(user.whatsapp || ""),
       role: String(user.role || "sales"),
-      status: String(user.status || "active")
+      status: String(user.status || "active"),
+      permissions: sanitizeUserPermissions(user.permissions, user.role)
     });
   }
 
   function cancelEditUser() {
     setEditingUserId("");
-    setEditUserForm(EMPTY_EDIT_USER_FORM);
+    setEditUserForm(buildEmptyEditUserForm("sales"));
+  }
+
+  function handleUserRoleChange(nextRole) {
+    const role = String(nextRole || "sales");
+    setUserForm((prev) => ({
+      ...prev,
+      role,
+      permissions: roleDefaultPermissions(role)
+    }));
+  }
+
+  function handleEditUserRoleChange(nextRole) {
+    const role = String(nextRole || "sales");
+    setEditUserForm((prev) => ({
+      ...prev,
+      role,
+      permissions: roleDefaultPermissions(role)
+    }));
+  }
+
+  function handleCreateUserPermissionChange(moduleId, level) {
+    const normalizedModuleId = String(moduleId || "").trim();
+    if (!CRM_ACCESS_MODULES.includes(normalizedModuleId)) return;
+    setUserForm((prev) => ({
+      ...prev,
+      permissions: sanitizeUserPermissions(
+        {
+          ...(prev.permissions || {}),
+          [normalizedModuleId]: level
+        },
+        prev.role
+      )
+    }));
+  }
+
+  function handleEditUserPermissionChange(moduleId, level) {
+    const normalizedModuleId = String(moduleId || "").trim();
+    if (!CRM_ACCESS_MODULES.includes(normalizedModuleId)) return;
+    setEditUserForm((prev) => ({
+      ...prev,
+      permissions: sanitizeUserPermissions(
+        {
+          ...(prev.permissions || {}),
+          [normalizedModuleId]: level
+        },
+        prev.role
+      )
+    }));
   }
 
   async function handleSaveUser(event) {
@@ -3157,7 +3221,7 @@ export default function SettingsModule() {
             <div className="settings-users-selects">
               <label className="settings-field">
                 <span>Perfil</span>
-                <select value={userForm.role} onChange={(event) => setUserForm((prev) => ({ ...prev, role: event.target.value }))}>
+                <select value={userForm.role} onChange={(event) => handleUserRoleChange(event.target.value)}>
                   {USER_ROLE_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -3176,6 +3240,25 @@ export default function SettingsModule() {
                   ))}
                 </select>
               </label>
+            </div>
+
+            <div className="settings-permissions-grid">
+              <p className="settings-permissions-title">Permissões por módulo</p>
+              {CRM_ACCESS_MODULES.map((moduleId) => (
+                <label key={`create-user-permission-${moduleId}`} className="settings-field">
+                  <span>{CRM_MODULE_LABELS[moduleId] || moduleId}</span>
+                  <select
+                    value={String(userForm.permissions?.[moduleId] || roleDefaultPermissions(userForm.role)[moduleId] || "none")}
+                    onChange={(event) => handleCreateUserPermissionChange(moduleId, event.target.value)}
+                  >
+                    {CRM_ACCESS_LEVELS.map((level) => (
+                      <option key={`${moduleId}-${level}`} value={level}>
+                        {ACCESS_LEVEL_LABELS[level] || level}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
             </div>
 
             <button type="submit" className="btn-primary" disabled={creatingUser}>
@@ -3204,6 +3287,7 @@ export default function SettingsModule() {
                 <th>Login</th>
                 <th>WhatsApp</th>
                 <th>Perfil</th>
+                <th>Permissões</th>
                 <th>Status</th>
                 <th>Último acesso</th>
                 <th>Ações</th>
@@ -3216,6 +3300,7 @@ export default function SettingsModule() {
                   <td>{user.email || "-"}</td>
                   <td>{user.whatsapp || "-"}</td>
                   <td>{userRoleLabel(user.role)}</td>
+                  <td>{buildPermissionSummary(user.permissions, user.role)}</td>
                   <td>{userStatusLabel(user.status)}</td>
                   <td>{formatDateTime(user.last_login_at)}</td>
                   <td>
@@ -3250,7 +3335,7 @@ export default function SettingsModule() {
 
               {!users.length && !usersLoading ? (
                 <tr>
-                  <td colSpan={7} className="muted">
+                  <td colSpan={8} className="muted">
                     Nenhum usuário cadastrado.
                   </td>
                 </tr>
@@ -3284,7 +3369,7 @@ export default function SettingsModule() {
             <div className="settings-users-selects">
               <label className="settings-field">
                 <span>Perfil</span>
-                <select value={editUserForm.role} onChange={(event) => setEditUserForm((prev) => ({ ...prev, role: event.target.value }))}>
+                <select value={editUserForm.role} onChange={(event) => handleEditUserRoleChange(event.target.value)}>
                   {USER_ROLE_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -3306,6 +3391,25 @@ export default function SettingsModule() {
                   ))}
                 </select>
               </label>
+            </div>
+
+            <div className="settings-permissions-grid">
+              <p className="settings-permissions-title">Permissões por módulo</p>
+              {CRM_ACCESS_MODULES.map((moduleId) => (
+                <label key={`edit-user-permission-${moduleId}`} className="settings-field">
+                  <span>{CRM_MODULE_LABELS[moduleId] || moduleId}</span>
+                  <select
+                    value={String(editUserForm.permissions?.[moduleId] || roleDefaultPermissions(editUserForm.role)[moduleId] || "none")}
+                    onChange={(event) => handleEditUserPermissionChange(moduleId, event.target.value)}
+                  >
+                    {CRM_ACCESS_LEVELS.map((level) => (
+                      <option key={`${moduleId}-${level}`} value={level}>
+                        {ACCESS_LEVEL_LABELS[level] || level}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
             </div>
 
             <div className="inline-actions">

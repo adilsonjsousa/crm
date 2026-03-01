@@ -358,6 +358,24 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.crm-viewer-select {
+  display: grid;
+  gap: 4px;
+  min-width: 260px;
+}
+
+.crm-viewer-select span {
+  font-size: 0.72rem;
+  color: var(--text-sub);
+  font-weight: 700;
+}
+
+.crm-viewer-select select {
+  min-width: 260px;
+  width: 100%;
 }
 
 .crm-user-pill {
@@ -1240,6 +1258,20 @@ a.btn-table-action {
   display: grid;
   grid-template-columns: repeat(2, minmax(140px, 1fr));
   gap: 10px;
+}
+
+.settings-permissions-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.settings-permissions-title {
+  margin: 0;
+  grid-column: 1 / -1;
+  font-size: 0.8rem;
+  color: var(--text-sub);
+  font-weight: 700;
 }
 
 .settings-user-edit-form {
@@ -2597,6 +2629,7 @@ tbody tr:hover {
 
   .settings-users-layout,
   .settings-users-selects,
+  .settings-permissions-grid,
   .settings-library-grid,
   .tasks-users-grid,
   .tasks-calendar-toolbar {
