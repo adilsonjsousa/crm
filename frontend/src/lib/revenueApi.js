@@ -2227,6 +2227,8 @@ export async function createCompanyInternalMessage(payload) {
         .filter(Boolean)
         .slice(0, 40)
     : [];
+  const notifyEmail = payload?.notify_email !== false;
+  const notifyWhatsApp = payload?.notify_whatsapp !== false;
 
   if (!companyId) {
     throw new Error("Selecione o cliente para registrar a mensagem interna.");
@@ -2295,8 +2297,68 @@ export async function createCompanyInternalMessage(payload) {
   const { error } = await supabase.from("event_log").insert(rows);
   if (error) throw new Error(normalizeError(error, "Falha ao registrar mensagem interna."));
 
+  let notification = {
+    status: "skipped_no_mentions",
+    requested_mentions: mentionedUserIds.length,
+    email_enabled: notifyEmail,
+    whatsapp_enabled: notifyWhatsApp
+  };
+
+  if (mentionedUserIds.length && (notifyEmail || notifyWhatsApp)) {
+    try {
+      const { data, error: notifyError } = await supabase.functions.invoke("internal-mention-notify", {
+        body: {
+          company_id: companyId,
+          company_name: companyName,
+          linked_opportunity_id: linkedOpportunityId || null,
+          linked_opportunity_title: linkedOpportunityTitle || null,
+          subject,
+          content,
+          created_by_user_id: createdByUserId,
+          created_by_user_name: createdByUserName,
+          mentioned_user_ids: mentionedUserIds,
+          mentioned_user_names: mentionedUserNames,
+          notify_email: notifyEmail,
+          notify_whatsapp: notifyWhatsApp
+        }
+      });
+
+      if (notifyError) {
+        notification = {
+          ...notification,
+          status: "invoke_failed",
+          error: normalizeError(notifyError, "Falha ao disparar notificações de menção.")
+        };
+      } else {
+        const notifyData = asObject(data);
+        if (notifyData.error) {
+          notification = {
+            ...notification,
+            status: "provider_error",
+            error: String(notifyData.message || notifyData.error || "Falha ao disparar notificações de menção.")
+          };
+        } else {
+          notification = {
+            ...notification,
+            ...notifyData
+          };
+        }
+      }
+    } catch (notifyRuntimeError) {
+      notification = {
+        ...notification,
+        status: "invoke_failed",
+        error:
+          notifyRuntimeError instanceof Error
+            ? notifyRuntimeError.message
+            : "Falha ao disparar notificações de menção."
+      };
+    }
+  }
+
   return {
-    mentions_count: mentionedUserIds.length
+    mentions_count: mentionedUserIds.length,
+    notification
   };
 }
 

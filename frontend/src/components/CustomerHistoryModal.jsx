@@ -337,6 +337,7 @@ export default function CustomerHistoryModal({
   const [assetForm, setAssetForm] = useState(() => emptyAssetForm());
   const [internalMessageForm, setInternalMessageForm] = useState(() => emptyInternalMessageForm());
   const [savingInternalMessage, setSavingInternalMessage] = useState(false);
+  const [internalMessageFeedback, setInternalMessageFeedback] = useState({ type: "", message: "" });
   const [savingAsset, setSavingAsset] = useState(false);
   const [uploadingAssetId, setUploadingAssetId] = useState("");
   const [assetFeedback, setAssetFeedback] = useState({ type: "", message: "" });
@@ -376,6 +377,7 @@ export default function CustomerHistoryModal({
     setAssetFeedback({ type: "", message: "" });
     setAssetForm(emptyAssetForm());
     setInternalMessageForm(emptyInternalMessageForm());
+    setInternalMessageFeedback({ type: "", message: "" });
     setOmiePurchasesLoading(false);
     setOmiePurchasesError("");
     setOmiePurchasesFetched(false);
@@ -807,18 +809,21 @@ export default function CustomerHistoryModal({
     event.preventDefault();
     if (!companyId) {
       setError("Cliente inválido para registrar mensagem interna.");
+      setInternalMessageFeedback({ type: "", message: "" });
       return;
     }
 
     const authorUserId = String(appViewerUser?.user_id || "").trim();
     if (!authorUserId) {
       setError("Selecione um usuário atual válido para registrar mensagem interna.");
+      setInternalMessageFeedback({ type: "", message: "" });
       return;
     }
 
     const content = String(internalMessageForm.content || "").trim();
     if (!content) {
       setError("Descreva a mensagem interna da equipe.");
+      setInternalMessageFeedback({ type: "", message: "" });
       return;
     }
 
@@ -831,8 +836,9 @@ export default function CustomerHistoryModal({
 
     setSavingInternalMessage(true);
     setError("");
+    setInternalMessageFeedback({ type: "", message: "" });
     try {
-      await createCompanyInternalMessage({
+      const result = await createCompanyInternalMessage({
         company_id: companyId,
         company_name: companyProfile?.trade_name || companyName || "",
         created_by_user_id: authorUserId,
@@ -853,8 +859,23 @@ export default function CustomerHistoryModal({
       setInteractions(nextInteractions);
       setInternalMessageForm(emptyInternalMessageForm());
       setSelectedTab("interactions");
+      const sentEmail = Number(result?.notification?.sent_email || 0);
+      const sentWhatsApp = Number(result?.notification?.sent_whatsapp || 0);
+      const notificationStatus = String(result?.notification?.status || "");
+      if (notificationStatus === "invoke_failed" || notificationStatus === "provider_error") {
+        setInternalMessageFeedback({
+          type: "error",
+          message: `Mensagem salva, mas o reforço automático falhou: ${result?.notification?.error || "erro na integração de notificação."}`
+        });
+      } else {
+        setInternalMessageFeedback({
+          type: "success",
+          message: `Mensagem interna salva. Reforço enviado: ${sentEmail} e-mail(s) e ${sentWhatsApp} WhatsApp.`
+        });
+      }
     } catch (err) {
       setError(err.message);
+      setInternalMessageFeedback({ type: "", message: "" });
     } finally {
       setSavingInternalMessage(false);
     }
@@ -1783,6 +1804,11 @@ export default function CustomerHistoryModal({
                 </button>
               </div>
             </form>
+            {internalMessageFeedback.message ? (
+              <p className={internalMessageFeedback.type === "error" ? "error-text" : "success-text"}>
+                {internalMessageFeedback.message}
+              </p>
+            ) : null}
 
             <div className="table-wrap top-gap">
               <h4 className="top-gap">Mensagens internas</h4>

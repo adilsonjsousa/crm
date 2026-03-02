@@ -431,6 +431,7 @@ export default function CompaniesModule({
   const [selectedCustomerTab, setSelectedCustomerTab] = useState("history");
   const [customerLoading, setCustomerLoading] = useState(false);
   const [customerError, setCustomerError] = useState("");
+  const [customerSuccess, setCustomerSuccess] = useState("");
   const [customerHistoryRows, setCustomerHistoryRows] = useState([]);
   const [customerOpportunities, setCustomerOpportunities] = useState([]);
   const [customerOpportunityStageRows, setCustomerOpportunityStageRows] = useState([]);
@@ -739,11 +740,13 @@ export default function CompaniesModule({
       setCustomerInteractions([]);
       setInternalMessageForm(emptyInternalMessageForm());
       setCustomerError("");
+      setCustomerSuccess("");
       return;
     }
 
     setCustomerLoading(true);
     setCustomerError("");
+    setCustomerSuccess("");
     try {
       const [historyData, opportunityData, opportunityStageData, taskData, contactData, interactionData] = await Promise.all([
         listCompanyHistory({ companyId, limit: 220 }),
@@ -1339,18 +1342,21 @@ export default function CompaniesModule({
     event.preventDefault();
     if (!selectedCompanyId) {
       setCustomerError("Selecione um cliente para registrar mensagem interna.");
+      setCustomerSuccess("");
       return;
     }
 
     const authorUserId = String(appViewerUser?.user_id || "").trim();
     if (!authorUserId) {
       setCustomerError("Selecione um usuário atual válido para registrar mensagem interna.");
+      setCustomerSuccess("");
       return;
     }
 
     const content = String(internalMessageForm.content || "").trim();
     if (!content) {
       setCustomerError("Descreva a mensagem interna da equipe.");
+      setCustomerSuccess("");
       return;
     }
 
@@ -1363,8 +1369,9 @@ export default function CompaniesModule({
 
     setSavingInternalMessage(true);
     setCustomerError("");
+    setCustomerSuccess("");
     try {
-      await createCompanyInternalMessage({
+      const result = await createCompanyInternalMessage({
         company_id: selectedCompanyId,
         company_name: selectedCompany?.trade_name || "",
         created_by_user_id: authorUserId,
@@ -1380,8 +1387,19 @@ export default function CompaniesModule({
       setInternalMessageForm(emptyInternalMessageForm());
       await loadCustomerWorkspace(selectedCompanyId);
       setSelectedCustomerTab("interactions");
+      const sentEmail = Number(result?.notification?.sent_email || 0);
+      const sentWhatsApp = Number(result?.notification?.sent_whatsapp || 0);
+      const notificationStatus = String(result?.notification?.status || "");
+      if (notificationStatus === "invoke_failed" || notificationStatus === "provider_error") {
+        setCustomerError(
+          `Mensagem salva, mas o reforço automático falhou: ${result?.notification?.error || "erro na integração de notificação."}`
+        );
+      } else {
+        setCustomerSuccess(`Mensagem interna salva. Reforço enviado: ${sentEmail} e-mail(s) e ${sentWhatsApp} WhatsApp.`);
+      }
     } catch (err) {
       setCustomerError(err.message);
+      setCustomerSuccess("");
     } finally {
       setSavingInternalMessage(false);
     }
@@ -2031,6 +2049,7 @@ export default function CompaniesModule({
             </div>
 
             {customerError ? <p className="error-text">{customerError}</p> : null}
+            {customerSuccess ? <p className="success-text">{customerSuccess}</p> : null}
             {customerLoading ? <p className="muted top-gap">Carregando dados do cliente...</p> : null}
 
             {!customerLoading && selectedCustomerTab === "history" ? (
