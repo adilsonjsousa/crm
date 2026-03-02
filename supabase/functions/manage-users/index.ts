@@ -264,11 +264,21 @@ async function resolveCallerContext(adminClient: ReturnType<typeof createClient>
     throw new Error("workspace_domain_not_allowed");
   }
 
-  const { data: profile } = await adminClient
+  const { data: profileById } = await adminClient
     .from("app_users")
     .select("role,status")
     .eq("user_id", authUserId)
     .maybeSingle();
+
+  let profile = profileById;
+  if (!profile) {
+    const { data: profileByEmail } = await adminClient
+      .from("app_users")
+      .select("role,status")
+      .eq("email", email)
+      .maybeSingle();
+    profile = profileByEmail;
+  }
 
   const role = normalizeRole(profile?.role);
   const status = normalizeStatus(profile?.status);
