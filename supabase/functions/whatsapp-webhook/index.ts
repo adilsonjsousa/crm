@@ -19,8 +19,19 @@ function normalizeDigits(value: unknown) {
 
 function parseDirection(raw: unknown) {
   const value = String(raw ?? "").toLowerCase().trim();
-  if (value.includes("out") || value === "sent" || value === "from_me") return "outbound";
-  if (value.includes("in") || value === "received") return "inbound";
+  if (
+    value.includes("out") ||
+    value === "sent" ||
+    value === "from_me" ||
+    value.includes("saida") ||
+    value.includes("saída") ||
+    value.includes("enviad")
+  ) {
+    return "outbound";
+  }
+  if (value.includes("in") || value === "received" || value.includes("entrada") || value.includes("recebid")) {
+    return "inbound";
+  }
   return "inbound";
 }
 
@@ -39,49 +50,106 @@ function readNested(payload: AnyPayload, path: string[]) {
 }
 
 function extractMessage(payload: AnyPayload) {
-  const provider = String(payload.provider ?? payload.platform ?? payload.source ?? "whatsapp").trim() || "whatsapp";
+  const provider = String(payload.provider ?? payload.platform ?? payload.source ?? payload.origem ?? "whatsapp").trim() || "whatsapp";
+  const waSpeedData = asObject(payload.data ?? payload.dados);
   const fromMeRaw =
     payload.fromMe ??
     payload.from_me ??
+    payload.eu ??
+    payload.fromMeByMe ??
     readNested(payload, ["data", "fromMe"]) ??
+    readNested(payload, ["dados", "fromMe"]) ??
     readNested(payload, ["message", "fromMe"]) ??
-    readNested(payload, ["messageData", "fromMe"]);
+    readNested(payload, ["messageData", "fromMe"]) ??
+    readNested(payload, ["event", "fromMe"]) ??
+    readNested(waSpeedData, ["fromMe"]);
   const hasFromMe = typeof fromMeRaw === "boolean";
   const direction = hasFromMe
     ? (fromMeRaw ? "outbound" : "inbound")
-    : parseDirection(payload.direction ?? payload.event_direction ?? payload.flow ?? payload.status ?? payload.type);
+    : parseDirection(
+        payload.direction ??
+          payload.event_direction ??
+          payload.flow ??
+          payload.status ??
+          payload.type ??
+          payload.evento ??
+          payload.event
+      );
 
   const bodyCandidates = [
+    payload.mensagem,
+    payload.mensagem_texto,
+    payload.msg,
+    payload.texto,
+    payload.conteudo,
     payload.body,
     payload.message,
     payload.text,
+    payload.last_message,
+    payload.ultima_mensagem,
+    readNested(payload, ["data", "message"]),
+    readNested(payload, ["data", "mensagem"]),
+    readNested(payload, ["dados", "message"]),
+    readNested(payload, ["dados", "mensagem"]),
     readNested(payload, ["data", "body"]),
     readNested(payload, ["data", "text"]),
+    readNested(payload, ["dados", "body"]),
+    readNested(payload, ["dados", "text"]),
+    readNested(payload, ["event", "message"]),
+    readNested(payload, ["event", "body"]),
     readNested(payload, ["message", "text"]),
     readNested(payload, ["message", "body"]),
     readNested(payload, ["messageData", "textMessageData", "textMessage"]),
+    readNested(waSpeedData, ["message"]),
+    readNested(waSpeedData, ["mensagem"]),
     readNested(payload, ["Message"]),
     payload.Body
   ];
 
   const fromCandidates = [
+    payload.numero,
+    payload.number,
+    payload.num,
+    payload.whatsapp,
+    payload.whatsapp_number,
     payload.from,
     payload.sender,
     payload.senderPhone,
     payload.phone,
     payload.chatId,
+    payload.remoteJid,
+    payload.jid,
     payload.From,
+    readNested(payload, ["data", "numero"]),
+    readNested(payload, ["data", "number"]),
+    readNested(payload, ["data", "phone"]),
+    readNested(payload, ["dados", "numero"]),
+    readNested(payload, ["dados", "number"]),
+    readNested(payload, ["dados", "phone"]),
+    readNested(payload, ["event", "numero"]),
+    readNested(payload, ["event", "phone"]),
     readNested(payload, ["data", "from"]),
+    readNested(payload, ["dados", "from"]),
     readNested(payload, ["message", "from"]),
-    readNested(payload, ["messageData", "from"])
+    readNested(payload, ["messageData", "from"]),
+    readNested(waSpeedData, ["from"]),
+    readNested(waSpeedData, ["numero"]),
+    readNested(waSpeedData, ["phone"])
   ];
 
   const toCandidates = [
+    payload.destino,
+    payload.to_number,
+    payload.numero_destino,
+    payload.receiver,
     payload.to,
     payload.recipient,
     payload.toPhone,
     payload.To,
+    readNested(payload, ["data", "toPhone"]),
+    readNested(payload, ["dados", "toPhone"]),
     readNested(payload, ["data", "to"]),
+    readNested(payload, ["dados", "to"]),
     readNested(payload, ["message", "to"])
   ];
 
@@ -94,10 +162,36 @@ function extractMessage(payload: AnyPayload) {
 
   const messageIdCandidates = [
     payload.messageId,
+    payload.message_id,
     payload.id,
+    payload.protocolo,
+    payload.protocol,
+    payload.uuid,
     payload.MessageSid,
     readNested(payload, ["data", "id"]),
+    readNested(payload, ["dados", "id"]),
+    readNested(payload, ["event", "id"]),
+    readNested(payload, ["data", "messageId"]),
+    readNested(payload, ["dados", "messageId"]),
     readNested(payload, ["message", "id"])
+  ];
+
+  const contactNameCandidates = [
+    payload.nome,
+    payload.name,
+    payload.contact_name,
+    payload.contactName,
+    payload.pushName,
+    payload.user_name,
+    readNested(payload, ["data", "nome"]),
+    readNested(payload, ["data", "name"]),
+    readNested(payload, ["dados", "nome"]),
+    readNested(payload, ["dados", "name"]),
+    readNested(payload, ["event", "nome"]),
+    readNested(payload, ["event", "name"]),
+    readNested(payload, ["message", "senderName"]),
+    readNested(waSpeedData, ["nome"]),
+    readNested(waSpeedData, ["name"])
   ];
 
   const bodyValue = bodyCandidates.find((value) => typeof value === "string" && String(value).trim().length > 0);
@@ -105,14 +199,18 @@ function extractMessage(payload: AnyPayload) {
   const toValue = toCandidates.find((value) => String(value ?? "").trim().length > 0);
   const conversationIdValue = conversationIdCandidates.find((value) => String(value ?? "").trim().length > 0);
   const messageIdValue = messageIdCandidates.find((value) => String(value ?? "").trim().length > 0);
+  const contactNameValue = contactNameCandidates.find((value) => String(value ?? "").trim().length > 0);
 
   const text = String(bodyValue ?? "").trim();
   const from = normalizeDigits(fromValue);
   const to = normalizeDigits(toValue);
   const conversationId = String(conversationIdValue ?? "").trim();
   const messageId = String(messageIdValue ?? "").trim();
+  const contactName = String(contactNameValue ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  return { provider, direction, text, from, to, conversationId, messageId };
+  return { provider, direction, text, from, to, conversationId, messageId, contactName };
 }
 
 function phoneCandidates(rawDigits: string) {
@@ -135,6 +233,20 @@ function buildContactOrFilter(candidates: string[]) {
     if (digits.length >= 8) {
       const suffix8 = digits.slice(-8);
       clauses.add(`whatsapp.ilike.*${suffix8}*`);
+      clauses.add(`phone.ilike.*${suffix8}*`);
+    }
+  }
+  return [...clauses].join(",");
+}
+
+function buildCompanyOrFilter(candidates: string[]) {
+  const clauses = new Set<string>();
+  for (const candidate of candidates) {
+    const digits = normalizeDigits(candidate);
+    if (!digits) continue;
+    clauses.add(`phone.eq.${digits}`);
+    if (digits.length >= 8) {
+      const suffix8 = digits.slice(-8);
       clauses.add(`phone.ilike.*${suffix8}*`);
     }
   }
@@ -193,6 +305,13 @@ function bestContactMatch(
   return bestScore >= 60 ? best : null;
 }
 
+function sanitizeLikeTerm(value: string) {
+  return value
+    .replace(/[%*]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 Deno.serve(async (request: Request) => {
   if (request.method !== "POST") {
     return jsonResponse(405, { error: "method_not_allowed" });
@@ -248,6 +367,7 @@ Deno.serve(async (request: Request) => {
 
   let matchedCompanyId = "";
   let matchedContactId = "";
+  let matchMethod = "";
   if (candidates.length) {
     const orFilter = buildContactOrFilter(candidates);
     const { data: contacts, error: contactError } = await supabase
@@ -267,6 +387,56 @@ Deno.serve(async (request: Request) => {
     if (bestContact) {
       matchedContactId = String(bestContact.id || "");
       matchedCompanyId = String(bestContact.company_id || "");
+      matchMethod = "contact_phone";
+    }
+
+    if (!matchedCompanyId) {
+      const companyOrFilter = buildCompanyOrFilter(candidates);
+      if (companyOrFilter) {
+        const { data: companies, error: companyError } = await supabase
+          .from("companies")
+          .select("id,phone")
+          .or(companyOrFilter)
+          .limit(10);
+
+        if (companyError) {
+          return jsonResponse(500, {
+            error: "company_lookup_failed",
+            message: companyError.message
+          });
+        }
+
+        const firstCompany = (companies || [])[0];
+        if (firstCompany) {
+          matchedCompanyId = String(firstCompany.id || "");
+          matchMethod = "company_phone";
+        }
+      }
+    }
+  }
+
+  if (!matchedCompanyId && extracted.contactName && extracted.contactName.length >= 4) {
+    const likeName = sanitizeLikeTerm(extracted.contactName);
+    if (likeName.length >= 4) {
+      const { data: contactsByName, error: contactsByNameError } = await supabase
+        .from("contacts")
+        .select("id,company_id,full_name")
+        .ilike("full_name", `%${likeName}%`)
+        .limit(6);
+
+      if (contactsByNameError) {
+        return jsonResponse(500, {
+          error: "contact_name_lookup_failed",
+          message: contactsByNameError.message
+        });
+      }
+
+      const nameCandidates = (contactsByName || []).filter((item) => String(item.company_id || "").trim());
+      if (nameCandidates.length === 1) {
+        matchedContactId = String(nameCandidates[0].id || "");
+        matchedCompanyId = String(nameCandidates[0].company_id || "");
+        matchMethod = "contact_name_unique";
+      }
     }
   }
 
@@ -276,6 +446,12 @@ Deno.serve(async (request: Request) => {
     return jsonResponse(202, {
       status: "ignored",
       reason: "company_not_mapped",
+      debug: {
+        contact_name: extracted.contactName || null,
+        direction: extracted.direction,
+        from: extracted.from,
+        to: extracted.to
+      },
       phone_candidates: candidates
     });
   }
@@ -307,6 +483,7 @@ Deno.serve(async (request: Request) => {
     status: "ok",
     company_id: companyId,
     contact_id: matchedContactId || null,
-    direction: extracted.direction
+    direction: extracted.direction,
+    match_method: matchMethod || "none"
   });
 });
