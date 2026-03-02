@@ -126,17 +126,71 @@ function phoneCandidates(rawDigits: string) {
 }
 
 function buildContactOrFilter(candidates: string[]) {
-  const clauses: string[] = [];
+  const clauses = new Set<string>();
   for (const candidate of candidates) {
-    clauses.push(`whatsapp.eq.${candidate}`);
-    clauses.push(`phone.eq.${candidate}`);
+    const digits = normalizeDigits(candidate);
+    if (!digits) continue;
+    clauses.add(`whatsapp.eq.${digits}`);
+    clauses.add(`phone.eq.${digits}`);
+    if (digits.length >= 8) {
+      const suffix8 = digits.slice(-8);
+      clauses.add(`whatsapp.ilike.*${suffix8}*`);
+      clauses.add(`phone.ilike.*${suffix8}*`);
+    }
   }
-  return clauses.join(",");
+  return [...clauses].join(",");
 }
 
 function uniqueCandidates(values: string[]) {
   const normalized = values.map((value) => normalizeDigits(value)).filter(Boolean);
   return [...new Set(normalized)];
+}
+
+function normalizePhoneSet(values: unknown[]) {
+  const result = new Set<string>();
+  for (const value of values) {
+    const digits = normalizeDigits(value);
+    if (!digits) continue;
+    result.add(digits);
+    if (digits.startsWith("55") && digits.length > 11) {
+      result.add(digits.slice(2));
+    }
+    if (digits.length > 11) result.add(digits.slice(-11));
+    if (digits.length > 10) result.add(digits.slice(-10));
+  }
+  return result;
+}
+
+function bestContactMatch(
+  contacts: Array<Record<string, unknown>>,
+  candidates: string[]
+) {
+  if (!Array.isArray(contacts) || !contacts.length) return null;
+  const candidateSet = normalizePhoneSet(candidates);
+  const suffix8Set = new Set<string>();
+  for (const candidate of candidateSet) {
+    if (candidate.length >= 8) suffix8Set.add(candidate.slice(-8));
+  }
+
+  let best: Record<string, unknown> | null = null;
+  let bestScore = -1;
+  for (const contact of contacts) {
+    const phoneSet = normalizePhoneSet([contact.whatsapp, contact.phone]);
+    let score = 0;
+    for (const phone of phoneSet) {
+      if (candidateSet.has(phone)) {
+        score = Math.max(score, 100);
+      } else if (phone.length >= 8 && suffix8Set.has(phone.slice(-8))) {
+        score = Math.max(score, 60);
+      }
+    }
+    if (score > bestScore) {
+      best = contact;
+      bestScore = score;
+    }
+  }
+
+  return bestScore >= 60 ? best : null;
 }
 
 Deno.serve(async (request: Request) => {
@@ -200,7 +254,7 @@ Deno.serve(async (request: Request) => {
       .from("contacts")
       .select("id,company_id,whatsapp,phone")
       .or(orFilter)
-      .limit(10);
+      .limit(40);
 
     if (contactError) {
       return jsonResponse(500, {
@@ -209,10 +263,10 @@ Deno.serve(async (request: Request) => {
       });
     }
 
-    const firstContact = (contacts || []).find((item) => item.company_id) || (contacts || [])[0];
-    if (firstContact) {
-      matchedContactId = firstContact.id;
-      matchedCompanyId = firstContact.company_id || "";
+    const bestContact = bestContactMatch((contacts || []) as Array<Record<string, unknown>>, candidates);
+    if (bestContact) {
+      matchedContactId = String(bestContact.id || "");
+      matchedCompanyId = String(bestContact.company_id || "");
     }
   }
 
