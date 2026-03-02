@@ -26,6 +26,27 @@ const THEME_STORAGE_KEY = "crm-theme";
 const CANONICAL_CRM_HOST = "crm-adilson-sousas-projects.vercel.app";
 const LEGACY_ALIAS_REDIRECT_HOSTS = new Set(["crm-kappa-peach.vercel.app"]);
 const ALLOWED_WORKSPACE_DOMAINS = new Set(["artprinter.com.br", "artestampa.com.br"]);
+const EMERGENCY_SUPER_ADMIN_ID = "emergency-super-admin";
+const EMERGENCY_SUPER_ADMIN = {
+  user_id: EMERGENCY_SUPER_ADMIN_ID,
+  email: "adilson@artprinter.com.br",
+  full_name: "Adilson João (EMERGENCY ADMIN)",
+  whatsapp: "",
+  role: "admin",
+  status: "active",
+  permissions: {
+    dashboard: "admin",
+    pipeline: "admin",
+    hunter: "admin",
+    companies: "admin",
+    contacts: "admin",
+    tasks: "admin",
+    reports: "admin",
+    orders: "admin",
+    service: "admin",
+    settings: "admin"
+  }
+};
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", hint: "Indicadores", icon: "◩" },
@@ -145,6 +166,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(() => Boolean(isSupabaseConfigured));
   const [authSession, setAuthSession] = useState(null);
   const [authError, setAuthError] = useState("");
+  const [emergencyMode, setEmergencyMode] = useState(false);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [companiesFocusTarget, setCompaniesFocusTarget] = useState("company");
   const [companiesFocusRequest, setCompaniesFocusRequest] = useState(0);
@@ -274,6 +296,14 @@ export default function App() {
     let active = true;
 
     async function loadAppUsersContext() {
+      if (emergencyMode) {
+        if (!active) return;
+        setAppUsers([EMERGENCY_SUPER_ADMIN]);
+        setAppViewerUserId(EMERGENCY_SUPER_ADMIN_ID);
+        setAppUsersError("");
+        return;
+      }
+
       if (!isSupabaseConfigured || !authSession?.user) {
         if (!active) return;
         setAppUsers([]);
@@ -322,7 +352,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [authSession]);
+  }, [authSession, emergencyMode]);
 
   useEffect(() => {
     let active = true;
@@ -418,6 +448,7 @@ export default function App() {
   }, [appViewerUserId]);
 
   function hasAccessToModule(moduleId, requiredLevel = "read") {
+    if (emergencyMode) return true;
     if (!appViewerUser) return false;
     return hasModulePermission(appViewerUser, moduleId, requiredLevel);
   }
@@ -1147,7 +1178,27 @@ export default function App() {
     }
   }
 
+  function handleEmergencySuperAdminAccess() {
+    setEmergencyMode(true);
+    setAuthLoading(false);
+    setAuthError("");
+    setAuthSession(null);
+    setAppUsers([EMERGENCY_SUPER_ADMIN]);
+    setAppViewerUserId(EMERGENCY_SUPER_ADMIN_ID);
+  }
+
   async function handleWorkspaceSignOut() {
+    if (emergencyMode) {
+      setEmergencyMode(false);
+      setAuthSession(null);
+      setAppViewerUserId("");
+      setAppUsers([]);
+      setSearchResults([]);
+      setSearchSuggestions([]);
+      setSearchExecuted(false);
+      return;
+    }
+
     if (!supabase) return;
     setMentionsOpen(false);
     try {
@@ -1189,16 +1240,21 @@ export default function App() {
     );
   }
 
-  if (!authSession?.user) {
+  if (!authSession?.user && !emergencyMode) {
     return (
       <div className="auth-gate">
         <section className="auth-gate-card">
           <h1>CRM Artprinter</h1>
           <p>Acesse com Google Workspace. Domínios permitidos: {allowedDomainsLabel}.</p>
           {authError ? <p className="error-text">{authError}</p> : null}
-          <button type="button" className="btn-primary auth-gate-btn" onClick={handleGoogleWorkspaceLogin}>
-            Entrar com Google
-          </button>
+          <div className="auth-gate-actions">
+            <button type="button" className="btn-primary auth-gate-btn" onClick={handleGoogleWorkspaceLogin}>
+              Entrar com Google
+            </button>
+            <button type="button" className="btn-ghost auth-gate-btn" onClick={handleEmergencySuperAdminAccess}>
+              Entrar em modo contingência
+            </button>
+          </div>
         </section>
       </div>
     );
@@ -1417,7 +1473,11 @@ export default function App() {
               ) : null}
             </div>
             <div className="crm-auth-user">
-              <span className="crm-auth-user-name">{appViewerUser?.full_name || normalizeWorkspaceEmail(authSession?.user?.email)}</span>
+              <span className="crm-auth-user-name">
+                {emergencyMode
+                  ? "Modo contingência (Super Admin)"
+                  : appViewerUser?.full_name || normalizeWorkspaceEmail(authSession?.user?.email)}
+              </span>
               <button type="button" className="btn-ghost btn-table-action" onClick={handleWorkspaceSignOut}>
                 Sair
               </button>

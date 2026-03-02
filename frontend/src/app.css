@@ -116,6 +116,12 @@ body {
   justify-self: flex-start;
 }
 
+.auth-gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .crm-layout {
   min-height: 100vh;
   display: grid;
