@@ -417,6 +417,8 @@ export default function CompaniesModule({
   const [contactForm, setContactForm] = useState(EMPTY_CONTACT_FORM);
   const [contactCompanySearchTerm, setContactCompanySearchTerm] = useState("");
   const [contactCompanySuggestionsOpen, setContactCompanySuggestionsOpen] = useState(false);
+  const [contactSearchInput, setContactSearchInput] = useState("");
+  const [contactSearchTerm, setContactSearchTerm] = useState("");
   const [editingCompanyId, setEditingCompanyId] = useState("");
   const [editForm, setEditForm] = useState(EMPTY_EDIT_COMPANY_FORM);
   const [editError, setEditError] = useState("");
@@ -487,6 +489,39 @@ export default function CompaniesModule({
       : companyOptions;
     return source.slice(0, 10);
   }, [companyOptions, contactCompanySearchTerm]);
+  const filteredContacts = useMemo(() => {
+    const normalizedTerm = normalizeLookupText(contactSearchTerm);
+    const digitsTerm = String(contactSearchTerm || "").replace(/\D/g, "");
+    if (!normalizedTerm && !digitsTerm) return contacts;
+    return contacts.filter((contact) => {
+      const contactName = normalizeLookupText(contact.full_name || "");
+      const roleTitle = normalizeLookupText(contact.role_title || "");
+      const email = normalizeLookupText(contact.email || "");
+      const companyName = normalizeLookupText(contact.companies?.trade_name || "");
+      const companyCnpj = cleanCnpj(contact.companies?.cnpj || "");
+      const phoneDigits = String(contact.phone || "").replace(/\D/g, "");
+      const whatsappDigits = String(contact.whatsapp || "").replace(/\D/g, "");
+
+      if (
+        normalizedTerm &&
+        (contactName.includes(normalizedTerm) ||
+          roleTitle.includes(normalizedTerm) ||
+          email.includes(normalizedTerm) ||
+          companyName.includes(normalizedTerm))
+      ) {
+        return true;
+      }
+
+      if (
+        digitsTerm &&
+        (companyCnpj.includes(digitsTerm) || phoneDigits.includes(digitsTerm) || whatsappDigits.includes(digitsTerm))
+      ) {
+        return true;
+      }
+
+      return false;
+    });
+  }, [contacts, contactSearchTerm]);
   const interactionWhatsDigits = useMemo(
     () => toWhatsAppBrazilNumber(interactionForm.whatsapp_number || interactionForm.phone_number),
     [interactionForm.phone_number, interactionForm.whatsapp_number]
@@ -698,7 +733,7 @@ export default function CompaniesModule({
       const [companiesData, optionsData, contactsData, lifecycleData] = await Promise.all([
         listCompanies(),
         listCompanyOptions(),
-        listContacts(),
+        listContacts({ limit: 5000, orderBy: "full_name", ascending: true }),
         listCompanyLifecycleStages({ includeInactive: true })
       ]);
 
@@ -1017,6 +1052,16 @@ export default function CompaniesModule({
       cnpj: cnpjDigits.length === 14 ? cnpjDigits : "",
       search_term: typedTerm
     });
+  }
+
+  function handleContactSearchSubmit(event) {
+    event.preventDefault();
+    setContactSearchTerm(contactSearchInput.trim());
+  }
+
+  function clearContactSearch() {
+    setContactSearchInput("");
+    setContactSearchTerm("");
   }
 
   function startEditCompany(company) {
@@ -1819,91 +1864,120 @@ export default function CompaniesModule({
       ) : null}
 
       {isContactsView ? (
-      <div className="two-col top-gap">
+      <div className="contacts-workspace top-gap">
         <article className="panel" ref={contactPanelRef}>
           <h2>Criar contato (com ou sem vínculo)</h2>
-          <form className="form-grid" onSubmit={handleContactSubmit}>
-            <div className="contacts-company-autocomplete">
+          <form className="form-grid contacts-create-form" onSubmit={handleContactSubmit}>
+            <div className="contacts-create-grid">
+              <div className="contacts-company-autocomplete contacts-create-company-field">
+                <input
+                  type="text"
+                  placeholder="Empresa (opcional: digite nome ou CNPJ)"
+                  value={contactCompanySearchTerm}
+                  onChange={(event) => handleContactCompanySearchChange(event.target.value)}
+                  onFocus={() => setContactCompanySuggestionsOpen(Boolean(contactCompanySearchTerm.trim()))}
+                  onBlur={() => window.setTimeout(() => setContactCompanySuggestionsOpen(false), 120)}
+                />
+                {contactCompanySuggestionsOpen && contactCompanySearchTerm.trim().length >= 1 ? (
+                  <div className="contacts-company-suggestions">
+                    {!contactCompanySuggestions.length ? <p className="muted">Nenhuma empresa encontrada.</p> : null}
+                    {contactCompanySuggestions.length ? (
+                      <ul className="search-suggestions-list">
+                        {contactCompanySuggestions.map((company) => (
+                          <li key={company.id}>
+                            <button
+                              type="button"
+                              className="search-suggestion-btn"
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                handleSelectContactCompany(company);
+                              }}
+                            >
+                              <strong>{company.trade_name || "Empresa"}</strong>
+                              <span>{company.cnpj ? maskCnpj(company.cnpj) : "Sem CNPJ"}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {!contactCompanySuggestions.length ? (
+                      <div className="contacts-company-suggestions-actions">
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action contacts-create-company-btn"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={handleRequestCreateCompanyFromContact}
+                        >
+                          + Cadastrar nova empresa
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
               <input
-                type="text"
-                placeholder="Empresa (opcional: digite nome ou CNPJ)"
-                value={contactCompanySearchTerm}
-                onChange={(event) => handleContactCompanySearchChange(event.target.value)}
-                onFocus={() => setContactCompanySuggestionsOpen(Boolean(contactCompanySearchTerm.trim()))}
-                onBlur={() => window.setTimeout(() => setContactCompanySuggestionsOpen(false), 120)}
+                required
+                placeholder="Nome do contato"
+                value={contactForm.full_name}
+                onChange={(event) => setContactForm((prev) => ({ ...prev, full_name: upperLettersOnly(event.target.value) }))}
               />
-              {contactCompanySuggestionsOpen && contactCompanySearchTerm.trim().length >= 1 ? (
-                <div className="contacts-company-suggestions">
-                  {!contactCompanySuggestions.length ? <p className="muted">Nenhuma empresa encontrada.</p> : null}
-                  {contactCompanySuggestions.length ? (
-                    <ul className="search-suggestions-list">
-                      {contactCompanySuggestions.map((company) => (
-                        <li key={company.id}>
-                          <button
-                            type="button"
-                            className="search-suggestion-btn"
-                            onMouseDown={(event) => {
-                              event.preventDefault();
-                              handleSelectContactCompany(company);
-                            }}
-                          >
-                            <strong>{company.trade_name || "Empresa"}</strong>
-                            <span>{company.cnpj ? maskCnpj(company.cnpj) : "Sem CNPJ"}</span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  {!contactCompanySuggestions.length ? (
-                    <div className="contacts-company-suggestions-actions">
-                      <button
-                        type="button"
-                        className="btn-ghost btn-table-action contacts-create-company-btn"
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={handleRequestCreateCompanyFromContact}
-                      >
-                        + Cadastrar nova empresa
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+              <input
+                placeholder="WhatsApp"
+                value={contactForm.whatsapp}
+                onChange={(event) => setContactForm((prev) => ({ ...prev, whatsapp: formatBrazilPhone(event.target.value) }))}
+              />
+              <input
+                placeholder="E-mail"
+                value={contactForm.email}
+                onChange={(event) => setContactForm((prev) => ({ ...prev, email: event.target.value }))}
+              />
+              <input
+                placeholder="Cargo"
+                value={contactForm.role_title}
+                onChange={(event) => setContactForm((prev) => ({ ...prev, role_title: event.target.value }))}
+              />
+              <input
+                type="date"
+                value={contactForm.birth_date}
+                onChange={(event) => setContactForm((prev) => ({ ...prev, birth_date: event.target.value }))}
+              />
+              <button type="submit" className="btn-primary contacts-create-submit" disabled={savingContactCreate}>
+                {savingContactCreate ? "Salvando..." : "Salvar contato"}
+              </button>
             </div>
-            <input
-              required
-              placeholder="Nome do contato"
-              value={contactForm.full_name}
-              onChange={(event) => setContactForm((prev) => ({ ...prev, full_name: upperLettersOnly(event.target.value) }))}
-            />
-            <input
-              placeholder="E-mail"
-              value={contactForm.email}
-              onChange={(event) => setContactForm((prev) => ({ ...prev, email: event.target.value }))}
-            />
-            <input
-              placeholder="Cargo"
-              value={contactForm.role_title}
-              onChange={(event) => setContactForm((prev) => ({ ...prev, role_title: event.target.value }))}
-            />
-            <input
-              placeholder="WhatsApp"
-              value={contactForm.whatsapp}
-              onChange={(event) => setContactForm((prev) => ({ ...prev, whatsapp: formatBrazilPhone(event.target.value) }))}
-            />
-            <input
-              type="date"
-              value={contactForm.birth_date}
-              onChange={(event) => setContactForm((prev) => ({ ...prev, birth_date: event.target.value }))}
-            />
-            <button type="submit" className="btn-primary" disabled={savingContactCreate}>
-              {savingContactCreate ? "Salvando..." : "Salvar contato"}
-            </button>
           </form>
         </article>
 
         <article className="panel">
-          <h2>Contatos recentes</h2>
-          <p className="muted">Clique em "Editar" para abrir o pop-up de edição de contato.</p>
+          <div className="contacts-list-header">
+            <div>
+              <h2>Lista de contatos</h2>
+              <p className="muted">Use a busca por lupa e clique em "Editar" para corrigir rapidamente.</p>
+            </div>
+            <p className="contacts-list-count">
+              {filteredContacts.length} de {contacts.length} contato(s)
+            </p>
+          </div>
+          <form className="contacts-search-form" onSubmit={handleContactSearchSubmit}>
+            <input
+              type="text"
+              placeholder="Buscar por empresa, contato, cargo, e-mail, WhatsApp ou CNPJ..."
+              value={contactSearchInput}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+                setContactSearchInput(nextValue);
+                if (!nextValue.trim()) setContactSearchTerm("");
+              }}
+            />
+            <button type="submit" className="btn-primary btn-table-action" aria-label="Buscar contato">
+              🔍
+            </button>
+            {contactSearchTerm ? (
+              <button type="button" className="btn-ghost btn-table-action" onClick={clearContactSearch}>
+                Limpar
+              </button>
+            ) : null}
+          </form>
           {loading ? <p className="muted">Carregando...</p> : null}
           <div className="table-wrap">
             <table>
@@ -1919,7 +1993,7 @@ export default function CompaniesModule({
                 </tr>
               </thead>
               <tbody>
-                {contacts.map((contact) => (
+                {filteredContacts.map((contact) => (
                   <tr key={contact.id}>
                     <td>
                       {contact.company_id ? (
@@ -1959,6 +2033,13 @@ export default function CompaniesModule({
                     </td>
                   </tr>
                 ))}
+                {!loading && !filteredContacts.length ? (
+                  <tr>
+                    <td colSpan={7} className="muted">
+                      Nenhum contato encontrado para o filtro informado.
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>

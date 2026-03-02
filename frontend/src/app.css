@@ -2255,6 +2255,56 @@ tbody tr:hover {
   position: relative;
 }
 
+.contacts-workspace {
+  display: grid;
+  gap: 12px;
+}
+
+.contacts-create-form {
+  gap: 0;
+}
+
+.contacts-create-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.3fr) repeat(3, minmax(160px, 1fr));
+  gap: 8px;
+  align-items: center;
+}
+
+.contacts-create-company-field {
+  grid-column: span 2;
+}
+
+.contacts-create-submit {
+  width: 100%;
+}
+
+.contacts-list-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.contacts-list-count {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  font-size: 0.82rem;
+  color: var(--text-sub);
+  background: var(--bg-surface-muted);
+  white-space: nowrap;
+}
+
+.contacts-search-form {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0 10px;
+}
+
 .contacts-company-suggestions {
   position: absolute;
   top: calc(100% + 6px);
@@ -2984,6 +3034,23 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
+  .contacts-create-grid {
+    grid-template-columns: repeat(2, minmax(170px, 1fr));
+  }
+
+  .contacts-create-company-field {
+    grid-column: 1 / -1;
+  }
+
+  .contacts-search-form {
+    grid-template-columns: 1fr;
+  }
+
+  .contacts-list-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .hunter-table-header,
   .hunter-quick-header {
     flex-direction: column;
@@ -2993,6 +3060,10 @@ tbody tr:hover {
 
 @media (max-width: 680px) {
   .settings-product-create-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .contacts-create-grid {
     grid-template-columns: 1fr;
   }
 }

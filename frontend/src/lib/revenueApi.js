@@ -1065,13 +1065,20 @@ export async function deleteCompany(companyId) {
   if (error) throw new Error(normalizeError(error, "Falha ao excluir empresa."));
 }
 
-export async function listContacts() {
+export async function listContacts(options = {}) {
+  const rawLimit = Number(options?.limit);
+  const safeLimit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(10000, Math.trunc(rawLimit))) : 200;
+  const allowedOrderColumns = new Set(["created_at", "full_name", "updated_at"]);
+  const requestedOrder = String(options?.orderBy || "created_at").trim();
+  const orderBy = allowedOrderColumns.has(requestedOrder) ? requestedOrder : "created_at";
+  const ascending = Boolean(options?.ascending);
+
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("contacts")
-    .select("id,company_id,full_name,email,phone,whatsapp,birth_date,role_title,is_primary,companies:company_id(trade_name)")
-    .order("created_at", { ascending: false })
-    .limit(200);
+    .select("id,company_id,full_name,email,phone,whatsapp,birth_date,role_title,is_primary,companies:company_id(trade_name,cnpj)")
+    .order(orderBy, { ascending })
+    .limit(safeLimit);
   if (error) throw new Error(normalizeError(error, "Falha ao listar contatos."));
   return (data || []).map((item) => ({
     ...item,
