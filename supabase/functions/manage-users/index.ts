@@ -23,6 +23,13 @@ type AppUserRow = {
   updated_at: string | null;
 };
 
+type CallerContext = {
+  authUserId: string;
+  email: string;
+  role: UserRole;
+  status: UserStatus;
+};
+
 const ACCESS_MODULES = [
   "dashboard",
   "pipeline",
@@ -36,6 +43,7 @@ const ACCESS_MODULES = [
   "settings"
 ];
 const ACCESS_LEVELS = ["none", "read", "edit", "admin"];
+const ALLOWED_WORKSPACE_DOMAINS = new Set(["artprinter.com.br", "artestampa.com.br"]);
 
 const DEFAULT_PERMISSIONS: Record<UserRole, UserPermissionMap> = {
   admin: {
@@ -128,6 +136,13 @@ function normalizeEmail(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function extractEmailDomain(email: string) {
+  const normalized = normalizeEmail(email);
+  const atIndex = normalized.lastIndexOf("@");
+  if (atIndex <= 0) return "";
+  return normalized.slice(atIndex + 1);
+}
+
 function normalizeName(value: unknown) {
   return String(value ?? "")
     .replace(/\s+/g, " ")
@@ -170,6 +185,13 @@ function requiredEnv(name: string) {
   return value;
 }
 
+function normalizeBearerToken(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw.toLowerCase().startsWith("bearer ")) return raw.slice(7).trim();
+  return raw;
+}
+
 function parseRedirectTo(body: AnyRecord) {
   const redirectTo = String(body.redirect_to ?? body.redirectTo ?? "").trim();
   return redirectTo || undefined;
@@ -193,6 +215,46 @@ async function listAllAuthUsers(adminClient: ReturnType<typeof createClient>) {
   }
 
   return users;
+}
+
+async function resolveCallerContext(adminClient: ReturnType<typeof createClient>, request: Request): Promise<CallerContext> {
+  const authHeader = String(request.headers.get("authorization") || "").trim();
+  const accessToken = normalizeBearerToken(authHeader);
+  if (!accessToken) {
+    throw new Error("not_authenticated");
+  }
+
+  const { data: authData, error: authError } = await adminClient.auth.getUser(accessToken);
+  if (authError || !authData?.user?.id) {
+    throw new Error("not_authenticated");
+  }
+
+  const authUserId = String(authData.user.id || "").trim();
+  const email = normalizeEmail(authData.user.email);
+  const domain = extractEmailDomain(email);
+  if (!email || !domain || !ALLOWED_WORKSPACE_DOMAINS.has(domain)) {
+    throw new Error("workspace_domain_not_allowed");
+  }
+
+  const { data: profile } = await adminClient
+    .from("app_users")
+    .select("role,status")
+    .eq("user_id", authUserId)
+    .maybeSingle();
+
+  const role = normalizeRole(profile?.role);
+  const status = normalizeStatus(profile?.status);
+
+  return {
+    authUserId,
+    email,
+    role,
+    status
+  };
+}
+
+function canManageUsers(role: UserRole) {
+  return role === "admin" || role === "manager";
 }
 
 async function findAuthUserByEmail(adminClient: ReturnType<typeof createClient>, email: string) {
@@ -591,22 +653,48 @@ Deno.serve(async (request: Request) => {
   }
 
   try {
+    const caller = await resolveCallerContext(adminClient, request);
+    if (caller.status !== "active") {
+      return jsonResponse(403, {
+        error: "user_inactive",
+        message: "Seu usuário está inativo para operações administrativas."
+      });
+    }
+
     if (action === "list") {
       const users = await handleList(adminClient);
       return jsonResponse(200, { users });
     }
 
     if (action === "create") {
+      if (!canManageUsers(caller.role)) {
+        return jsonResponse(403, {
+          error: "forbidden",
+          message: "Somente perfis Admin/Manager podem cadastrar usuários."
+        });
+      }
       const result = await handleCreate(adminClient, body);
       return jsonResponse(200, result);
     }
 
     if (action === "update") {
+      if (!canManageUsers(caller.role)) {
+        return jsonResponse(403, {
+          error: "forbidden",
+          message: "Somente perfis Admin/Manager podem editar usuários."
+        });
+      }
       const result = await handleUpdate(adminClient, body);
       return jsonResponse(200, result);
     }
 
     if (action === "reset_password") {
+      if (!canManageUsers(caller.role)) {
+        return jsonResponse(403, {
+          error: "forbidden",
+          message: "Somente perfis Admin/Manager podem reenviar acesso."
+        });
+      }
       const result = await handleResetPassword(adminClient, body);
       return jsonResponse(200, result);
     }
@@ -617,6 +705,18 @@ Deno.serve(async (request: Request) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao processar gestão de usuários.";
+    if (message === "not_authenticated") {
+      return jsonResponse(401, {
+        error: "not_authenticated",
+        message: "Faça login com Google Workspace para continuar."
+      });
+    }
+    if (message === "workspace_domain_not_allowed") {
+      return jsonResponse(403, {
+        error: "workspace_domain_not_allowed",
+        message: "Domínio não autorizado para acessar este CRM."
+      });
+    }
     return jsonResponse(500, {
       error: "manage_users_failed",
       message

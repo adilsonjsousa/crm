@@ -3209,7 +3209,7 @@ export default function SettingsModule() {
       <article className="panel">
         <h2>Usuários e acessos</h2>
         <p className="muted">
-          Cadastre usuários com login por e-mail, perfil de acesso e status. A senha é definida pelo próprio usuário via convite/reset.
+          Cadastre usuários com login Google Workspace (G Suite), perfil de acesso e status. Somente e-mails autorizados podem acessar.
         </p>
 
         {usersError ? <p className="error-text">{usersError}</p> : null}
@@ -3353,7 +3353,7 @@ export default function SettingsModule() {
                         onClick={() => handleResetUserPassword(user)}
                         disabled={resettingUserId === user.user_id}
                       >
-                        {resettingUserId === user.user_id ? "Enviando..." : "Reset senha"}
+                        {resettingUserId === user.user_id ? "Enviando..." : "Reenviar acesso"}
                       </button>
                     </div>
                   </td>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { isSupabaseConfigured } from "./lib/supabase";
+import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import {
   deleteCompany,
   listSystemUsers,
@@ -23,9 +23,9 @@ import ReportsModule from "./modules/ReportsModule";
 import CustomerHistoryModal from "./components/CustomerHistoryModal";
 
 const THEME_STORAGE_KEY = "crm-theme";
-const APP_VIEWER_STORAGE_KEY = "crm.app.viewer-user-id.v1";
 const CANONICAL_CRM_HOST = "crm-adilson-sousas-projects.vercel.app";
 const LEGACY_ALIAS_REDIRECT_HOSTS = new Set(["crm-kappa-peach.vercel.app"]);
+const ALLOWED_WORKSPACE_DOMAINS = new Set(["artprinter.com.br", "artestampa.com.br"]);
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", hint: "Indicadores", icon: "◩" },
@@ -111,35 +111,6 @@ function buildBirthdayWhatsAppUrl(alertItem) {
   return `https://wa.me/${normalizedNumber}?text=${text}`;
 }
 
-function normalizeLookupText(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function pickDefaultAppViewerUser(users = [], savedViewerId = "") {
-  if (!users.length) return null;
-  const normalizedSavedId = String(savedViewerId || "").trim();
-  if (normalizedSavedId) {
-    const savedUser = users.find((item) => String(item?.user_id || "").trim() === normalizedSavedId);
-    if (savedUser) return savedUser;
-  }
-
-  const privilegedUser = users.find((item) => {
-    const role = String(item?.role || "").toLowerCase();
-    return role === "admin" || role === "manager";
-  });
-  if (privilegedUser) return privilegedUser;
-
-  const preferredName = users.find((item) => normalizeLookupText(item?.full_name || "").includes("adilson"));
-  if (preferredName) return preferredName;
-
-  return users[0];
-}
-
 function buildUserInitials(user) {
   const source = String(user?.full_name || user?.email || "").trim();
   if (!source) return "US";
@@ -152,9 +123,28 @@ function buildUserInitials(user) {
   return `${parts[0][0] || ""}${parts[parts.length - 1][0] || ""}`.toUpperCase();
 }
 
+function normalizeWorkspaceEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function extractEmailDomain(email) {
+  const normalized = normalizeWorkspaceEmail(email);
+  const atIndex = normalized.lastIndexOf("@");
+  if (atIndex <= 0) return "";
+  return normalized.slice(atIndex + 1);
+}
+
+function isAllowedWorkspaceEmail(email) {
+  const domain = extractEmailDomain(email);
+  return Boolean(domain && ALLOWED_WORKSPACE_DOMAINS.has(domain));
+}
+
 export default function App() {
   const searchInputRef = useRef(null);
   const mentionsPanelRef = useRef(null);
+  const [authLoading, setAuthLoading] = useState(() => Boolean(isSupabaseConfigured));
+  const [authSession, setAuthSession] = useState(null);
+  const [authError, setAuthError] = useState("");
   const [activeTab, setActiveTab] = useState("dashboard");
   const [companiesFocusTarget, setCompaniesFocusTarget] = useState("company");
   const [companiesFocusRequest, setCompaniesFocusRequest] = useState(0);
@@ -220,10 +210,71 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) {
+      setAuthLoading(false);
+      setAuthSession(null);
+      setAuthError("");
+      return;
+    }
+
+    let active = true;
+
+    async function applySession(nextSession) {
+      if (!active) return;
+      if (!nextSession?.user) {
+        setAuthSession(null);
+        setAuthError("");
+        setAuthLoading(false);
+        return;
+      }
+
+      const userEmail = normalizeWorkspaceEmail(nextSession.user.email);
+      if (!isAllowedWorkspaceEmail(userEmail)) {
+        setAuthSession(null);
+        setAuthError(
+          `Acesso permitido somente para os domínios ${Array.from(ALLOWED_WORKSPACE_DOMAINS).join(" e ")}.`
+        );
+        setAuthLoading(false);
+        try {
+          await supabase.auth.signOut();
+        } catch {
+          // noop
+        }
+        return;
+      }
+
+      setAuthSession(nextSession);
+      setAuthError("");
+      setAuthLoading(false);
+    }
+
+    supabase.auth
+      .getSession()
+      .then(({ data }) => applySession(data?.session || null))
+      .catch(() => {
+        if (!active) return;
+        setAuthSession(null);
+        setAuthError("Falha ao validar sessão do Google Workspace.");
+        setAuthLoading(false);
+      });
+
+    const {
+      data: { subscription }
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      void applySession(nextSession || null);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     let active = true;
 
     async function loadAppUsersContext() {
-      if (!isSupabaseConfigured) {
+      if (!isSupabaseConfigured || !authSession?.user) {
         if (!active) return;
         setAppUsers([]);
         setAppUsersError("");
@@ -235,28 +286,28 @@ export default function App() {
       try {
         const users = await listSystemUsers();
         if (!active) return;
-        const activeUsers = users.filter((item) => item.status === "active");
-        const availableUsers = activeUsers.length ? activeUsers : users;
-        setAppUsers(availableUsers);
+        setAppUsers(users);
+
+        const authUserId = String(authSession.user.id || "").trim();
+        const authEmail = normalizeWorkspaceEmail(authSession.user.email);
+        const matchedUser =
+          users.find((item) => String(item?.user_id || "").trim() === authUserId) ||
+          users.find((item) => normalizeWorkspaceEmail(item?.email) === authEmail);
+
+        if (!matchedUser) {
+          setAppViewerUserId("");
+          setAppUsersError("Seu login Google foi validado, mas seu usuário ainda não está liberado no CRM.");
+          return;
+        }
+
+        if (String(matchedUser.status || "").toLowerCase() !== "active") {
+          setAppViewerUserId("");
+          setAppUsersError("Seu usuário está inativo no CRM. Solicite liberação ao administrador.");
+          return;
+        }
+
+        setAppViewerUserId(String(matchedUser.user_id || "").trim());
         setAppUsersError("");
-
-        if (!availableUsers.length) {
-          setAppViewerUserId("");
-          return;
-        }
-
-        const savedViewerId =
-          typeof window === "undefined" ? "" : String(window.localStorage.getItem(APP_VIEWER_STORAGE_KEY) || "").trim();
-        const selectedViewer = pickDefaultAppViewerUser(availableUsers, savedViewerId) || availableUsers[0];
-        if (!selectedViewer) {
-          setAppViewerUserId("");
-          return;
-        }
-
-        setAppViewerUserId(selectedViewer.user_id);
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, String(selectedViewer.user_id || ""));
-        }
       } catch (err) {
         if (!active) return;
         setAppUsers([]);
@@ -271,7 +322,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [authSession]);
 
   useEffect(() => {
     let active = true;
@@ -366,20 +417,8 @@ export default function App() {
     };
   }, [appViewerUserId]);
 
-  useEffect(() => {
-    if (!appUsers.length) return;
-    if (appViewerUser) return;
-    const fallbackUser = pickDefaultAppViewerUser(appUsers) || appUsers[0];
-    const fallbackUserId = String(fallbackUser?.user_id || "").trim();
-    if (!fallbackUserId) return;
-    setAppViewerUserId(fallbackUserId);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, fallbackUserId);
-    }
-  }, [appUsers, appViewerUser]);
-
   function hasAccessToModule(moduleId, requiredLevel = "read") {
-    if (!appUsers.length) return true;
+    if (!appViewerUser) return false;
     return hasModulePermission(appViewerUser, moduleId, requiredLevel);
   }
 
@@ -402,7 +441,10 @@ export default function App() {
   }
 
   const accessibleNavItems = useMemo(() => NAV_ITEMS.filter((item) => hasAccessToModule(item.id, "read")), [appUsers, appViewerUser]);
-  const appUserInitials = useMemo(() => buildUserInitials(appViewerUser), [appViewerUser]);
+  const appUserInitials = useMemo(
+    () => buildUserInitials(appViewerUser || { email: authSession?.user?.email || "" }),
+    [appViewerUser, authSession]
+  );
 
   useEffect(() => {
     if (!accessibleNavItems.length) return;
@@ -1084,6 +1126,113 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleGlobalShortcuts);
   }, [searchFocused]);
 
+  async function handleGoogleWorkspaceLogin() {
+    if (!supabase) return;
+    setAuthError("");
+    try {
+      const redirectTo =
+        typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}` : undefined;
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo,
+          queryParams: {
+            prompt: "select_account"
+          }
+        }
+      });
+      if (error) throw error;
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Falha ao iniciar login com Google Workspace.");
+    }
+  }
+
+  async function handleWorkspaceSignOut() {
+    if (!supabase) return;
+    setMentionsOpen(false);
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Falha ao encerrar sessão.");
+    } finally {
+      setAppViewerUserId("");
+      setAppUsers([]);
+      setSearchResults([]);
+      setSearchSuggestions([]);
+      setSearchExecuted(false);
+    }
+  }
+
+  const allowedDomainsLabel = Array.from(ALLOWED_WORKSPACE_DOMAINS)
+    .map((domain) => `@${domain}`)
+    .join(" e ");
+
+  if (!isSupabaseConfigured) {
+    return (
+      <div className="auth-gate">
+        <section className="auth-gate-card">
+          <h1>CRM Artprinter</h1>
+          <p>Configure `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` para habilitar autenticação e uso do sistema.</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (authLoading) {
+    return (
+      <div className="auth-gate">
+        <section className="auth-gate-card">
+          <h1>CRM Artprinter</h1>
+          <p>Validando sessão do Google Workspace...</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!authSession?.user) {
+    return (
+      <div className="auth-gate">
+        <section className="auth-gate-card">
+          <h1>CRM Artprinter</h1>
+          <p>Acesse com Google Workspace. Domínios permitidos: {allowedDomainsLabel}.</p>
+          {authError ? <p className="error-text">{authError}</p> : null}
+          <button type="button" className="btn-primary auth-gate-btn" onClick={handleGoogleWorkspaceLogin}>
+            Entrar com Google
+          </button>
+        </section>
+      </div>
+    );
+  }
+
+  if (appUsersLoading && !appViewerUser) {
+    return (
+      <div className="auth-gate">
+        <section className="auth-gate-card">
+          <h1>CRM Artprinter</h1>
+          <p>Carregando permissões do usuário...</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!appUsersLoading && !appViewerUser) {
+    return (
+      <div className="auth-gate">
+        <section className="auth-gate-card">
+          <h1>Acesso não liberado</h1>
+          <p>
+            Seu login ({normalizeWorkspaceEmail(authSession.user.email)}) foi autenticado, mas não está ativo no cadastro de
+            usuários do CRM.
+          </p>
+          {appUsersError ? <p className="error-text">{appUsersError}</p> : null}
+          <button type="button" className="btn-ghost auth-gate-btn" onClick={handleWorkspaceSignOut}>
+            Sair
+          </button>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="crm-layout">
       <aside className="crm-sidebar">
@@ -1267,31 +1416,12 @@ export default function App() {
                 </section>
               ) : null}
             </div>
-            {appUsers.length ? (
-              <label className="crm-viewer-select">
-                <span>Usuário ativo</span>
-                <select
-                  value={appViewerUserId}
-                  onChange={(event) => {
-                    const nextUserId = String(event.target.value || "").trim();
-                    setAppViewerUserId(nextUserId);
-                    if (typeof window !== "undefined") {
-                      window.localStorage.setItem(APP_VIEWER_STORAGE_KEY, nextUserId);
-                      window.localStorage.setItem("crm.pipeline.viewer-user-id.v1", nextUserId);
-                      window.localStorage.setItem("crm.hunter.viewer-user-id.v1", nextUserId);
-                      window.localStorage.setItem("crm.tasks.creator-user-id.v1", nextUserId);
-                    }
-                  }}
-                  disabled={appUsersLoading}
-                >
-                  {appUsers.map((user) => (
-                    <option key={user.user_id || user.email} value={user.user_id}>
-                      {(user.full_name || user.email || "Usuário").trim()} ({String(user.role || "sales").toUpperCase()})
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
+            <div className="crm-auth-user">
+              <span className="crm-auth-user-name">{appViewerUser?.full_name || normalizeWorkspaceEmail(authSession?.user?.email)}</span>
+              <button type="button" className="btn-ghost btn-table-action" onClick={handleWorkspaceSignOut}>
+                Sair
+              </button>
+            </div>
             <span className="crm-user-pill">{appUserInitials}</span>
           </div>
         </header>
