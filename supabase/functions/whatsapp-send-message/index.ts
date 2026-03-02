@@ -49,6 +49,123 @@ function parseOptionalJson(value: string) {
   }
 }
 
+function hasKey(record: AnyRecord, key: string) {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function stringifySafe(value: unknown) {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value ?? "");
+  }
+}
+
+function textLooksLikeError(value: unknown) {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) return false;
+  return (
+    raw.includes("error") ||
+    raw.includes("erro") ||
+    raw.includes("falha") ||
+    raw.includes("failed") ||
+    raw.includes("unauthorized") ||
+    raw.includes("forbidden") ||
+    raw.includes("invalid") ||
+    raw.includes("not connected") ||
+    raw.includes("desconect")
+  );
+}
+
+function isFalsyFailureFlag(value: unknown) {
+  if (value === false) return true;
+  const raw = String(value ?? "").trim().toLowerCase();
+  return raw === "false" || raw === "0" || raw === "failed" || raw === "error";
+}
+
+function isTruthySuccessFlag(value: unknown) {
+  if (value === true) return true;
+  const raw = String(value ?? "").trim().toLowerCase();
+  return raw === "true" || raw === "1" || raw === "ok" || raw === "success" || raw === "sent" || raw === "queued";
+}
+
+function isZapiSuccessPayload(payload: unknown) {
+  if (typeof payload === "string") {
+    const normalized = payload.trim().toLowerCase();
+    if (!normalized) return false;
+    if (textLooksLikeError(normalized)) return false;
+    return normalized.includes("ok") || normalized.includes("success") || normalized.includes("sent") || normalized.includes("queued");
+  }
+
+  const data = asObject(payload);
+  if (!Object.keys(data).length) return false;
+
+  const explicitErrorCandidates = ["error", "erro", "errors", "exception", "detail", "details"];
+  for (const key of explicitErrorCandidates) {
+    if (hasKey(data, key) && String(data[key] ?? "").trim()) {
+      if (textLooksLikeError(data[key])) return false;
+      if (key === "error" || key === "erro" || key === "errors" || key === "exception") return false;
+    }
+  }
+
+  if (hasKey(data, "connected") && isFalsyFailureFlag(data.connected)) return false;
+  if (hasKey(data, "status") && isFalsyFailureFlag(data.status)) return false;
+  if (hasKey(data, "success") && isFalsyFailureFlag(data.success)) return false;
+  if (hasKey(data, "sent") && isFalsyFailureFlag(data.sent)) return false;
+
+  const successSignals = ["messageId", "message_id", "zaapId", "id", "sent", "success", "status"];
+  for (const key of successSignals) {
+    if (!hasKey(data, key)) continue;
+    const value = data[key];
+    if (key === "id" || key === "messageId" || key === "message_id" || key === "zaapId") {
+      if (String(value ?? "").trim()) return true;
+      continue;
+    }
+    if (isTruthySuccessFlag(value)) return true;
+  }
+
+  if (hasKey(data, "message") && textLooksLikeError(data.message)) return false;
+  if (hasKey(data, "msg") && textLooksLikeError(data.msg)) return false;
+
+  return false;
+}
+
+function buildZapiUrlCandidates(baseUrl: string, instanceId: string, instanceToken: string, endpoint: string) {
+  const base = baseUrl.replace(/\/+$/, "");
+  const candidates: string[] = [];
+
+  const includeDirect = /\/instances\/[^/]+\/token\/[^/]+/i.test(base);
+  if (includeDirect) {
+    candidates.push(`${base}/${endpoint}`);
+  }
+
+  candidates.push(`${base}/instances/${instanceId}/token/${instanceToken}/${endpoint}`);
+  candidates.push(`${base}/instance/${instanceId}/token/${instanceToken}/${endpoint}`);
+  candidates.push(`${base}/instances/${instanceId}/${endpoint}?token=${encodeURIComponent(instanceToken)}`);
+  candidates.push(`${base}/instance/${instanceId}/${endpoint}?token=${encodeURIComponent(instanceToken)}`);
+
+  return Array.from(new Set(candidates));
+}
+
+function readProviderError(payload: unknown) {
+  if (typeof payload === "string") return payload.trim();
+  const record = asObject(payload);
+  return String(record.message || record.error || record.detail || "").trim();
+}
+
+function isTerminalProviderError(payload: unknown) {
+  const message = readProviderError(payload).toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes("client-token") ||
+    message.includes("invalid token") ||
+    message.includes("unauthorized") ||
+    message.includes("forbidden") ||
+    message.includes("not configured")
+  );
+}
+
 async function safeReadBody(response: Response) {
   try {
     const contentType = response.headers.get("content-type") || "";
@@ -135,32 +252,50 @@ async function sendViaZapi({
   ];
 
   const errors: string[] = [];
+  let lastResponse: unknown = null;
   for (const endpoint of endpoints) {
-    const url = `${baseUrl.replace(/\/+$/, "")}/instances/${instanceId}/token/${instanceToken}/${endpoint}`;
-    for (const payload of payloads) {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json"
-      };
-      if (clientToken) headers["client-token"] = clientToken;
+    const urls = buildZapiUrlCandidates(baseUrl, instanceId, instanceToken, endpoint);
+    for (const url of urls) {
+      for (const payload of payloads) {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json"
+        };
+        if (clientToken) headers["client-token"] = clientToken;
 
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          ...payload,
-          metadata
-        })
-      });
+        const response = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            ...payload,
+            metadata
+          })
+        });
 
-      const responseBody = await safeReadBody(response);
-      if (response.ok) {
-        return responseBody;
+        const responseBody = await safeReadBody(response);
+        if (response.ok) {
+          if (isZapiSuccessPayload(responseBody)) {
+            return responseBody;
+          }
+          if (isTerminalProviderError(responseBody)) {
+            throw new Error(readProviderError(responseBody) || "zapi_failed_terminal");
+          }
+          lastResponse = responseBody;
+          errors.push(`${endpoint}:200_invalid_ack@${url}`);
+          continue;
+        }
+        if (isTerminalProviderError(responseBody)) {
+          throw new Error(readProviderError(responseBody) || `zapi_http_${response.status}`);
+        }
+        lastResponse = responseBody;
+        errors.push(`${endpoint}:${response.status}@${url}`);
       }
-      errors.push(`${endpoint}:${response.status}`);
     }
   }
 
-  throw new Error(errors.length ? `zapi_failed_${errors.join(",")}` : "zapi_failed");
+  const details = lastResponse ? stringifySafe(lastResponse) : "";
+  const detailsSuffix = details ? `::${details.slice(0, 200)}` : "";
+  const compactErrors = errors.slice(0, 8).join(",");
+  throw new Error(errors.length ? `zapi_failed_${compactErrors}${detailsSuffix}` : "zapi_failed");
 }
 
 Deno.serve(async (request: Request) => {
@@ -253,4 +388,3 @@ Deno.serve(async (request: Request) => {
     });
   }
 });
-

@@ -862,16 +862,42 @@ export default function CustomerHistoryModal({
       const sentEmail = Number(result?.notification?.sent_email || 0);
       const sentWhatsApp = Number(result?.notification?.sent_whatsapp || 0);
       const notificationStatus = String(result?.notification?.status || "");
+      const requestedMentions = Number(result?.notification?.requested_mentions || mentionedUserIds.length || 0);
+      const notifyRows = Array.isArray(result?.notification?.results) ? result.notification.results : [];
+      const whatsappFailures = notifyRows
+        .map((item) => ({
+          fullName: String(item?.full_name || "Usuário").trim() || "Usuário",
+          status: String(item?.whatsapp_status || "").trim(),
+          reason:
+            String(item?.whatsapp_error || "").trim() ||
+            String(item?.reason || "").trim() ||
+            String(item?.whatsapp_status || "").trim() ||
+            "nao_enviado"
+        }))
+        .filter((item) => item.status && item.status !== "sent" && item.status !== "disabled");
       if (notificationStatus === "invoke_failed" || notificationStatus === "provider_error") {
         setInternalMessageFeedback({
           type: "error",
           message: `Mensagem salva, mas o reforço automático falhou: ${result?.notification?.error || "erro na integração de notificação."}`
         });
       } else {
-        setInternalMessageFeedback({
-          type: "success",
-          message: `Mensagem interna salva. Reforço enviado: ${sentEmail} e-mail(s) e ${sentWhatsApp} WhatsApp.`
-        });
+        if (requestedMentions > 0 && sentWhatsApp === 0) {
+          const details = whatsappFailures.length
+            ? whatsappFailures
+                .slice(0, 3)
+                .map((item) => `${item.fullName}: ${item.reason}`)
+                .join(" | ")
+            : "verifique WhatsApp cadastrado do usuário e conexão do provedor.";
+          setInternalMessageFeedback({
+            type: "error",
+            message: `Mensagem salva, mas nenhum WhatsApp foi entregue (${requestedMentions} menção/menções). ${details}`
+          });
+        } else {
+          setInternalMessageFeedback({
+            type: "success",
+            message: `Mensagem interna salva. Reforço enviado: ${sentEmail} e-mail(s) e ${sentWhatsApp} WhatsApp.`
+          });
+        }
       }
     } catch (err) {
       setError(err.message);

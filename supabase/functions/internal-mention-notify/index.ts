@@ -223,10 +223,14 @@ async function sendViaWhatsAppFunction({
 
   const payload = await safeReadBody(response);
   if (!response.ok) {
+    const payloadObject = asObject(payload);
+    const payloadMessage = String(payloadObject.message || payloadObject.error || "").trim();
     return {
       status: "failed",
       code: response.status,
-      error: typeof payload === "string" ? payload || `whatsapp_http_${response.status}` : `whatsapp_http_${response.status}`
+      error:
+        (typeof payload === "string" ? payload : payloadMessage) ||
+        `whatsapp_http_${response.status}`
     };
   }
 
