@@ -131,6 +131,50 @@ function isZapiSuccessPayload(payload: unknown) {
   return false;
 }
 
+function isWaSpeedSuccessPayload(payload: unknown) {
+  if (typeof payload === "string") {
+    const normalized = payload.trim().toLowerCase();
+    if (!normalized) return false;
+    if (textLooksLikeError(normalized)) return false;
+    return normalized.includes("ok") || normalized.includes("success") || normalized.includes("enviado") || normalized.includes("sent");
+  }
+
+  const data = asObject(payload);
+  if (!Object.keys(data).length) return false;
+
+  const explicitErrorCandidates = ["error", "erro", "errors", "exception", "detail", "details", "message_error"];
+  for (const key of explicitErrorCandidates) {
+    if (!hasKey(data, key)) continue;
+    const value = String(data[key] ?? "").trim();
+    if (!value) continue;
+    return false;
+  }
+
+  if (hasKey(data, "status") && isFalsyFailureFlag(data.status)) return false;
+  if (hasKey(data, "success") && isFalsyFailureFlag(data.success)) return false;
+  if (hasKey(data, "sent") && isFalsyFailureFlag(data.sent)) return false;
+
+  const successSignals = ["messageId", "message_id", "id", "protocol", "status", "success", "sent", "queued"];
+  for (const key of successSignals) {
+    if (!hasKey(data, key)) continue;
+    const value = data[key];
+    if (["id", "messageId", "message_id", "protocol"].includes(key)) {
+      if (String(value ?? "").trim()) return true;
+      continue;
+    }
+    if (isTruthySuccessFlag(value)) return true;
+  }
+
+  if (hasKey(data, "message")) {
+    const value = String(data.message ?? "").trim();
+    if (value && !textLooksLikeError(value) && (value.toLowerCase().includes("ok") || value.toLowerCase().includes("enviado"))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function buildZapiUrlCandidates(baseUrl: string, instanceId: string, instanceToken: string, endpoint: string) {
   const base = baseUrl.replace(/\/+$/, "");
   const candidates: string[] = [];
@@ -148,6 +192,31 @@ function buildZapiUrlCandidates(baseUrl: string, instanceId: string, instanceTok
   return Array.from(new Set(candidates));
 }
 
+function buildWaSpeedUrlCandidates(baseUrl: string, instanceId: string) {
+  const base = baseUrl.replace(/\/+$/, "");
+  const candidates: string[] = [];
+
+  candidates.push(`${base}/send-message`);
+  candidates.push(`${base}/send-text`);
+  candidates.push(`${base}/messages/send`);
+  candidates.push(`${base}/message/send`);
+  candidates.push(`${base}/api/messages/send`);
+  candidates.push(`${base}/api/v1/messages/send`);
+  candidates.push(`${base}/api/send-message`);
+  candidates.push(`${base}/api/send-text`);
+
+  if (instanceId) {
+    candidates.push(`${base}/instances/${instanceId}/send-message`);
+    candidates.push(`${base}/instances/${instanceId}/send-text`);
+    candidates.push(`${base}/instance/${instanceId}/send-message`);
+    candidates.push(`${base}/instance/${instanceId}/send-text`);
+    candidates.push(`${base}/api/instances/${instanceId}/send-message`);
+    candidates.push(`${base}/api/instances/${instanceId}/send-text`);
+  }
+
+  return Array.from(new Set(candidates));
+}
+
 function readProviderError(payload: unknown) {
   if (typeof payload === "string") return payload.trim();
   const record = asObject(payload);
@@ -160,9 +229,13 @@ function isTerminalProviderError(payload: unknown) {
   return (
     message.includes("client-token") ||
     message.includes("invalid token") ||
+    message.includes("token inválido") ||
+    message.includes("token invalido") ||
+    message.includes("token incorreto") ||
     message.includes("unauthorized") ||
     message.includes("forbidden") ||
-    message.includes("not configured")
+    message.includes("not configured") ||
+    message.includes("not allowed")
   );
 }
 
@@ -298,6 +371,97 @@ async function sendViaZapi({
   throw new Error(errors.length ? `zapi_failed_${compactErrors}${detailsSuffix}` : "zapi_failed");
 }
 
+async function sendViaWaSpeed({
+  baseUrl,
+  apiToken,
+  authHeaderName,
+  authTokenPrefix,
+  tokenInQuery,
+  instanceId,
+  phone,
+  message,
+  metadata
+}: {
+  baseUrl: string;
+  apiToken: string;
+  authHeaderName: string;
+  authTokenPrefix: string;
+  tokenInQuery: boolean;
+  instanceId: string;
+  phone: string;
+  message: string;
+  metadata: AnyRecord;
+}) {
+  const localPhone = phone.startsWith("55") ? phone.slice(2) : phone;
+  const urls = buildWaSpeedUrlCandidates(baseUrl, instanceId);
+  const payloads: AnyRecord[] = [
+    { number: localPhone, message },
+    { number: phone, message },
+    { phone: localPhone, message },
+    { phone, message },
+    { to: localPhone, text: message },
+    { to: phone, text: message },
+    { numero: localPhone, mensagem: message },
+    { numero: phone, mensagem: message }
+  ];
+
+  const extra = parseOptionalJson(readOptionalEnv("WASPEED_OUTBOUND_EXTRA_JSON"));
+  const headersBase: Record<string, string> = {
+    "Content-Type": "application/json"
+  };
+  const normalizedAuthHeader = String(authHeaderName || "").trim() || "Authorization";
+
+  if (apiToken && !tokenInQuery) {
+    const useBearer = (authTokenPrefix || "Bearer").trim();
+    headersBase[normalizedAuthHeader] =
+      normalizedAuthHeader.toLowerCase() === "authorization" ? `${useBearer} ${apiToken}` : apiToken;
+  }
+
+  const errors: string[] = [];
+  let lastResponse: unknown = null;
+  for (const rawUrl of urls) {
+    const url = tokenInQuery && apiToken
+      ? `${rawUrl}${rawUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(apiToken)}`
+      : rawUrl;
+
+    for (const payload of payloads) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: headersBase,
+        body: JSON.stringify({
+          ...payload,
+          metadata,
+          ...extra
+        })
+      });
+
+      const responseBody = await safeReadBody(response);
+      if (response.ok) {
+        if (isWaSpeedSuccessPayload(responseBody)) {
+          return responseBody;
+        }
+        if (isTerminalProviderError(responseBody)) {
+          throw new Error(readProviderError(responseBody) || "waspeed_failed_terminal");
+        }
+        lastResponse = responseBody;
+        errors.push(`200_invalid_ack@${url}`);
+        continue;
+      }
+
+      if (isTerminalProviderError(responseBody)) {
+        throw new Error(readProviderError(responseBody) || `waspeed_http_${response.status}`);
+      }
+      lastResponse = responseBody;
+      errors.push(`${response.status}@${url}`);
+    }
+  }
+
+  const details = lastResponse ? stringifySafe(lastResponse) : "";
+  const detailsSuffix = details ? `::${details.slice(0, 200)}` : "";
+  const compactErrors = errors.slice(0, 8).join(",");
+  throw new Error(errors.length ? `waspeed_failed_${compactErrors}${detailsSuffix}` : "waspeed_failed");
+}
+
 Deno.serve(async (request: Request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -342,6 +506,14 @@ Deno.serve(async (request: Request) => {
   const zapiInstanceToken = readOptionalEnv("ZAPI_INSTANCE_TOKEN");
   const zapiClientToken = readOptionalEnv("ZAPI_CLIENT_TOKEN");
 
+  const waSpeedBaseUrl = readOptionalEnv("WASPEED_API_BASE_URL");
+  const waSpeedApiToken = readOptionalEnv("WASPEED_API_TOKEN");
+  const waSpeedAuthHeader = readOptionalEnv("WASPEED_AUTH_HEADER") || "Authorization";
+  const waSpeedAuthTokenPrefix = readOptionalEnv("WASPEED_AUTH_TOKEN_PREFIX") || "Bearer";
+  const waSpeedTokenInQuery = ["1", "true", "yes", "sim"].includes(readOptionalEnv("WASPEED_TOKEN_IN_QUERY").toLowerCase());
+  const waSpeedInstanceId = readOptionalEnv("WASPEED_INSTANCE_ID");
+  const providerPreference = readOptionalEnv("WHATSAPP_OUTBOUND_PROVIDER").toLowerCase();
+
   try {
     if (webhookUrl) {
       await sendViaWebhook({
@@ -355,6 +527,25 @@ Deno.serve(async (request: Request) => {
       return jsonResponse(200, {
         status: "sent",
         provider: "webhook",
+        phone
+      });
+    }
+
+    if (waSpeedBaseUrl && waSpeedApiToken && (providerPreference === "waspeed" || !providerPreference)) {
+      await sendViaWaSpeed({
+        baseUrl: waSpeedBaseUrl,
+        apiToken: waSpeedApiToken,
+        authHeaderName: waSpeedAuthHeader,
+        authTokenPrefix: waSpeedAuthTokenPrefix,
+        tokenInQuery: waSpeedTokenInQuery,
+        instanceId: waSpeedInstanceId,
+        phone,
+        message,
+        metadata
+      });
+      return jsonResponse(200, {
+        status: "sent",
+        provider: "waspeed",
         phone
       });
     }
@@ -376,9 +567,29 @@ Deno.serve(async (request: Request) => {
       });
     }
 
+    if (waSpeedBaseUrl && waSpeedApiToken) {
+      await sendViaWaSpeed({
+        baseUrl: waSpeedBaseUrl,
+        apiToken: waSpeedApiToken,
+        authHeaderName: waSpeedAuthHeader,
+        authTokenPrefix: waSpeedAuthTokenPrefix,
+        tokenInQuery: waSpeedTokenInQuery,
+        instanceId: waSpeedInstanceId,
+        phone,
+        message,
+        metadata
+      });
+      return jsonResponse(200, {
+        status: "sent",
+        provider: "waspeed",
+        phone
+      });
+    }
+
     return jsonResponse(503, {
       error: "whatsapp_outbound_not_configured",
-      message: "Envio automático de WhatsApp não está configurado no servidor."
+      message:
+        "Envio automático de WhatsApp não está configurado no servidor. Configure webhook, WaSpeed (WASPEED_*) ou Z-API."
     });
   } catch (error) {
     const messageError = error instanceof Error ? error.message : "Falha ao enviar WhatsApp.";
