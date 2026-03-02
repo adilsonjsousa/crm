@@ -143,6 +143,11 @@ function extractEmailDomain(email: string) {
   return normalized.slice(atIndex + 1);
 }
 
+function isAllowedWorkspaceEmail(email: string) {
+  const domain = extractEmailDomain(email);
+  return Boolean(domain && ALLOWED_WORKSPACE_DOMAINS.has(domain));
+}
+
 function normalizeName(value: unknown) {
   return String(value ?? "")
     .replace(/\s+/g, " ")
@@ -394,6 +399,9 @@ async function handleCreate(adminClient: ReturnType<typeof createClient>, body: 
   if (!email || !isValidEmail(email)) {
     throw new Error("Informe um e-mail válido para login do usuário.");
   }
+  if (!isAllowedWorkspaceEmail(email)) {
+    throw new Error("Somente e-mails @artprinter.com.br e @artestampa.com.br podem ser cadastrados.");
+  }
   if (!fullName) {
     throw new Error("Informe o nome completo do usuário.");
   }
@@ -525,6 +533,9 @@ async function handleUpdate(adminClient: ReturnType<typeof createClient>, body: 
 
   const email = normalizeEmail(body.email ?? currentProfile?.email ?? authUser?.email);
   if (!email || !isValidEmail(email)) throw new Error("E-mail do usuário inválido.");
+  if (!isAllowedWorkspaceEmail(email)) {
+    throw new Error("Somente e-mails @artprinter.com.br e @artestampa.com.br podem ser cadastrados.");
+  }
 
   const fullName = normalizeName(body.full_name ?? currentProfile?.full_name ?? asObject(authUser?.user_metadata).full_name);
   if (!fullName) throw new Error("Informe o nome completo do usuário.");
@@ -600,6 +611,9 @@ async function handleResetPassword(adminClient: ReturnType<typeof createClient>,
 
   if (!email || !isValidEmail(email)) {
     throw new Error("Não foi possível identificar e-mail válido para reset de senha.");
+  }
+  if (!isAllowedWorkspaceEmail(email)) {
+    throw new Error("Somente e-mails @artprinter.com.br e @artestampa.com.br são permitidos.");
   }
 
   const recovery = await sendRecoveryEmail(adminClient, email, redirectTo);
