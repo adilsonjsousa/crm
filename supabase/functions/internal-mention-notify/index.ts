@@ -289,7 +289,7 @@ Deno.serve(async (request: Request) => {
   const opportunityTitle = truncate(body.linked_opportunity_title, 240);
   const authorName = String(body.created_by_user_name || "").trim() || "Equipe comercial";
   const authorUserId = normalizeUuid(body.created_by_user_id);
-  const crmBaseUrl = String(Deno.env.get("CRM_APP_BASE_URL") || "https://crm-adilson-sousas-projects.vercel.app").trim();
+  const crmBaseUrl = String(Deno.env.get("CRM_APP_BASE_URL") || "https://crm-kappa-peach.vercel.app").trim();
   const crmUrl = crmBaseUrl || "";
 
   const resendApiKey = String(Deno.env.get("RESEND_API_KEY") || "").trim();
