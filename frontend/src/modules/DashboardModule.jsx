@@ -39,8 +39,7 @@ function normalizePriority(priority) {
     .toLowerCase()
     .trim();
   if (["urgent", "urgente", "alta", "high", "critical", "critica", "crítica"].includes(normalized)) return "high";
-  if (["media", "média", "medium"].includes(normalized)) return "medium";
-  return "low";
+  return "other";
 }
 
 export default function DashboardModule() {
@@ -135,14 +134,10 @@ export default function DashboardModule() {
   const supportSummary = useMemo(() => {
     const openTickets = supportTickets.filter((ticket) => isTicketOpen(ticket.status));
     const high = openTickets.filter((ticket) => normalizePriority(ticket.priority) === "high").length;
-    const medium = openTickets.filter((ticket) => normalizePriority(ticket.priority) === "medium").length;
-    const low = openTickets.filter((ticket) => normalizePriority(ticket.priority) === "low").length;
 
     return {
       open: openTickets.length,
-      high,
-      medium,
-      low
+      high
     };
   }, [supportTickets]);
 
@@ -163,17 +158,17 @@ export default function DashboardModule() {
       .slice(0, 6);
   }, [recentOpportunities]);
 
-  const additionalKpis = useMemo(() => {
-    if (!kpis) return [];
-    return [
-      { label: "Empresas", value: kpis.companies },
-      { label: "Oportunidades", value: kpis.opportunities },
-      { label: "Tarefas abertas", value: kpis.openTasks || 0 },
-      { label: "Chamados abertos", value: kpis.openTickets },
-      { label: "Pedidos", value: kpis.orders },
-      { label: "Faturamento", value: brl(kpis.revenue) }
-    ];
-  }, [kpis]);
+  const focusCards = useMemo(
+    () => [
+      { id: "revenue", label: "Receita realizada", value: brl(kpis?.revenue || 0), note: "Base de pedidos" },
+      { id: "won", label: "Negócios ganhos", value: String(pipelineSummary.wonDeals), note: brl(pipelineSummary.wonValue) },
+      { id: "open-tickets", label: "Chamados abertos", value: String(supportSummary.open), note: "Pós-venda" },
+      { id: "high-priority", label: "Prioridade alta", value: String(supportSummary.high), note: "Risco técnico" },
+      { id: "open-tasks", label: "Tarefas abertas", value: String(kpis?.openTasks || 0), note: "Agenda comercial" },
+      { id: "companies", label: "Empresas", value: String(kpis?.companies || 0), note: "Base ativa" }
+    ],
+    [kpis?.companies, kpis?.openTasks, kpis?.revenue, pipelineSummary.wonDeals, pipelineSummary.wonValue, supportSummary.high, supportSummary.open]
+  );
 
   const todayLabel = useMemo(
     () =>
@@ -192,157 +187,117 @@ export default function DashboardModule() {
     <section className="module dashboard-modern">
       {error ? <p className="error-text">{error}</p> : null}
 
-      <div className="dashboard-modern-hero">
-        <article className="dashboard-hero-primary">
-          <p className="dashboard-kicker">Resumo executivo</p>
-          <h2>Painel comercial da operação</h2>
-          <p className="dashboard-hero-description">
-            Visão rápida de funil, performance de vendas, backlog de suporte e próximos fechamentos.
-          </p>
-          <div className="dashboard-hero-chips">
-            <span>Atualizado em tempo real</span>
-            <span>{todayLabel}</span>
-          </div>
-          <div className="dashboard-modern-strip">
-            <article className="dashboard-modern-metric">
-              <span>Negócios no funil</span>
-              <strong>{pipelineSummary.totalDeals}</strong>
+      <article className="panel dashboard-glass-card">
+        <h3>Foco da operação</h3>
+        <div className="dashboard-focus-grid">
+          {focusCards.map((card) => (
+            <article key={card.id} className="dashboard-focus-card dashboard-glass-card">
+              <span>{card.label}</span>
+              <strong>{card.value}</strong>
+              <small>{card.note}</small>
             </article>
-            <article className="dashboard-modern-metric">
-              <span>Valor total do funil</span>
-              <strong>{brl(pipelineSummary.totalValue)}</strong>
-            </article>
-            <article className="dashboard-modern-metric">
-              <span>Taxa de ganho</span>
-              <strong>{pipelineSummary.winRate}%</strong>
-            </article>
-          </div>
-        </article>
+          ))}
+        </div>
+      </article>
 
-        <article className="panel dashboard-hero-side">
-          <h3>Foco da operação</h3>
-          <div className="dashboard-support-kpis dashboard-focus-kpis">
-            <div>
-              <span>Receita realizada</span>
-              <strong>{brl(kpis?.revenue || 0)}</strong>
-              <small>Base de pedidos</small>
-            </div>
-            <div>
-              <span>Negócios ganhos</span>
-              <strong>{pipelineSummary.wonDeals}</strong>
-              <small>{brl(pipelineSummary.wonValue)}</small>
-            </div>
-            <div>
-              <span>Chamados abertos</span>
-              <strong>{supportSummary.open}</strong>
-              <small>Pós-venda</small>
-            </div>
-            <div>
-              <span>Prioridade alta</span>
-              <strong>{supportSummary.high}</strong>
-              <small>Risco técnico</small>
-            </div>
-            <div>
-              <span>Tarefas abertas</span>
-              <strong>{kpis?.openTasks || 0}</strong>
-              <small>Agenda comercial</small>
-            </div>
-          </div>
-        </article>
-      </div>
-
-      <div className="dashboard-modern-grid top-gap">
-        <article className="panel dashboard-pipeline-panel">
-          <header className="dashboard-section-header">
-            <div>
-              <h3>Pipeline por etapa</h3>
-              <p className="muted">Quantidade e valor por etapa, com prioridade visual.</p>
-            </div>
-            <div className="dashboard-highlight">
-              <span>Valor (sem LEAD)</span>
-              <strong>{brl(pipelineSummary.nonLeadValue)}</strong>
-            </div>
-          </header>
-          <div className="dashboard-stage-grid">
-            {stageCards.map((row) => (
-              <article className="dashboard-stage-card" key={row.stage}>
-                <div className="dashboard-stage-head">
-                  <strong>{row.stageLabel || stageLabel(row.stage)}</strong>
-                  <span>{row.totalDeals} oportunidade(s)</span>
-                </div>
-                <p className="dashboard-stage-value">{brl(row.totalValue)}</p>
-                <div className="dashboard-stage-meters">
-                  <div className="dashboard-stage-meter">
-                    <small>Qtd</small>
-                    <div className="stage-meter">
-                      <span style={{ width: `${row.dealsPercent}%` }} />
-                    </div>
-                  </div>
-                  <div className="dashboard-stage-meter">
-                    <small>Valor</small>
-                    <div className="stage-meter">
-                      <span style={{ width: `${row.valuePercent}%` }} />
-                    </div>
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
-        </article>
-
-        <div className="dashboard-right-stack">
-          <article className="panel">
-            <h3>Atividades recentes</h3>
-            <ul className="activity-list">
-              {activities.map((item) => (
-                <li key={item.id} className="activity-item">
-                  <div>
-                    <p className="activity-title">{item.title}</p>
-                    <p className="activity-meta">
-                      <strong>{item.kind}</strong> · {item.company} · {item.note}
-                    </p>
-                  </div>
-                  <span className="activity-date">{formatDateTime(item.at)}</span>
-                </li>
-              ))}
-              {!activities.length ? <li className="muted">Sem atividades recentes.</li> : null}
-            </ul>
+      <article className="dashboard-hero-primary dashboard-glass-card">
+        <p className="dashboard-kicker">Resumo executivo</p>
+        <h2>Painel comercial da operação</h2>
+        <p className="dashboard-hero-description">Visão rápida de funil, vendas, suporte e próximos fechamentos.</p>
+        <div className="dashboard-hero-chips">
+          <span>Atualizado em tempo real</span>
+          <span>{todayLabel}</span>
+        </div>
+        <div className="dashboard-modern-strip">
+          <article className="dashboard-modern-metric dashboard-glass-card">
+            <span>Negócios no funil</span>
+            <strong>{pipelineSummary.totalDeals}</strong>
           </article>
-
-          <article className="panel">
-            <h3>Próximos fechamentos</h3>
-            <ul className="dashboard-closing-list">
-              {upcomingClosings.map((item) => (
-                <li key={item.id} className="dashboard-closing-item">
-                  <div>
-                    <p className="dashboard-closing-title">{item.title || "-"}</p>
-                    <p className="dashboard-closing-subtitle">{item.companies?.trade_name || "-"}</p>
-                  </div>
-                  <div className="dashboard-closing-side">
-                    <strong>{brl(item.estimated_value)}</strong>
-                    <span>{formatDateOnly(item.expected_close_date)}</span>
-                  </div>
-                </li>
-              ))}
-              {!upcomingClosings.length ? <li className="muted">Nenhum fechamento previsto nas oportunidades abertas.</li> : null}
-            </ul>
+          <article className="dashboard-modern-metric dashboard-glass-card">
+            <span>Valor total do funil</span>
+            <strong>{brl(pipelineSummary.totalValue)}</strong>
+          </article>
+          <article className="dashboard-modern-metric dashboard-glass-card">
+            <span>Taxa de ganho</span>
+            <strong>{pipelineSummary.winRate}%</strong>
+          </article>
+          <article className="dashboard-modern-metric dashboard-glass-card">
+            <span>Valor (sem LEAD)</span>
+            <strong>{brl(pipelineSummary.nonLeadValue)}</strong>
           </article>
         </div>
-      </div>
+      </article>
 
-      {additionalKpis.length ? (
-        <details className="panel top-gap dashboard-details-panel">
-          <summary>Indicadores adicionais</summary>
-          <div className="dashboard-modern-kpi-grid top-gap">
-            {additionalKpis.map((item) => (
-              <article className="kpi-card" key={item.label}>
-                <span className="kpi-label">{item.label}</span>
-                <strong className="kpi-value">{item.value}</strong>
-              </article>
-            ))}
+      <article className="panel dashboard-pipeline-panel dashboard-glass-card">
+        <header className="dashboard-section-header">
+          <div>
+            <h3>Pipeline por etapa</h3>
+            <p className="muted">Quantidade e valor por etapa com leitura vertical única.</p>
           </div>
-        </details>
-      ) : null}
+        </header>
+        <div className="dashboard-stage-grid">
+          {stageCards.map((row) => (
+            <article className="dashboard-stage-card dashboard-glass-card" key={row.stage}>
+              <div className="dashboard-stage-head">
+                <strong>{row.stageLabel || stageLabel(row.stage)}</strong>
+                <span>{row.totalDeals} oportunidade(s)</span>
+              </div>
+              <p className="dashboard-stage-value">{brl(row.totalValue)}</p>
+              <div className="dashboard-stage-meters">
+                <div className="dashboard-stage-meter">
+                  <small>Qtd</small>
+                  <div className="stage-meter">
+                    <span style={{ width: `${row.dealsPercent}%` }} />
+                  </div>
+                </div>
+                <div className="dashboard-stage-meter">
+                  <small>Valor</small>
+                  <div className="stage-meter">
+                    <span style={{ width: `${row.valuePercent}%` }} />
+                  </div>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </article>
+
+      <article className="panel dashboard-glass-card">
+        <h3>Atividades recentes</h3>
+        <ul className="activity-list">
+          {activities.map((item) => (
+            <li key={item.id} className="activity-item dashboard-glass-card">
+              <div>
+                <p className="activity-title">{item.title}</p>
+                <p className="activity-meta">
+                  <strong>{item.kind}</strong> · {item.company} · {item.note}
+                </p>
+              </div>
+              <span className="activity-date">{formatDateTime(item.at)}</span>
+            </li>
+          ))}
+          {!activities.length ? <li className="muted">Sem atividades recentes.</li> : null}
+        </ul>
+      </article>
+
+      <article className="panel dashboard-glass-card">
+        <h3>Próximos fechamentos</h3>
+        <ul className="dashboard-closing-list">
+          {upcomingClosings.map((item) => (
+            <li key={item.id} className="dashboard-closing-item dashboard-glass-card">
+              <div>
+                <p className="dashboard-closing-title">{item.title || "-"}</p>
+                <p className="dashboard-closing-subtitle">{item.companies?.trade_name || "-"}</p>
+              </div>
+              <div className="dashboard-closing-side">
+                <strong>{brl(item.estimated_value)}</strong>
+                <span>{formatDateOnly(item.expected_close_date)}</span>
+              </div>
+            </li>
+          ))}
+          {!upcomingClosings.length ? <li className="muted">Nenhum fechamento previsto nas oportunidades abertas.</li> : null}
+        </ul>
+      </article>
     </section>
   );
 }
