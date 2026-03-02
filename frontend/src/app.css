@@ -1751,6 +1751,10 @@ a.btn-table-action {
   gap: 8px;
 }
 
+.dashboard-focus-kpis {
+  grid-template-columns: 1fr;
+}
+
 .dashboard-support-kpis div {
   border: 1px solid var(--border-soft);
   border-radius: 12px;
@@ -1767,6 +1771,11 @@ a.btn-table-action {
 
 .dashboard-support-kpis strong {
   font-size: 1.12rem;
+}
+
+.dashboard-support-kpis small {
+  color: var(--text-muted);
+  font-size: 0.7rem;
 }
 
 .dashboard-modern-kpi-grid {
@@ -1871,6 +1880,58 @@ a.btn-table-action {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+}
+
+.dashboard-closing-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.dashboard-closing-item {
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-surface-muted);
+  padding: 9px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.dashboard-closing-title {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.dashboard-closing-subtitle {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+  color: var(--text-sub);
+}
+
+.dashboard-closing-side {
+  text-align: right;
+  display: grid;
+  gap: 2px;
+}
+
+.dashboard-closing-side strong {
+  font-size: 0.82rem;
+}
+
+.dashboard-closing-side span {
+  color: var(--text-sub);
+  font-size: 0.73rem;
+}
+
+.dashboard-details-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text-main);
 }
 
 .metric-tile {
@@ -3157,6 +3218,15 @@ tbody tr:hover {
   .dashboard-support-kpis,
   .dashboard-stage-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-closing-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .dashboard-closing-side {
+    text-align: left;
   }
 
   .dashboard-section-header {

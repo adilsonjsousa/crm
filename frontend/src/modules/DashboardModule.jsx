@@ -91,7 +91,7 @@ export default function DashboardModule() {
           }))
         ]
           .sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime())
-          .slice(0, 8);
+          .slice(0, 5);
 
         setActivities(mergedActivities);
       } catch (err) {
@@ -111,9 +111,9 @@ export default function DashboardModule() {
   const pipelineSummary = useMemo(() => {
     const totalDeals = pipeline.reduce((acc, row) => acc + Number(row.totalDeals || 0), 0);
     const totalValue = pipeline.reduce((acc, row) => acc + Number(row.totalValue || 0), 0);
-    const wonDeals = pipeline
-      .filter((row) => row.stage === "ganho")
-      .reduce((acc, row) => acc + Number(row.totalDeals || 0), 0);
+    const wonRows = pipeline.filter((row) => row.stage === "ganho");
+    const wonDeals = wonRows.reduce((acc, row) => acc + Number(row.totalDeals || 0), 0);
+    const wonValue = wonRows.reduce((acc, row) => acc + Number(row.totalValue || 0), 0);
     const maxDeals = Math.max(1, ...pipeline.map((row) => Number(row.totalDeals || 0)));
     const maxValue = Math.max(1, ...pipeline.map((row) => Number(row.totalValue || 0)));
     const nonLeadValue = pipeline
@@ -125,6 +125,7 @@ export default function DashboardModule() {
       totalValue,
       nonLeadValue,
       wonDeals,
+      wonValue,
       winRate: totalDeals ? Math.round((wonDeals / totalDeals) * 100) : 0,
       maxDeals,
       maxValue
@@ -161,6 +162,18 @@ export default function DashboardModule() {
       .sort((a, b) => new Date(a.expected_close_date).getTime() - new Date(b.expected_close_date).getTime())
       .slice(0, 6);
   }, [recentOpportunities]);
+
+  const additionalKpis = useMemo(() => {
+    if (!kpis) return [];
+    return [
+      { label: "Empresas", value: kpis.companies },
+      { label: "Oportunidades", value: kpis.opportunities },
+      { label: "Tarefas abertas", value: kpis.openTasks || 0 },
+      { label: "Chamados abertos", value: kpis.openTickets },
+      { label: "Pedidos", value: kpis.orders },
+      { label: "Faturamento", value: brl(kpis.revenue) }
+    ];
+  }, [kpis]);
 
   const todayLabel = useMemo(
     () =>
@@ -207,56 +220,36 @@ export default function DashboardModule() {
         </article>
 
         <article className="panel dashboard-hero-side">
-          <h3>Radar de suporte</h3>
-          <div className="dashboard-support-kpis">
+          <h3>Foco da operação</h3>
+          <div className="dashboard-support-kpis dashboard-focus-kpis">
+            <div>
+              <span>Receita realizada</span>
+              <strong>{brl(kpis?.revenue || 0)}</strong>
+              <small>Base de pedidos</small>
+            </div>
+            <div>
+              <span>Negócios ganhos</span>
+              <strong>{pipelineSummary.wonDeals}</strong>
+              <small>{brl(pipelineSummary.wonValue)}</small>
+            </div>
             <div>
               <span>Chamados abertos</span>
               <strong>{supportSummary.open}</strong>
+              <small>Pós-venda</small>
             </div>
             <div>
               <span>Prioridade alta</span>
               <strong>{supportSummary.high}</strong>
+              <small>Risco técnico</small>
             </div>
             <div>
-              <span>Prioridade média</span>
-              <strong>{supportSummary.medium}</strong>
-            </div>
-            <div>
-              <span>Prioridade baixa</span>
-              <strong>{supportSummary.low}</strong>
+              <span>Tarefas abertas</span>
+              <strong>{kpis?.openTasks || 0}</strong>
+              <small>Agenda comercial</small>
             </div>
           </div>
         </article>
       </div>
-
-      {kpis ? (
-        <div className="dashboard-modern-kpi-grid top-gap">
-          <article className="kpi-card">
-            <span className="kpi-label">Empresas</span>
-            <strong className="kpi-value">{kpis.companies}</strong>
-          </article>
-          <article className="kpi-card">
-            <span className="kpi-label">Oportunidades</span>
-            <strong className="kpi-value">{kpis.opportunities}</strong>
-          </article>
-          <article className="kpi-card">
-            <span className="kpi-label">Tarefas abertas</span>
-            <strong className="kpi-value">{kpis.openTasks || 0}</strong>
-          </article>
-          <article className="kpi-card">
-            <span className="kpi-label">Chamados abertos</span>
-            <strong className="kpi-value">{kpis.openTickets}</strong>
-          </article>
-          <article className="kpi-card">
-            <span className="kpi-label">Pedidos</span>
-            <strong className="kpi-value">{kpis.orders}</strong>
-          </article>
-          <article className="kpi-card">
-            <span className="kpi-label">Faturamento</span>
-            <strong className="kpi-value">{brl(kpis.revenue)}</strong>
-          </article>
-        </div>
-      ) : null}
 
       <div className="dashboard-modern-grid top-gap">
         <article className="panel dashboard-pipeline-panel">
@@ -318,38 +311,38 @@ export default function DashboardModule() {
 
           <article className="panel">
             <h3>Próximos fechamentos</h3>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Empresa</th>
-                    <th>Oportunidade</th>
-                    <th>Previsão</th>
-                    <th>Valor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {upcomingClosings.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.companies?.trade_name || "-"}</td>
-                      <td>{item.title || "-"}</td>
-                      <td>{formatDateOnly(item.expected_close_date)}</td>
-                      <td>{brl(item.estimated_value)}</td>
-                    </tr>
-                  ))}
-                  {!upcomingClosings.length ? (
-                    <tr>
-                      <td colSpan={4} className="muted">
-                        Nenhum fechamento previsto nas oportunidades abertas.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
+            <ul className="dashboard-closing-list">
+              {upcomingClosings.map((item) => (
+                <li key={item.id} className="dashboard-closing-item">
+                  <div>
+                    <p className="dashboard-closing-title">{item.title || "-"}</p>
+                    <p className="dashboard-closing-subtitle">{item.companies?.trade_name || "-"}</p>
+                  </div>
+                  <div className="dashboard-closing-side">
+                    <strong>{brl(item.estimated_value)}</strong>
+                    <span>{formatDateOnly(item.expected_close_date)}</span>
+                  </div>
+                </li>
+              ))}
+              {!upcomingClosings.length ? <li className="muted">Nenhum fechamento previsto nas oportunidades abertas.</li> : null}
+            </ul>
           </article>
         </div>
       </div>
+
+      {additionalKpis.length ? (
+        <details className="panel top-gap dashboard-details-panel">
+          <summary>Indicadores adicionais</summary>
+          <div className="dashboard-modern-kpi-grid top-gap">
+            {additionalKpis.map((item) => (
+              <article className="kpi-card" key={item.label}>
+                <span className="kpi-label">{item.label}</span>
+                <strong className="kpi-value">{item.value}</strong>
+              </article>
+            ))}
+          </div>
+        </details>
+      ) : null}
     </section>
   );
 }
