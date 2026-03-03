@@ -125,20 +125,17 @@ body {
 .crm-layout {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 248px 1fr;
+  grid-template-columns: 1fr;
 }
 
 .crm-sidebar {
-  border-right: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
   background: var(--bg-sidebar);
-  padding: 18px 14px;
+  padding: 14px 10px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
   box-shadow: var(--shadow-sidebar);
-  position: sticky;
-  top: 0;
-  height: 100vh;
 }
 
 .crm-brand {
@@ -178,7 +175,10 @@ body {
 
 .crm-nav {
   display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(160px, 1fr);
   gap: 6px;
+  overflow-x: auto;
 }
 
 .crm-nav-btn {
@@ -192,6 +192,7 @@ body {
   align-items: center;
   text-align: left;
   padding: 10px;
+  min-width: 160px;
   cursor: pointer;
   transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
 }
@@ -245,7 +246,7 @@ body {
 }
 
 .crm-main {
-  padding: 16px 18px 20px;
+  padding: 10px;
   display: grid;
   gap: 12px;
 }
@@ -257,18 +258,19 @@ body {
   box-shadow: var(--shadow-panel);
   padding: 10px 12px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
   position: sticky;
-  top: 10px;
+  top: 8px;
   z-index: 80;
 }
 
 .crm-search {
   display: grid;
   gap: 6px;
-  min-width: 280px;
+  width: 100%;
   flex: 1;
   position: relative;
 }
@@ -422,7 +424,7 @@ body {
 .crm-viewer-select {
   display: grid;
   gap: 4px;
-  min-width: 260px;
+  width: 100%;
 }
 
 .crm-viewer-select span {
@@ -432,7 +434,6 @@ body {
 }
 
 .crm-viewer-select select {
-  min-width: 260px;
   width: 100%;
 }
 
@@ -574,8 +575,9 @@ body {
 
 .crm-page-header {
   display: flex;
+  flex-direction: column;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   align-items: flex-start;
 }
 
@@ -602,7 +604,7 @@ body {
 
 .crm-page-side {
   display: grid;
-  justify-items: end;
+  justify-items: start;
   gap: 6px;
   color: var(--text-muted);
   font-size: 0.82rem;
@@ -666,9 +668,10 @@ body {
   padding: 8px;
   background: var(--bg-surface);
   display: flex;
+  flex-direction: column;
   justify-content: space-between;
   gap: 10px;
-  align-items: center;
+  align-items: flex-start;
 }
 
 .birthday-alert-name {
@@ -816,7 +819,7 @@ body {
 
 .hunter-controls-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
@@ -835,7 +838,8 @@ body {
 
 .hunter-table-header {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
@@ -885,6 +889,7 @@ body {
 
 .hunter-quick-header {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
@@ -906,7 +911,7 @@ body {
 
 .hunter-form-grid-two {
   display: grid;
-  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
@@ -925,7 +930,7 @@ body {
 
 .two-col {
   display: grid;
-  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
@@ -1196,7 +1201,7 @@ a.btn-table-action {
 .reports-toolbar {
   margin-top: 0;
   display: grid;
-  grid-template-columns: minmax(260px, 1.4fr) minmax(170px, 220px) auto auto;
+  grid-template-columns: 1fr;
   gap: 8px;
   align-items: end;
 }
@@ -1252,7 +1257,7 @@ a.btn-table-action {
 }
 
 .reports-panel .reports-kpi-grid {
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
   justify-content: stretch;
 }
@@ -1329,25 +1334,25 @@ a.btn-table-action {
 }
 
 .reports-panel .reports-funnel-kpi-grid {
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: 1fr;
 }
 
 .reports-funnel-toolbar {
   display: grid;
-  grid-template-columns: repeat(6, minmax(150px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
   align-items: end;
 }
 
 .reports-products-toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1.3fr) repeat(3, minmax(160px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
   align-items: end;
 }
 
 .reports-products-kpi-grid {
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  grid-template-columns: 1fr;
 }
 
 .reports-filter-field {
@@ -1393,7 +1398,7 @@ a.btn-table-action {
 
 .reports-stage-chart-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
@@ -1454,7 +1459,7 @@ a.btn-table-action {
 
 .reports-grid-two {
   display: grid;
-  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
@@ -1467,7 +1472,7 @@ a.btn-table-action {
 
 .settings-users-layout {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(220px, 280px);
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -1487,13 +1492,13 @@ a.btn-table-action {
 
 .settings-users-selects {
   display: grid;
-  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
 .settings-permissions-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -1524,7 +1529,7 @@ a.btn-table-action {
 
 .settings-omie-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -1551,7 +1556,7 @@ a.btn-table-action {
 
 .settings-library-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
   align-items: start;
 }
@@ -1583,21 +1588,22 @@ a.btn-table-action {
 
 .settings-product-create-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(170px, 1fr));
+  grid-template-columns: 1fr;
   gap: 9px;
   align-items: start;
 }
 
 .settings-product-create-toolbar {
   display: flex;
+  flex-direction: column;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   gap: 10px;
 }
 
 .settings-product-create-toolbar .inline-actions {
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .settings-product-description {
@@ -1654,7 +1660,7 @@ a.btn-table-action {
 
 .dashboard-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -1733,7 +1739,7 @@ a.btn-table-action {
 
 .dashboard-modern-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
@@ -1756,7 +1762,7 @@ a.btn-table-action {
 
 .dashboard-focus-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
@@ -1794,6 +1800,7 @@ a.btn-table-action {
 
 .dashboard-section-header {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
   gap: 10px;
@@ -1869,8 +1876,9 @@ a.btn-table-action {
   border-radius: 12px;
   padding: 9px;
   display: flex;
+  flex-direction: column;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
 }
 
@@ -1887,7 +1895,7 @@ a.btn-table-action {
 }
 
 .dashboard-closing-side {
-  text-align: right;
+  text-align: left;
   display: grid;
   gap: 2px;
 }
@@ -1981,8 +1989,10 @@ tbody tr:hover {
   padding: 8px;
   background: var(--bg-surface);
   display: flex;
+  flex-direction: column;
   justify-content: space-between;
   gap: 10px;
+  align-items: flex-start;
 }
 
 .activity-title {
@@ -2005,9 +2015,10 @@ tbody tr:hover {
 
 .agenda-board {
   display: grid;
-  grid-template-columns: repeat(4, minmax(230px, 1fr));
+  grid-template-columns: repeat(4, minmax(200px, 1fr));
   gap: 10px;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: 4px;
 }
 
@@ -2167,9 +2178,10 @@ tbody tr:hover {
 
 .pipeline-board {
   display: grid;
-  grid-template-columns: repeat(7, minmax(220px, 250px));
+  grid-template-columns: repeat(7, minmax(200px, 1fr));
   gap: 10px;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: 4px;
   align-items: start;
 }
@@ -2327,8 +2339,8 @@ tbody tr:hover {
 .pipeline-access-toolbar {
   margin: 10px 0 12px;
   display: grid;
-  grid-template-columns: minmax(250px, 420px) 1fr;
-  align-items: end;
+  grid-template-columns: 1fr;
+  align-items: stretch;
   gap: 10px;
 }
 
@@ -2339,7 +2351,7 @@ tbody tr:hover {
 }
 
 .pipeline-form-grid {
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  grid-template-columns: 1fr;
   align-items: end;
   gap: 8px;
 }
@@ -2458,13 +2470,13 @@ tbody tr:hover {
 
 .tasks-users-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(200px, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
 .tasks-calendar-toolbar {
   display: grid;
-  grid-template-columns: repeat(2, minmax(170px, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
   margin-bottom: 8px;
 }
@@ -2509,13 +2521,13 @@ tbody tr:hover {
 
 .contacts-create-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 1.3fr) repeat(3, minmax(160px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
   align-items: center;
 }
 
 .contacts-create-company-field {
-  grid-column: span 2;
+  grid-column: 1 / -1;
 }
 
 .contacts-create-submit {
@@ -2524,6 +2536,7 @@ tbody tr:hover {
 
 .contacts-list-header {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
@@ -2542,7 +2555,7 @@ tbody tr:hover {
 
 .contacts-search-form {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto auto;
+  grid-template-columns: 1fr;
   gap: 8px;
   align-items: center;
   margin: 8px 0 10px;
@@ -2623,10 +2636,8 @@ tbody tr:hover {
 
 .pipeline-automation-toggle {
   margin: 6px 0 10px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  justify-content: stretch;
   gap: 10px;
 }
 
@@ -2680,7 +2691,7 @@ tbody tr:hover {
 
 .proposal-model-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(300px, 1fr);
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
@@ -2711,7 +2722,7 @@ tbody tr:hover {
 
 .proposal-send-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: 1fr;
   gap: 8px;
   align-items: center;
 }
@@ -2744,7 +2755,7 @@ tbody tr:hover {
   background: var(--bg-surface);
   padding: 8px;
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) minmax(180px, 1.8fr) minmax(80px, 0.6fr) minmax(120px, 0.8fr) minmax(90px, 0.6fr) minmax(120px, 0.8fr) auto;
+  grid-template-columns: 1fr;
   gap: 6px;
   align-items: center;
 }
@@ -2758,7 +2769,7 @@ tbody tr:hover {
   font-size: 0.82rem;
   font-weight: 700;
   color: var(--text-main);
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
 }
 
@@ -2862,18 +2873,18 @@ tbody tr:hover {
   z-index: 90;
   background: rgba(18, 23, 34, 0.52);
   backdrop-filter: blur(2px);
-  padding: 18px;
+  padding: 8px;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
+  align-items: stretch;
 }
 
 .customer-popup {
   width: min(1220px, 100%);
-  max-height: calc(100vh - 36px);
+  max-height: 100%;
   overflow: auto;
   border: 1px solid var(--border-soft);
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--bg-surface);
   box-shadow: 0 24px 50px rgba(4, 9, 18, 0.34);
   padding: 14px;
@@ -2935,7 +2946,7 @@ tbody tr:hover {
 
 .customer-popup-overview-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
   margin-top: 10px;
 }
@@ -2955,7 +2966,7 @@ tbody tr:hover {
 .customer-popup-facts {
   margin: 10px 0 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px 10px;
 }
 
@@ -2984,7 +2995,7 @@ tbody tr:hover {
 .customer-popup-kpis {
   margin-top: 10px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
@@ -3082,26 +3093,14 @@ tbody tr:hover {
   }
 }
 
-@media (max-width: 1160px) {
-  .crm-layout {
-    grid-template-columns: 1fr;
+/* ── Small tablet ────────────────────────────── */
+@media (min-width: 680px) {
+  .dashboard-modern-strip {
+    grid-template-columns: repeat(2, minmax(130px, 1fr));
   }
 
-  .crm-sidebar {
-    position: static;
-    height: auto;
-    border-right: none;
-    border-bottom: 1px solid var(--border-soft);
-  }
-
-  .crm-nav {
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(200px, 1fr);
-    overflow-x: auto;
-  }
-
-  .crm-nav-btn {
-    min-width: 200px;
+  .dashboard-focus-grid {
+    grid-template-columns: repeat(2, minmax(140px, 1fr));
   }
 
   .reports-toolbar {
@@ -3116,28 +3115,11 @@ tbody tr:hover {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
   }
 
-  .dashboard-modern-strip {
-    grid-template-columns: repeat(2, minmax(160px, 1fr));
-  }
-
-  .dashboard-focus-grid {
-    grid-template-columns: repeat(3, minmax(160px, 1fr));
-  }
-
-  .reports-panel .reports-funnel-kpi-grid {
+  .reports-panel .reports-kpi-grid {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
 
-  .reports-grid-two {
-    grid-template-columns: 1fr;
-  }
-
-  .reports-header {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
-
-  .reports-panel .reports-kpi-grid {
+  .reports-panel .reports-funnel-kpi-grid {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
 
@@ -3152,190 +3134,270 @@ tbody tr:hover {
   .hunter-controls-grid {
     grid-template-columns: repeat(2, minmax(170px, 1fr));
   }
-}
 
-@media (max-width: 980px) {
-  .crm-main {
-    padding: 12px;
+  .hunter-form-grid-two {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
 
-  .crm-topbar {
-    top: 8px;
-  }
-
-  .crm-topbar,
-  .crm-page-header,
-  .activity-item,
-  .birthday-alert-item {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .crm-page-side {
-    justify-items: start;
-  }
-
-  .dashboard-strip,
-  .two-col {
-    grid-template-columns: 1fr;
-  }
-
-  .dashboard-modern-strip,
-  .dashboard-focus-grid,
-  .dashboard-stage-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .dashboard-closing-item {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .dashboard-closing-side {
-    text-align: left;
-  }
-
-  .dashboard-section-header {
-    flex-direction: column;
-    align-items: flex-start;
+  .settings-users-selects {
+    grid-template-columns: repeat(2, minmax(140px, 1fr));
   }
 
   .settings-omie-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-users-layout,
-  .settings-users-selects,
-  .settings-permissions-grid,
-  .settings-library-grid,
-  .tasks-users-grid,
-  .tasks-calendar-toolbar {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
 
   .settings-product-create-grid {
     grid-template-columns: repeat(2, minmax(170px, 1fr));
   }
 
-  .settings-product-create-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .settings-product-create-toolbar .inline-actions {
-    margin-left: 0;
-  }
-
-  .pipeline-board {
-    grid-template-columns: repeat(7, minmax(180px, 1fr));
-  }
-
-  .pipeline-access-toolbar {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
-
-  .pipeline-form-grid {
-    grid-template-columns: repeat(2, minmax(170px, 1fr));
-  }
-
-  .agenda-board {
-    grid-template-columns: repeat(4, minmax(180px, 1fr));
-  }
-
-  .proposal-model-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .proposal-send-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .proposal-commercial-item-row {
-    grid-template-columns: 1fr;
-  }
-
-  .proposal-commercial-item-subtotal {
-    text-align: left;
-  }
-
-  .customer-popup-overlay {
-    padding: 8px;
-    align-items: stretch;
-  }
-
-  .customer-popup {
-    max-height: 100%;
-    border-radius: 12px;
-  }
-
-  .customer-popup-overview-grid,
-  .customer-popup-facts,
-  .customer-popup-kpis {
-    grid-template-columns: 1fr;
-  }
-
-  .pipeline-form-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .pipeline-automation-toggle {
-    display: grid;
-    justify-content: stretch;
-  }
-
-  .reports-panel .reports-kpi-grid,
-  .reports-toolbar,
-  .reports-funnel-toolbar,
-  .reports-products-toolbar,
-  .reports-panel .reports-funnel-kpi-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .reports-stage-chart-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .reports-table-wrap {
-    max-height: none;
-  }
-
-  .hunter-controls-grid,
-  .hunter-form-grid-two {
-    grid-template-columns: 1fr;
-  }
-
   .contacts-create-grid {
     grid-template-columns: repeat(2, minmax(170px, 1fr));
   }
 
-  .contacts-create-company-field {
-    grid-column: 1 / -1;
+  .tasks-users-grid {
+    grid-template-columns: repeat(2, minmax(200px, 1fr));
   }
 
-  .contacts-search-form {
-    grid-template-columns: 1fr;
+  .tasks-calendar-toolbar {
+    grid-template-columns: repeat(2, minmax(170px, 1fr));
   }
 
-  .contacts-list-header {
-    flex-direction: column;
-    align-items: flex-start;
+  .customer-popup-facts {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+
+  .customer-popup-kpis {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+}
+
+/* ── Tablet / small desktop ─────────────────── */
+@media (min-width: 980px) {
+  .crm-main {
+    padding: 16px 18px 20px;
+  }
+
+  .crm-topbar {
+    flex-direction: row;
+    align-items: center;
+    top: 10px;
+  }
+
+  .crm-search {
+    min-width: 280px;
+  }
+
+  .crm-viewer-select {
+    min-width: 260px;
+  }
+
+  .crm-viewer-select select {
+    min-width: 260px;
+  }
+
+  .crm-page-header {
+    flex-direction: row;
+    gap: 16px;
+  }
+
+  .crm-page-side {
+    justify-items: end;
+  }
+
+  .activity-item {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .birthday-alert-item {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .dashboard-strip {
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
+  }
+
+  .two-col {
+    grid-template-columns: repeat(2, minmax(320px, 1fr));
+  }
+
+  .dashboard-modern-strip {
+    grid-template-columns: repeat(4, minmax(130px, 1fr));
+  }
+
+  .dashboard-focus-grid {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+
+  .dashboard-closing-item {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .dashboard-closing-side {
+    text-align: right;
+  }
+
+  .dashboard-section-header {
+    flex-direction: row;
+  }
+
+  .reports-toolbar {
+    grid-template-columns: minmax(260px, 1.4fr) minmax(170px, 220px) auto auto;
+  }
+
+  .reports-funnel-toolbar {
+    grid-template-columns: repeat(6, minmax(150px, 1fr));
+  }
+
+  .reports-products-toolbar {
+    grid-template-columns: minmax(220px, 1.3fr) repeat(3, minmax(160px, 1fr));
+  }
+
+  .reports-panel .reports-kpi-grid {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+
+  .reports-panel .reports-funnel-kpi-grid {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+
+  .reports-products-kpi-grid {
+    grid-template-columns: repeat(4, minmax(180px, 1fr));
+  }
+
+  .reports-stage-chart-grid {
+    grid-template-columns: repeat(3, minmax(220px, 1fr));
+  }
+
+  .reports-grid-two {
+    grid-template-columns: repeat(2, minmax(280px, 1fr));
+  }
+
+  .hunter-controls-grid {
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
   }
 
   .hunter-table-header,
   .hunter-quick-header {
-    flex-direction: column;
-    align-items: flex-start;
+    flex-direction: row;
+    align-items: center;
   }
-}
 
-@media (max-width: 680px) {
+  .settings-users-layout {
+    grid-template-columns: minmax(320px, 1fr) minmax(220px, 280px);
+  }
+
+  .settings-permissions-grid {
+    grid-template-columns: repeat(5, minmax(140px, 1fr));
+  }
+
+  .settings-library-grid {
+    grid-template-columns: repeat(2, minmax(320px, 1fr));
+  }
+
   .settings-product-create-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(4, minmax(170px, 1fr));
+  }
+
+  .settings-product-create-toolbar {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .settings-product-create-toolbar .inline-actions {
+    margin-left: auto;
+  }
+
+  .pipeline-access-toolbar {
+    grid-template-columns: minmax(250px, 420px) 1fr;
+    align-items: end;
+  }
+
+  .pipeline-form-grid {
+    grid-template-columns: repeat(4, minmax(180px, 1fr));
+  }
+
+  .pipeline-automation-toggle {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
   }
 
   .contacts-create-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(260px, 1.3fr) repeat(3, minmax(160px, 1fr));
+  }
+
+  .contacts-create-company-field {
+    grid-column: span 2;
+  }
+
+  .contacts-search-form {
+    grid-template-columns: minmax(240px, 1fr) auto auto;
+  }
+
+  .contacts-list-header {
+    flex-direction: row;
+  }
+
+  .proposal-model-grid {
+    grid-template-columns: minmax(320px, 1fr) minmax(300px, 1fr);
+  }
+
+  .proposal-send-grid {
+    grid-template-columns: minmax(220px, 1fr) auto;
+  }
+
+  .proposal-commercial-item-row {
+    grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) minmax(180px, 1.8fr) minmax(80px, 0.6fr) minmax(120px, 0.8fr) minmax(90px, 0.6fr) minmax(120px, 0.8fr) auto;
+  }
+
+  .proposal-commercial-item-subtotal {
+    text-align: right;
+  }
+
+  .customer-popup-overlay {
+    padding: 18px;
+    align-items: flex-start;
+  }
+
+  .customer-popup {
+    max-height: calc(100vh - 36px);
+    border-radius: 16px;
+  }
+
+  .customer-popup-overview-grid {
+    grid-template-columns: repeat(2, minmax(280px, 1fr));
+  }
+}
+
+/* ── Full desktop with sidebar ──────────────── */
+@media (min-width: 1160px) {
+  .crm-layout {
+    grid-template-columns: 248px 1fr;
+  }
+
+  .crm-sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    border-right: 1px solid var(--border-soft);
+    border-bottom: none;
+    padding: 18px 14px;
+    gap: 18px;
+  }
+
+  .crm-nav {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    overflow-x: visible;
+  }
+
+  .crm-nav-btn {
+    min-width: auto;
   }
 }
 
