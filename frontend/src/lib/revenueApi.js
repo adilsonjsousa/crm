@@ -1087,6 +1087,29 @@ export async function listContacts(options = {}) {
   }));
 }
 
+export async function searchContacts(query, { excludeCompanyId } = {}) {
+  const term = String(query || "").trim();
+  if (!term) return [];
+  const supabase = ensureSupabase();
+  const ilike = `%${term}%`;
+  let q = supabase
+    .from("contacts")
+    .select("id,company_id,full_name,email,phone,whatsapp,birth_date,role_title,is_primary,companies:company_id(trade_name,cnpj)")
+    .or(`full_name.ilike.${ilike},email.ilike.${ilike},whatsapp.ilike.${ilike},phone.ilike.${ilike}`)
+    .order("full_name", { ascending: true })
+    .limit(30);
+  if (excludeCompanyId) {
+    q = q.neq("company_id", excludeCompanyId);
+  }
+  const { data, error } = await q;
+  if (error) throw new Error(normalizeError(error, "Falha ao buscar contatos."));
+  return (data || []).map((item) => ({
+    ...item,
+    phone: formatBrazilPhone(item.phone),
+    whatsapp: formatBrazilPhone(item.whatsapp)
+  }));
+}
+
 export async function getContactById(contactId) {
   const normalizedContactId = String(contactId || "").trim();
   if (!normalizedContactId) return null;
