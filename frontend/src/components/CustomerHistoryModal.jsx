@@ -3,6 +3,7 @@ import {
   createCompanyInternalMessage,
   createCompanyAsset,
   createCompanyAssetPhoto,
+  createContact,
   getCompanyById,
   listCompanyAssets,
   listCompanyContacts,
@@ -14,6 +15,8 @@ import {
   listCompanyOpportunityStageHistory,
   listCompanySalesOrders,
   listCompanyTasks,
+  searchContacts,
+  updateContact,
   uploadCompanyAssetPhoto
 } from "../lib/revenueApi";
 import { stageLabel } from "../lib/pipelineStages";
@@ -358,10 +361,31 @@ export default function CustomerHistoryModal({
     customer: {}
   });
 
+  const [linkContactOpen, setLinkContactOpen] = useState(false);
+  const [linkContactMode, setLinkContactMode] = useState("search");
+  const [linkContactSearch, setLinkContactSearch] = useState("");
+  const [linkContactResults, setLinkContactResults] = useState([]);
+  const [linkContactSearching, setLinkContactSearching] = useState(false);
+  const [linkContactSaving, setLinkContactSaving] = useState(false);
+  const [linkContactFeedback, setLinkContactFeedback] = useState({ type: "", message: "" });
+  const [linkContactNewForm, setLinkContactNewForm] = useState({
+    full_name: "",
+    email: "",
+    role_title: "",
+    whatsapp: "",
+    birth_date: ""
+  });
+
   useEffect(() => {
     if (!open) return;
     function handleEscape(event) {
-      if (event.key === "Escape") onClose?.();
+      if (event.key === "Escape") {
+        if (linkContactOpen) {
+          setLinkContactOpen(false);
+          return;
+        }
+        onClose?.();
+      }
     }
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
@@ -1004,6 +1028,77 @@ export default function CustomerHistoryModal({
     }
   }
 
+  function openLinkContactModal() {
+    setLinkContactMode("search");
+    setLinkContactSearch("");
+    setLinkContactResults([]);
+    setLinkContactSearching(false);
+    setLinkContactSaving(false);
+    setLinkContactFeedback({ type: "", message: "" });
+    setLinkContactNewForm({ full_name: "", email: "", role_title: "", whatsapp: "", birth_date: "" });
+    setLinkContactOpen(true);
+  }
+
+  async function handleLinkContactSearch() {
+    const term = linkContactSearch.trim();
+    if (!term) return;
+    setLinkContactSearching(true);
+    setLinkContactFeedback({ type: "", message: "" });
+    try {
+      const results = await searchContacts(term, { excludeCompanyId: companyId });
+      setLinkContactResults(results);
+      if (!results.length) {
+        setLinkContactFeedback({ type: "info", message: "Nenhum contato encontrado. Voce pode criar um novo." });
+      }
+    } catch (err) {
+      setLinkContactFeedback({ type: "error", message: err.message });
+    } finally {
+      setLinkContactSearching(false);
+    }
+  }
+
+  async function handleLinkExistingContact(contactId) {
+    setLinkContactSaving(true);
+    setLinkContactFeedback({ type: "", message: "" });
+    try {
+      await updateContact(contactId, { company_id: companyId });
+      const refreshed = await listCompanyContacts(companyId);
+      setContacts(refreshed);
+      setLinkContactOpen(false);
+    } catch (err) {
+      setLinkContactFeedback({ type: "error", message: err.message });
+    } finally {
+      setLinkContactSaving(false);
+    }
+  }
+
+  async function handleCreateAndLinkContact() {
+    const name = linkContactNewForm.full_name.trim();
+    if (!name) {
+      setLinkContactFeedback({ type: "error", message: "Nome do contato e obrigatorio." });
+      return;
+    }
+    setLinkContactSaving(true);
+    setLinkContactFeedback({ type: "", message: "" });
+    try {
+      await createContact({
+        company_id: companyId,
+        full_name: name,
+        email: linkContactNewForm.email.trim() || null,
+        role_title: linkContactNewForm.role_title.trim() || null,
+        whatsapp: linkContactNewForm.whatsapp.trim() || null,
+        birth_date: linkContactNewForm.birth_date || null
+      });
+      const refreshed = await listCompanyContacts(companyId);
+      setContacts(refreshed);
+      setLinkContactOpen(false);
+    } catch (err) {
+      setLinkContactFeedback({ type: "error", message: err.message });
+    } finally {
+      setLinkContactSaving(false);
+    }
+  }
+
   if (!open) return null;
 
   const customerLabel = companyProfile?.trade_name || companyName || "Cliente";
@@ -1142,7 +1237,12 @@ export default function CustomerHistoryModal({
             </div>
 
             <article className="customer-popup-card top-gap">
-              <h4>Contatos e acoes rapidas</h4>
+              <div className="link-contact-header">
+                <h4>Contatos e acoes rapidas</h4>
+                <button type="button" className="btn-ghost btn-table-action" onClick={openLinkContactModal}>
+                  + Vincular Contato
+                </button>
+              </div>
               <div className="table-wrap top-gap">
                 <table>
                   <thead>
@@ -1204,6 +1304,151 @@ export default function CustomerHistoryModal({
                 </table>
               </div>
             </article>
+
+            {linkContactOpen ? (
+              <div className="link-contact-overlay" role="presentation" onClick={() => setLinkContactOpen(false)}>
+                <div className="link-contact-modal" onClick={(e) => e.stopPropagation()}>
+                  <div className="link-contact-modal-header">
+                    <h4>Vincular Contato</h4>
+                    <button type="button" className="btn-ghost btn-table-action" onClick={() => setLinkContactOpen(false)}>
+                      Fechar
+                    </button>
+                  </div>
+
+                  <div className="link-contact-tabs">
+                    <button
+                      type="button"
+                      className={`link-contact-tab ${linkContactMode === "search" ? "active" : ""}`}
+                      onClick={() => setLinkContactMode("search")}
+                    >
+                      Buscar Existente
+                    </button>
+                    <button
+                      type="button"
+                      className={`link-contact-tab ${linkContactMode === "create" ? "active" : ""}`}
+                      onClick={() => setLinkContactMode("create")}
+                    >
+                      Criar Novo
+                    </button>
+                  </div>
+
+                  {linkContactFeedback.message ? (
+                    <p className={`link-contact-feedback ${linkContactFeedback.type === "error" ? "error" : "info"}`}>
+                      {linkContactFeedback.message}
+                    </p>
+                  ) : null}
+
+                  {linkContactMode === "search" ? (
+                    <div className="link-contact-search-section">
+                      <div className="link-contact-search-bar">
+                        <input
+                          type="text"
+                          placeholder="Buscar por nome, e-mail ou WhatsApp..."
+                          value={linkContactSearch}
+                          onChange={(e) => setLinkContactSearch(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleLinkContactSearch();
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          disabled={linkContactSearching || !linkContactSearch.trim()}
+                          onClick={handleLinkContactSearch}
+                        >
+                          {linkContactSearching ? "Buscando..." : "Buscar"}
+                        </button>
+                      </div>
+
+                      {linkContactResults.length > 0 ? (
+                        <div className="link-contact-results">
+                          {linkContactResults.map((c) => (
+                            <div key={c.id} className="link-contact-result-item">
+                              <div className="link-contact-result-info">
+                                <strong>{c.full_name}</strong>
+                                {c.companies?.trade_name ? (
+                                  <span className="link-contact-result-company">{c.companies.trade_name}</span>
+                                ) : null}
+                                <span className="link-contact-result-details">
+                                  {[c.role_title, c.email, formatBrazilPhone(c.whatsapp || c.phone)].filter(Boolean).join(" · ")}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                className="btn-ghost btn-table-action"
+                                disabled={linkContactSaving}
+                                onClick={() => handleLinkExistingContact(c.id)}
+                              >
+                                Vincular
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="link-contact-create-section">
+                      <div className="link-contact-form-grid">
+                        <label>
+                          <span>Nome *</span>
+                          <input
+                            type="text"
+                            placeholder="Nome completo"
+                            value={linkContactNewForm.full_name}
+                            onChange={(e) => setLinkContactNewForm((prev) => ({ ...prev, full_name: e.target.value }))}
+                          />
+                        </label>
+                        <label>
+                          <span>Cargo</span>
+                          <input
+                            type="text"
+                            placeholder="Cargo / funcao"
+                            value={linkContactNewForm.role_title}
+                            onChange={(e) => setLinkContactNewForm((prev) => ({ ...prev, role_title: e.target.value }))}
+                          />
+                        </label>
+                        <label>
+                          <span>E-mail</span>
+                          <input
+                            type="email"
+                            placeholder="email@exemplo.com"
+                            value={linkContactNewForm.email}
+                            onChange={(e) => setLinkContactNewForm((prev) => ({ ...prev, email: e.target.value }))}
+                          />
+                        </label>
+                        <label>
+                          <span>WhatsApp</span>
+                          <input
+                            type="text"
+                            placeholder="(00) 00000-0000"
+                            value={linkContactNewForm.whatsapp}
+                            onChange={(e) => setLinkContactNewForm((prev) => ({ ...prev, whatsapp: e.target.value }))}
+                          />
+                        </label>
+                        <label>
+                          <span>Nascimento</span>
+                          <input
+                            type="date"
+                            value={linkContactNewForm.birth_date}
+                            onChange={(e) => setLinkContactNewForm((prev) => ({ ...prev, birth_date: e.target.value }))}
+                          />
+                        </label>
+                      </div>
+                      <div className="link-contact-form-actions">
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          disabled={linkContactSaving || !linkContactNewForm.full_name.trim()}
+                          onClick={handleCreateAndLinkContact}
+                        >
+                          {linkContactSaving ? "Salvando..." : "Criar e Vincular"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
