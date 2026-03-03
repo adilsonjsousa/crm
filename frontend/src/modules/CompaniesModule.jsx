@@ -451,6 +451,14 @@ export default function CompaniesModule({
   });
   const companyPanelRef = useRef(null);
   const contactPanelRef = useRef(null);
+  const importFileInputRef = useRef(null);
+
+  const [importPreviewRows, setImportPreviewRows] = useState([]);
+  const [importPreviewColumns, setImportPreviewColumns] = useState([]);
+  const [importFileName, setImportFileName] = useState("");
+  const [importingContacts, setImportingContacts] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [importError, setImportError] = useState("");
 
   const cnpjDigits = useMemo(() => cleanCnpj(form.cnpj), [form.cnpj]);
   const hasPrimaryContactData = useMemo(
@@ -996,6 +1004,118 @@ export default function CompaniesModule({
       setError(err.message);
     } finally {
       setSavingContactCreate(false);
+    }
+  }
+
+  async function handleImportFile(event) {
+    const file = event?.target?.files?.[0] || null;
+    if (event?.target) event.target.value = "";
+    if (!file) return;
+
+    setImportError("");
+    setImportResult(null);
+    setImportFileName(file.name);
+
+    try {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", raw: false, cellDates: true });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error("Planilha inválida: nenhuma aba encontrada.");
+
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], { defval: "", raw: false });
+      if (!rows.length) throw new Error("Planilha sem linhas para importar.");
+
+      const columns = Object.keys(rows[0]);
+      setImportPreviewColumns(columns);
+      setImportPreviewRows(rows);
+    } catch (err) {
+      setImportError(err.message || "Erro ao ler a planilha.");
+      setImportPreviewRows([]);
+      setImportPreviewColumns([]);
+    }
+  }
+
+  function clearImport() {
+    setImportPreviewRows([]);
+    setImportPreviewColumns([]);
+    setImportFileName("");
+    setImportResult(null);
+    setImportError("");
+  }
+
+  function resolveField(row, aliases) {
+    for (const alias of aliases) {
+      const key = Object.keys(row).find((k) => normalizeLookupText(k) === normalizeLookupText(alias));
+      if (key && String(row[key] || "").trim()) return String(row[key]).trim();
+    }
+    return "";
+  }
+
+  async function handleConfirmImport() {
+    if (importingContacts || !importPreviewRows.length) return;
+    setImportingContacts(true);
+    setImportError("");
+    setImportResult(null);
+
+    let inserted = 0;
+    let skipped = 0;
+    let errors = 0;
+    const warnings = [];
+
+    try {
+      for (let i = 0; i < importPreviewRows.length; i++) {
+        const row = importPreviewRows[i];
+        const rowNumber = i + 2;
+
+        const fullName = resolveField(row, ["Nome", "Nome completo", "Nome do contato", "Contato", "full_name", "name"]);
+        if (!fullName) {
+          skipped++;
+          warnings.push(`Linha ${rowNumber}: nome não encontrado.`);
+          continue;
+        }
+
+        const whatsapp = resolveField(row, ["WhatsApp", "Whatsapp", "Telefone", "Celular", "Phone", "phone", "whatsapp", "Tel"]);
+        const email = resolveField(row, ["E-mail", "Email", "email", "e-mail"]);
+        const roleTitle = resolveField(row, ["Cargo", "Função", "Role", "role_title", "cargo", "Titulo"]);
+        const birthDate = resolveField(row, ["Nascimento", "Data de nascimento", "birth_date", "Aniversário", "Data nascimento"]);
+
+        let companyId = null;
+        const companyName = resolveField(row, ["Empresa", "Company", "company", "Razão Social", "trade_name", "Nome da empresa"]);
+        if (companyName) {
+          const normalizedName = normalizeLookupText(companyName);
+          const match = (companyOptions || []).find((c) => normalizeLookupText(c.trade_name) === normalizedName);
+          if (match) companyId = match.id;
+        }
+
+        let validWhatsapp = "";
+        try {
+          validWhatsapp = validateBrazilPhoneOrEmpty(whatsapp, "WhatsApp");
+        } catch (_) {
+          validWhatsapp = "";
+        }
+
+        try {
+          await createContact({
+            company_id: companyId,
+            full_name: upperLettersOnly(fullName),
+            email: email || null,
+            role_title: roleTitle || null,
+            whatsapp: validWhatsapp,
+            birth_date: birthDate || null
+          });
+          inserted++;
+        } catch (rowErr) {
+          errors++;
+          warnings.push(`Linha ${rowNumber}: ${rowErr.message || "erro ao salvar"}`);
+        }
+      }
+
+      setImportResult({ inserted, skipped, errors, warnings, total: importPreviewRows.length });
+      if (inserted > 0) await load();
+    } catch (err) {
+      setImportError(err.message || "Erro durante a importação.");
+    } finally {
+      setImportingContacts(false);
     }
   }
 
@@ -1946,6 +2066,96 @@ export default function CompaniesModule({
               </button>
             </div>
           </form>
+        </article>
+
+        <article className="panel">
+          <div className="contacts-list-header" style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            <h2 style={{ margin: 0 }}>Importar planilha</h2>
+            <div className="inline-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => importFileInputRef.current?.click()}
+                disabled={importingContacts}
+              >
+                {importingContacts ? "Importando..." : "Carregar planilha (.xlsx / .csv)"}
+              </button>
+              <input
+                ref={importFileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleImportFile}
+                style={{ display: "none" }}
+              />
+              {importFileName ? <span className="muted">Arquivo: {importFileName}</span> : null}
+              {importFileName && !importingContacts ? (
+                <button type="button" className="btn-ghost" onClick={clearImport}>Limpar</button>
+              ) : null}
+            </div>
+          </div>
+          {importError ? <p className="error-text">{importError}</p> : null}
+          {importPreviewRows.length > 0 && !importResult ? (
+            <div style={{ marginTop: "12px" }}>
+              <p className="muted" style={{ marginBottom: "8px" }}>
+                {importPreviewRows.length} linha(s) encontrada(s). Colunas detectadas: <strong>{importPreviewColumns.join(", ")}</strong>
+              </p>
+              <div className="table-wrap" style={{ maxHeight: "300px", overflowY: "auto" }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      {importPreviewColumns.map((col) => <th key={col}>{col}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importPreviewRows.slice(0, 20).map((row, idx) => (
+                      <tr key={idx}>
+                        <td>{idx + 1}</td>
+                        {importPreviewColumns.map((col) => <td key={col}>{String(row[col] || "")}</td>)}
+                      </tr>
+                    ))}
+                    {importPreviewRows.length > 20 ? (
+                      <tr>
+                        <td colSpan={importPreviewColumns.length + 1} className="muted" style={{ textAlign: "center" }}>
+                          ... e mais {importPreviewRows.length - 20} linha(s)
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+              <p className="muted" style={{ marginTop: "8px", fontSize: "0.85em" }}>
+                O sistema tentara mapear as colunas automaticamente: Nome, WhatsApp/Telefone, E-mail, Cargo, Empresa, Nascimento.
+              </p>
+              <div className="inline-actions" style={{ marginTop: "12px" }}>
+                <button type="button" className="btn-primary" onClick={handleConfirmImport} disabled={importingContacts}>
+                  {importingContacts ? "Importando..." : `Importar ${importPreviewRows.length} contato(s)`}
+                </button>
+                <button type="button" className="btn-ghost" onClick={clearImport} disabled={importingContacts}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {importResult ? (
+            <div style={{ marginTop: "12px" }}>
+              <div className="import-result-summary" style={{ display: "flex", gap: "20px", flexWrap: "wrap", marginBottom: "12px" }}>
+                <div><strong className="kpi-value" style={{ color: "#22c55e" }}>{importResult.inserted}</strong><br /><span className="muted">Importados</span></div>
+                <div><strong className="kpi-value">{importResult.skipped}</strong><br /><span className="muted">Ignorados</span></div>
+                <div><strong className="kpi-value" style={{ color: "#ef4444" }}>{importResult.errors}</strong><br /><span className="muted">Erros</span></div>
+                <div><strong className="kpi-value">{importResult.total}</strong><br /><span className="muted">Total</span></div>
+              </div>
+              {importResult.warnings?.length > 0 ? (
+                <details style={{ marginBottom: "12px" }}>
+                  <summary className="muted">{importResult.warnings.length} aviso(s)</summary>
+                  <ul style={{ fontSize: "0.85em", maxHeight: "200px", overflowY: "auto" }}>
+                    {importResult.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                  </ul>
+                </details>
+              ) : null}
+              <button type="button" className="btn-ghost" onClick={clearImport}>Fechar resultado</button>
+            </div>
+          ) : null}
         </article>
 
         <article className="panel">
