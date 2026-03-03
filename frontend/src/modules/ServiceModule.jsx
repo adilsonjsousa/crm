@@ -237,7 +237,7 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
 
   return (
     <section className="module two-col">
-      <article className="panel">
+      <article className="panel dashboard-glass-card">
         <h2>Assistência Técnica</h2>
         {success ? <p className="success-text">{success}</p> : null}
         <form className="form-grid" onSubmit={handleSubmit}>
@@ -315,7 +315,7 @@ export default function ServiceModule({ onRequestCreateCompany = null }) {
         </form>
       </article>
 
-      <article className="panel">
+      <article className="panel dashboard-glass-card">
         <h3>Chamados recentes</h3>
         {error ? <p className="error-text">{error}</p> : null}
         <div className="table-wrap">
