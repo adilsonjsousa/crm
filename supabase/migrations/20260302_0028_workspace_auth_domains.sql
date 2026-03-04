@@ -1,5 +1,5 @@
 -- Enforce Google Workspace domain access at database policy level.
--- Allowed domains: @artprinter.com.br and @artestampa.com.br
+-- Allowed domains: @artprinter.com.br, @artestampa.com.br and @helyo.com.br
 
 create or replace function public.auth_email_domain()
 returns text
@@ -15,7 +15,7 @@ language sql
 stable
 as $$
   select auth.role() = 'authenticated'
-    and public.auth_email_domain() in ('artprinter.com.br', 'artestampa.com.br');
+    and public.auth_email_domain() in ('artprinter.com.br', 'artestampa.com.br', 'helyo.com.br');
 $$;
 
 do $$
