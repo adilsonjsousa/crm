@@ -3984,15 +3984,39 @@ export async function listRdStationSyncJobs(limit = 12) {
 }
 
 async function invokeManageUsers(action, payload = {}) {
+  const requestBody = { action, ...payload };
+
   const supabase = ensureSupabase();
-  const { data, error } = await supabase.functions.invoke("manage-users", {
-    body: {
-      action,
-      ...payload
-    }
+  let { data, error } = await supabase.functions.invoke("manage-users", {
+    body: requestBody
   });
 
-  if (error) throw new Error(normalizeError(error, "Falha ao processar operação de usuários."));
+  if (error) {
+    const details = await readFunctionInvokeErrorDetails(error);
+    const canRetryStateless = details.status === 401 || details.status === 403 || isEdgeFunctionNon2xx(error);
+    if (canRetryStateless) {
+      try {
+        const fallbackClient = createStatelessSupabaseClient();
+        const retry = await fallbackClient.functions.invoke("manage-users", {
+          body: requestBody
+        });
+        data = retry.data;
+        error = retry.error;
+        if (error) {
+          const retryDetails = await readFunctionInvokeErrorDetails(error);
+          const retryMessage = retryDetails.payloadMessage || retryDetails.message || "";
+          if (retryMessage) throw new Error(retryMessage);
+        }
+      } catch (retryError) {
+        if (retryError?.message) throw retryError;
+      }
+    }
+    if (error) {
+      const message = details.payloadMessage || details.message || normalizeError(error, "");
+      throw new Error(message || "Falha ao processar operação de usuários.");
+    }
+  }
+
   const safeData = asObject(data);
   if (safeData.error) {
     throw new Error(String(safeData.message || safeData.error || "Falha ao processar operação de usuários."));
@@ -4034,13 +4058,15 @@ export async function createSystemUser(payload) {
   if (!email) throw new Error("Informe o e-mail de login do usuário.");
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Informe um e-mail válido.");
 
+  const redirectTo = typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}` : undefined;
   const result = await invokeManageUsers("create", {
     full_name: fullName,
     email,
     whatsapp,
     role,
     status,
-    permissions: sanitizeUserPermissions(payload?.permissions, role)
+    permissions: sanitizeUserPermissions(payload?.permissions, role),
+    redirect_to: redirectTo
   });
 
   return {
@@ -4090,9 +4116,11 @@ export async function sendSystemUserPasswordReset(payload) {
     throw new Error("Informe o usuário para enviar o reset de senha.");
   }
 
+  const redirectTo = typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}` : undefined;
   const result = await invokeManageUsers("reset_password", {
     user_id: normalizedUserId || undefined,
-    email: email || undefined
+    email: email || undefined,
+    redirect_to: redirectTo
   });
 
   return {
