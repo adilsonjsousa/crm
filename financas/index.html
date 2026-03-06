@@ -8,6 +8,36 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 </head>
 <body>
+  <!-- Auth Screen -->
+  <div id="authScreen" class="auth-overlay">
+    <div class="auth-card">
+      <div class="auth-icon"><i class="fas fa-shield-halved"></i></div>
+      <h2 id="authTitle">Acesso Protegido</h2>
+      <p id="authSubtitle" class="auth-subtitle">Crie sua senha para proteger seus dados</p>
+      <form id="formAuth" class="form">
+        <div class="form-group">
+          <label for="authSenha">Senha</label>
+          <div class="input-password">
+            <input type="password" id="authSenha" placeholder="Digite sua senha" required minlength="4" />
+            <button type="button" class="btn-toggle-pass" id="btnTogglePass"><i class="fas fa-eye"></i></button>
+          </div>
+        </div>
+        <div class="form-group" id="authConfirmGroup">
+          <label for="authSenhaConfirm">Confirmar Senha</label>
+          <input type="password" id="authSenhaConfirm" placeholder="Confirme sua senha" required minlength="4" />
+        </div>
+        <p id="authError" class="auth-error"></p>
+        <button type="submit" class="btn btn-primary" id="btnAuth">
+          <i class="fas fa-lock"></i> <span id="btnAuthText">Criar Senha</span>
+        </button>
+      </form>
+      <button class="btn-link" id="btnResetSenha" style="display:none">Esqueci minha senha</button>
+    </div>
+  </div>
+
+  <!-- App Container (hidden until authenticated) -->
+  <div id="appContainer" style="display:none">
+
   <!-- Header -->
   <header class="header">
     <div class="header-left">
@@ -21,6 +51,7 @@
       <span id="mesAtualLabel" class="mes-label"></span>
       <button class="btn btn-icon" id="btnMesAnterior" title="Mês anterior"><i class="fas fa-chevron-left"></i></button>
       <button class="btn btn-icon" id="btnProximoMes" title="Próximo mês"><i class="fas fa-chevron-right"></i></button>
+      <button class="btn btn-sm btn-logout" id="btnLogout" title="Sair"><i class="fas fa-right-from-bracket"></i> Sair</button>
     </div>
   </header>
 
@@ -260,7 +291,10 @@
   <!-- Toast Notification -->
   <div id="toast" class="toast" style="display:none"></div>
 
+  </div><!-- /appContainer -->
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="auth.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

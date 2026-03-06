@@ -665,5 +665,124 @@ tr:hover td { background: rgba(108, 92, 231, 0.04); }
   color: var(--primary);
   font-size: 11px;
   margin-left: 4px;
-  title: "Recorrente mensal";
+}
+
+/* ===== Auth Screen ===== */
+.auth-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.auth-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 40px;
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+.auth-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(108, 92, 231, 0.15);
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  margin: 0 auto 20px;
+}
+
+.auth-card h2 {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.auth-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+.auth-card .form {
+  text-align: left;
+}
+
+.auth-card .form-group {
+  margin-bottom: 14px;
+}
+
+.input-password {
+  position: relative;
+}
+
+.input-password input {
+  width: 100%;
+  padding-right: 40px;
+}
+
+.btn-toggle-pass {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  font-size: 14px;
+}
+
+.btn-toggle-pass:hover {
+  color: var(--text);
+}
+
+.auth-error {
+  color: var(--despesa);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  margin-bottom: 10px;
+  min-height: 18px;
+  display: none;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 16px;
+  padding: 4px;
+  text-decoration: underline;
+}
+
+.btn-link:hover {
+  color: var(--despesa);
+}
+
+/* ===== Logout Button ===== */
+.btn-logout {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+
+.btn-logout:hover {
+  border-color: var(--despesa);
+  color: var(--despesa);
 }
