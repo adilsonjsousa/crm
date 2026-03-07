@@ -70,17 +70,20 @@
     const btnAuthText = document.getElementById('btnAuthText');
     const btnReset = document.getElementById('btnResetSenha');
 
+    const confirmInput = document.getElementById('authSenhaConfirm');
     if (isNew) {
       authTitle.textContent = 'Criar Acesso';
       authSubtitle.textContent = 'Defina uma senha para proteger seus dados financeiros';
       btnAuthText.textContent = 'Criar Senha';
       confirmGroup.style.display = '';
+      confirmInput.required = true;
       btnReset.style.display = 'none';
     } else {
       authTitle.textContent = 'Acesso Protegido';
       authSubtitle.textContent = 'Digite sua senha para acessar suas finanças';
       btnAuthText.textContent = 'Entrar';
       confirmGroup.style.display = 'none';
+      confirmInput.required = false;
       btnReset.style.display = '';
     }
 
