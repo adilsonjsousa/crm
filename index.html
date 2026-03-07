@@ -233,6 +233,9 @@
         <div class="table-header">
           <span class="result-count" id="resultCount">0 transações</span>
           <div class="table-actions">
+            <button class="btn btn-sm btn-danger-outline" id="btnExcluirMassa" style="display:none">
+              <i class="fas fa-trash"></i> Excluir selecionados (<span id="countSelecionados">0</span>)
+            </button>
             <button class="btn btn-sm" id="btnExportarCSV" title="Exportar CSV"><i class="fas fa-file-csv"></i> CSV</button>
           </div>
         </div>
@@ -240,6 +243,7 @@
           <table id="tabelaTransacoes">
             <thead>
               <tr>
+                <th class="th-check"><input type="checkbox" id="checkAll" title="Selecionar todos" /></th>
                 <th class="sortable" data-sort="vencimento">Vencimento <i class="fas fa-sort"></i></th>
                 <th class="sortable" data-sort="descricao">Descrição <i class="fas fa-sort"></i></th>
                 <th>Categoria</th>

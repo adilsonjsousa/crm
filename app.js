@@ -41,6 +41,7 @@
   let chartMensal = null;
   let chartSaldo = null;
   let subTabAtiva = 'todos';
+  let selecionados = new Set();
 
   // ===== DOM refs =====
   const $ = (sel) => document.querySelector(sel);
@@ -117,6 +118,19 @@
     $('#recorrente').addEventListener('change', () => {
       $('#rowMesesRecorrencia').style.display = $('#recorrente').value === 'mensal' ? '' : 'none';
     });
+
+    // Bulk selection
+    $('#checkAll').addEventListener('change', (e) => {
+      const checked = e.target.checked;
+      $$('.check-item').forEach(cb => {
+        cb.checked = checked;
+        if (checked) selecionados.add(cb.dataset.id);
+        else selecionados.delete(cb.dataset.id);
+      });
+      atualizarBtnExcluirMassa();
+    });
+
+    $('#btnExcluirMassa').addEventListener('click', excluirEmMassa);
 
     // Sub-tabs (Todas | Despesas | Receitas)
     $$('.sub-tab').forEach(btn => {
@@ -252,6 +266,42 @@
     toast(t.status === 'pago' ? 'Marcado como pago!' : 'Marcado como pendente!', 'success');
   }
 
+  function toggleSelecao(id, checked) {
+    if (checked) selecionados.add(id);
+    else selecionados.delete(id);
+    // Update checkAll state
+    const allChecks = $$('.check-item');
+    $('#checkAll').checked = allChecks.length > 0 && selecionados.size === allChecks.length;
+    atualizarBtnExcluirMassa();
+  }
+
+  function atualizarBtnExcluirMassa() {
+    const btn = $('#btnExcluirMassa');
+    const count = selecionados.size;
+    btn.style.display = count > 0 ? '' : 'none';
+    $('#countSelecionados').textContent = count;
+  }
+
+  function excluirEmMassa() {
+    const count = selecionados.size;
+    if (count === 0) return;
+
+    abrirModal(
+      'Excluir em Massa',
+      `Deseja excluir ${count} transaç${count === 1 ? 'ão selecionada' : 'ões selecionadas'}? Esta ação não pode ser desfeita.`,
+      () => {
+        transacoes = transacoes.filter(t => !selecionados.has(t.id));
+        selecionados.clear();
+        $('#checkAll').checked = false;
+        salvarDados();
+        atualizarTudo();
+        atualizarBtnExcluirMassa();
+        toast(`${count} transaç${count === 1 ? 'ão excluída' : 'ões excluídas'}!`, 'info');
+        fecharModal();
+      }
+    );
+  }
+
   function cancelarEdicao() {
     resetForm();
   }
@@ -313,6 +363,9 @@
 
   // ===== Render All =====
   function atualizarTudo() {
+    selecionados.clear();
+    if ($('#checkAll')) $('#checkAll').checked = false;
+    atualizarBtnExcluirMassa();
     atualizarLabelMes();
     atualizarSummary();
     renderTabela();
@@ -374,6 +427,7 @@
       const sinal = t.tipo === 'receita' ? '+' : '-';
 
       return `<tr>
+        <td class="td-check"><input type="checkbox" class="check-item" data-id="${t.id}" ${selecionados.has(t.id) ? 'checked' : ''} onchange="window._app.toggleSelecao('${t.id}', this.checked)" /></td>
         <td>${formatDate(t.vencimento)}</td>
         <td>
           <span class="desc-cell">${escapeHtml(t.descricao)}</span>
@@ -711,6 +765,7 @@
     editarTransacao,
     excluirTransacao,
     marcarPago,
+    toggleSelecao,
   };
 
 })();

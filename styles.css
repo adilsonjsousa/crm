@@ -145,6 +145,13 @@ body {
 .btn-danger { background: var(--despesa); color: #fff; }
 .btn-danger:hover { opacity: 0.85; }
 
+.btn-danger-outline {
+  background: transparent;
+  border: 1px solid var(--despesa) !important;
+  color: var(--despesa) !important;
+}
+.btn-danger-outline:hover { background: var(--despesa-bg); }
+
 /* ===== Summary Cards ===== */
 .summary {
   display: grid;
@@ -382,6 +389,9 @@ th {
   text-align: left;
   white-space: nowrap;
 }
+
+.th-check, .td-check { width: 36px; text-align: center; }
+.th-check input, .td-check input { cursor: pointer; accent-color: var(--primary); width: 15px; height: 15px; }
 
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable:hover { color: var(--text); }
