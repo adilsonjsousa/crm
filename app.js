@@ -41,7 +41,6 @@
   let chartMensal = null;
   let chartSaldo = null;
   let subTabAtiva = 'todos';
-  let selecionados = new Set();
 
   // ===== DOM refs =====
   const $ = (sel) => document.querySelector(sel);
@@ -118,19 +117,6 @@
     $('#recorrente').addEventListener('change', () => {
       $('#rowMesesRecorrencia').style.display = $('#recorrente').value === 'mensal' ? '' : 'none';
     });
-
-    // Bulk selection
-    $('#checkAll').addEventListener('change', (e) => {
-      const checked = e.target.checked;
-      $$('.check-item').forEach(cb => {
-        cb.checked = checked;
-        if (checked) selecionados.add(cb.dataset.id);
-        else selecionados.delete(cb.dataset.id);
-      });
-      atualizarBtnExcluirMassa();
-    });
-
-    $('#btnExcluirMassa').addEventListener('click', excluirEmMassa);
 
     // Sub-tabs (Todas | Despesas | Receitas)
     $$('.sub-tab').forEach(btn => {
@@ -244,17 +230,103 @@
     const t = transacoes.find(tr => tr.id === id);
     if (!t) return;
 
-    abrirModal(
-      'Excluir Transação',
-      `Deseja excluir "${t.descricao}" (R$ ${t.valor.toFixed(2)})?`,
-      () => {
-        transacoes = transacoes.filter(tr => tr.id !== id);
-        salvarDados();
-        atualizarTudo();
-        toast('Transação excluída!', 'info');
-        fecharModal();
-      }
-    );
+    // Find all related transactions (same description, value, category, type)
+    const relacionados = transacoes
+      .filter(tr => tr.descricao === t.descricao && tr.valor === t.valor && tr.categoria === t.categoria && tr.tipo === t.tipo)
+      .sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+
+    if (relacionados.length > 1) {
+      abrirModalExcluirMassa(t, relacionados);
+    } else {
+      abrirModal(
+        'Excluir Transação',
+        `Deseja excluir "${t.descricao}" (${formatMoney(t.valor)})?`,
+        () => {
+          transacoes = transacoes.filter(tr => tr.id !== id);
+          salvarDados();
+          atualizarTudo();
+          toast('Transação excluída!', 'info');
+          fecharModal();
+        }
+      );
+    }
+  }
+
+  // ===== Modal Exclusão em Massa =====
+  function abrirModalExcluirMassa(transacao, relacionados) {
+    const massaSelecionados = new Set([transacao.id]);
+    const cat = CATEGORIAS[transacao.categoria] || { emoji: '?', nome: transacao.categoria };
+
+    $('#modalMassaTitulo').textContent = `Excluir: ${transacao.descricao}`;
+    $('#modalMassaSubtitulo').innerHTML =
+      `<span class="categoria-badge">${cat.emoji} ${cat.nome}</span> &mdash; ${formatMoney(transacao.valor)} &mdash; ${relacionados.length} lançamentos encontrados`;
+
+    function renderLista() {
+      const lista = $('#modalMassaLista');
+      lista.innerHTML = relacionados.map(r => {
+        const checked = massaSelecionados.has(r.id);
+        const statusLabel = r.status === 'pago' ? 'Pago' : 'Pendente';
+        const statusClass = r.status === 'pago' ? 'pago' : 'pendente';
+        return `<label class="massa-item ${checked ? 'selected' : ''}" data-id="${r.id}">
+          <input type="checkbox" class="massa-check" data-id="${r.id}" ${checked ? 'checked' : ''} />
+          <span class="massa-data">${formatDate(r.vencimento)}</span>
+          <span class="badge badge-${statusClass} massa-status">${statusLabel}</span>
+        </label>`;
+      }).join('');
+
+      // Bind checkbox events
+      lista.querySelectorAll('.massa-check').forEach(cb => {
+        cb.addEventListener('change', () => {
+          if (cb.checked) massaSelecionados.add(cb.dataset.id);
+          else massaSelecionados.delete(cb.dataset.id);
+          atualizarEstadoMassa();
+        });
+      });
+
+      atualizarEstadoMassa();
+    }
+
+    function atualizarEstadoMassa() {
+      const count = massaSelecionados.size;
+      $('#massaCountLabel').textContent = `${count} selecionado${count !== 1 ? 's' : ''}`;
+      $('#modalMassaExcluirBtn').disabled = count === 0;
+      $('#modalMassaExcluirBtn').innerHTML = `<i class="fas fa-trash"></i> Excluir ${count > 0 ? count : ''} selecionado${count !== 1 ? 's' : ''}`;
+      $('#massaCheckAll').checked = count === relacionados.length;
+
+      // Update visual selection
+      $('#modalMassaLista').querySelectorAll('.massa-item').forEach(item => {
+        item.classList.toggle('selected', massaSelecionados.has(item.dataset.id));
+      });
+    }
+
+    // Select all
+    $('#massaCheckAll').checked = false;
+    $('#massaCheckAll').onchange = () => {
+      const checked = $('#massaCheckAll').checked;
+      if (checked) relacionados.forEach(r => massaSelecionados.add(r.id));
+      else massaSelecionados.clear();
+      renderLista();
+    };
+
+    // Excluir button
+    $('#modalMassaExcluirBtn').onclick = () => {
+      const count = massaSelecionados.size;
+      transacoes = transacoes.filter(t => !massaSelecionados.has(t.id));
+      salvarDados();
+      atualizarTudo();
+      fecharModalMassa();
+      toast(`${count} lançamento${count !== 1 ? 's excluídos' : ' excluído'}!`, 'info');
+    };
+
+    // Cancel
+    $('#modalMassaCancelBtn').onclick = fecharModalMassa;
+
+    renderLista();
+    $('#modalExcluirMassa').style.display = '';
+  }
+
+  function fecharModalMassa() {
+    $('#modalExcluirMassa').style.display = 'none';
   }
 
   function marcarPago(id) {
@@ -264,42 +336,6 @@
     salvarDados();
     atualizarTudo();
     toast(t.status === 'pago' ? 'Marcado como pago!' : 'Marcado como pendente!', 'success');
-  }
-
-  function toggleSelecao(id, checked) {
-    if (checked) selecionados.add(id);
-    else selecionados.delete(id);
-    // Update checkAll state
-    const allChecks = $$('.check-item');
-    $('#checkAll').checked = allChecks.length > 0 && selecionados.size === allChecks.length;
-    atualizarBtnExcluirMassa();
-  }
-
-  function atualizarBtnExcluirMassa() {
-    const btn = $('#btnExcluirMassa');
-    const count = selecionados.size;
-    btn.style.display = count > 0 ? '' : 'none';
-    $('#countSelecionados').textContent = count;
-  }
-
-  function excluirEmMassa() {
-    const count = selecionados.size;
-    if (count === 0) return;
-
-    abrirModal(
-      'Excluir em Massa',
-      `Deseja excluir ${count} transaç${count === 1 ? 'ão selecionada' : 'ões selecionadas'}? Esta ação não pode ser desfeita.`,
-      () => {
-        transacoes = transacoes.filter(t => !selecionados.has(t.id));
-        selecionados.clear();
-        $('#checkAll').checked = false;
-        salvarDados();
-        atualizarTudo();
-        atualizarBtnExcluirMassa();
-        toast(`${count} transaç${count === 1 ? 'ão excluída' : 'ões excluídas'}!`, 'info');
-        fecharModal();
-      }
-    );
   }
 
   function cancelarEdicao() {
@@ -363,9 +399,6 @@
 
   // ===== Render All =====
   function atualizarTudo() {
-    selecionados.clear();
-    if ($('#checkAll')) $('#checkAll').checked = false;
-    atualizarBtnExcluirMassa();
     atualizarLabelMes();
     atualizarSummary();
     renderTabela();
@@ -427,7 +460,6 @@
       const sinal = t.tipo === 'receita' ? '+' : '-';
 
       return `<tr>
-        <td class="td-check"><input type="checkbox" class="check-item" data-id="${t.id}" ${selecionados.has(t.id) ? 'checked' : ''} onchange="window._app.toggleSelecao('${t.id}', this.checked)" /></td>
         <td>${formatDate(t.vencimento)}</td>
         <td>
           <span class="desc-cell">${escapeHtml(t.descricao)}</span>
@@ -765,7 +797,6 @@
     editarTransacao,
     excluirTransacao,
     marcarPago,
-    toggleSelecao,
   };
 
 })();

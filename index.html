@@ -233,9 +233,6 @@
         <div class="table-header">
           <span class="result-count" id="resultCount">0 transações</span>
           <div class="table-actions">
-            <button class="btn btn-sm btn-danger-outline" id="btnExcluirMassa" style="display:none">
-              <i class="fas fa-trash"></i> Excluir selecionados (<span id="countSelecionados">0</span>)
-            </button>
             <button class="btn btn-sm" id="btnExportarCSV" title="Exportar CSV"><i class="fas fa-file-csv"></i> CSV</button>
           </div>
         </div>
@@ -243,7 +240,6 @@
           <table id="tabelaTransacoes">
             <thead>
               <tr>
-                <th class="th-check"><input type="checkbox" id="checkAll" title="Selecionar todos" /></th>
                 <th class="sortable" data-sort="vencimento">Vencimento <i class="fas fa-sort"></i></th>
                 <th class="sortable" data-sort="descricao">Descrição <i class="fas fa-sort"></i></th>
                 <th>Categoria</th>
@@ -301,6 +297,27 @@
       <div class="modal-actions">
         <button class="btn btn-danger" id="modalConfirmBtn">Confirmar</button>
         <button class="btn btn-secondary" id="modalCancelBtn">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Exclusão em Massa -->
+  <div id="modalExcluirMassa" class="modal" style="display:none">
+    <div class="modal-content modal-content-lg">
+      <h3 id="modalMassaTitulo">Excluir Lançamentos</h3>
+      <p id="modalMassaSubtitulo" class="modal-massa-sub"></p>
+      <div class="modal-massa-actions-top">
+        <label class="check-label">
+          <input type="checkbox" id="massaCheckAll" /> Selecionar todos
+        </label>
+        <span id="massaCountLabel" class="massa-count">0 selecionados</span>
+      </div>
+      <div class="modal-massa-lista" id="modalMassaLista"></div>
+      <div class="modal-actions">
+        <button class="btn btn-danger" id="modalMassaExcluirBtn" disabled>
+          <i class="fas fa-trash"></i> Excluir selecionados
+        </button>
+        <button class="btn btn-secondary" id="modalMassaCancelBtn">Cancelar</button>
       </div>
     </div>
   </div>

@@ -145,13 +145,6 @@ body {
 .btn-danger { background: var(--despesa); color: #fff; }
 .btn-danger:hover { opacity: 0.85; }
 
-.btn-danger-outline {
-  background: transparent;
-  border: 1px solid var(--despesa) !important;
-  color: var(--despesa) !important;
-}
-.btn-danger-outline:hover { background: var(--despesa-bg); }
-
 /* ===== Summary Cards ===== */
 .summary {
   display: grid;
@@ -389,9 +382,6 @@ th {
   text-align: left;
   white-space: nowrap;
 }
-
-.th-check, .td-check { width: 36px; text-align: center; }
-.th-check input, .td-check input { cursor: pointer; accent-color: var(--primary); width: 15px; height: 15px; }
 
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable:hover { color: var(--text); }
@@ -659,7 +649,67 @@ tr:hover td { background: rgba(108, 92, 231, 0.04); }
 .modal-content h3 { font-size: 17px; margin-bottom: 10px; }
 .modal-content p { font-size: 14px; color: var(--text-muted); margin-bottom: 20px; }
 
+.modal-content-lg { max-width: 500px; }
+
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* ===== Modal Exclusão em Massa ===== */
+.modal-massa-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.modal-massa-actions-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.check-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.check-label input { accent-color: var(--primary); width: 15px; height: 15px; cursor: pointer; }
+
+.massa-count { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+
+.modal-massa-lista {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 20px;
+  padding-right: 4px;
+}
+
+.massa-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  font-size: 13px;
+}
+
+.massa-item:hover { border-color: var(--primary); }
+.massa-item.selected { border-color: var(--despesa); background: var(--despesa-bg); }
+
+.massa-item input { accent-color: var(--despesa); width: 15px; height: 15px; cursor: pointer; flex-shrink: 0; }
+
+.massa-data { font-weight: 600; flex: 1; }
+
+.massa-status { flex-shrink: 0; }
 
 /* ===== Toast ===== */
 .toast {
