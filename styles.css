@@ -240,6 +240,12 @@ body {
   letter-spacing: 0.5px;
 }
 
+.form-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
 .form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -304,6 +310,39 @@ select option { background: var(--bg-panel); color: var(--text); }
 
 .tab-content { display: none; }
 .tab-content.active { display: block; }
+
+/* ===== Sub-tabs ===== */
+.sub-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: var(--bg-input);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.sub-tab {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.sub-tab:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+
+.sub-tab.active[data-subtab="todos"] { background: var(--primary); color: #fff; }
+.sub-tab.active[data-subtab="despesa"] { background: var(--despesa); color: #fff; }
+.sub-tab.active[data-subtab="receita"] { background: var(--receita); color: #fff; }
 
 /* ===== Table ===== */
 .table-header {

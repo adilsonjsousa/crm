@@ -40,6 +40,7 @@
   let chartCategorias = null;
   let chartMensal = null;
   let chartSaldo = null;
+  let subTabAtiva = 'todos';
 
   // ===== DOM refs =====
   const $ = (sel) => document.querySelector(sel);
@@ -111,6 +112,21 @@
 
     // Modal
     $('#modalCancelBtn').addEventListener('click', fecharModal);
+
+    // Toggle meses recorrência
+    $('#recorrente').addEventListener('change', () => {
+      $('#rowMesesRecorrencia').style.display = $('#recorrente').value === 'mensal' ? '' : 'none';
+    });
+
+    // Sub-tabs (Todas | Despesas | Receitas)
+    $$('.sub-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        $$('.sub-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        subTabAtiva = btn.dataset.subtab;
+        atualizarTudo();
+      });
+    });
   }
 
   function setDefaultDate() {
@@ -150,6 +166,7 @@
       vencimento: $('#vencimento').value,
       status: $('#status').value,
       recorrente: $('#recorrente').value,
+      mesesRecorrencia: $('#recorrente').value === 'mensal' ? parseInt($('#mesesRecorrencia').value) || 12 : 0,
       observacao: $('#observacao').value.trim(),
     };
 
@@ -159,8 +176,8 @@
       toast('Transação atualizada!', 'success');
     } else {
       transacoes.push(dados);
-      // Se for recorrente mensal, criar para os próximos 11 meses
-      if (dados.recorrente === 'mensal') {
+      // Se for recorrente mensal, criar para os próximos N-1 meses
+      if (dados.recorrente === 'mensal' && dados.mesesRecorrencia > 1) {
         criarRecorrencias(dados);
       }
       toast('Transação adicionada!', 'success');
@@ -172,8 +189,9 @@
   }
 
   function criarRecorrencias(base) {
+    const totalMeses = Math.min(Math.max(base.mesesRecorrencia || 12, 1), 60);
     const dataBase = new Date(base.vencimento + 'T12:00:00');
-    for (let i = 1; i <= 11; i++) {
+    for (let i = 1; i < totalMeses; i++) {
       const novaData = new Date(dataBase);
       novaData.setMonth(novaData.getMonth() + i);
       transacoes.push({
@@ -196,6 +214,8 @@
     $('#vencimento').value = t.vencimento;
     $('#status').value = t.status;
     $('#recorrente').value = t.recorrente || 'nao';
+    $('#mesesRecorrencia').value = t.mesesRecorrencia || 12;
+    $('#rowMesesRecorrencia').style.display = (t.recorrente === 'mensal') ? '' : 'none';
     $('#observacao').value = t.observacao || '';
     $('#editandoId').value = t.id;
 
@@ -241,6 +261,7 @@
     $('#editandoId').value = '';
     $('#btnSalvar').innerHTML = '<i class="fas fa-save"></i> Salvar';
     $('#btnCancelar').style.display = 'none';
+    $('#rowMesesRecorrencia').style.display = 'none';
     setDefaultDate();
   }
 
@@ -256,7 +277,9 @@
       .filter(t => {
         const [ano, mes] = t.vencimento.split('-').map(Number);
         if (ano !== anoAtual || mes - 1 !== mesAtual) return false;
-        if (filtroTipo !== 'todos' && t.tipo !== filtroTipo) return false;
+        // Sub-tab filter takes priority
+        if (subTabAtiva !== 'todos' && t.tipo !== subTabAtiva) return false;
+        if (subTabAtiva === 'todos' && filtroTipo !== 'todos' && t.tipo !== filtroTipo) return false;
         if (filtroCat !== 'todos' && t.categoria !== filtroCat) return false;
         if (filtroSt === 'vencido') {
           if (t.status === 'pago' || t.vencimento >= hoje) return false;
@@ -354,7 +377,7 @@
         <td>${formatDate(t.vencimento)}</td>
         <td>
           <span class="desc-cell">${escapeHtml(t.descricao)}</span>
-          ${t.recorrente === 'mensal' ? '<i class="fas fa-sync-alt recorrente-icon" title="Recorrente mensal"></i>' : ''}
+          ${t.recorrente === 'mensal' ? `<i class="fas fa-sync-alt recorrente-icon" title="Recorrente: ${t.mesesRecorrencia || 12} meses"></i>` : ''}
           ${t.observacao ? `<span class="obs-text">${escapeHtml(t.observacao)}</span>` : ''}
         </td>
         <td><span class="categoria-badge">${cat.emoji} ${cat.nome}</span></td>
