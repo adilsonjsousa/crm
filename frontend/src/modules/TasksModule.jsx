@@ -339,6 +339,9 @@ export default function TasksModule({
   const [notifyAssigneeWhatsApp, setNotifyAssigneeWhatsApp] = useState(() => readTaskNotifyDefault());
   const [calendarDate, setCalendarDate] = useState(todayYmd());
   const [calendarAssigneeUserId, setCalendarAssigneeUserId] = useState("");
+  const [boardStartDate, setBoardStartDate] = useState("");
+  const [boardEndDate, setBoardEndDate] = useState("");
+  const [boardAssigneeUserId, setBoardAssigneeUserId] = useState("");
   const [onlyOpen, setOnlyOpen] = useState(true);
   const [draggingTaskId, setDraggingTaskId] = useState("");
   const [dragOverStatus, setDragOverStatus] = useState("");
@@ -502,10 +505,17 @@ export default function TasksModule({
 
     for (const task of tasks) {
       if (!grouped[task.status]) continue;
+      if (boardAssigneeUserId && task.assignee_user_id !== boardAssigneeUserId) continue;
+      if (boardStartDate || boardEndDate) {
+        const taskDate = localDateKeyFromIso(task.scheduled_start_at) || task.due_date || "";
+        if (!taskDate) continue;
+        if (boardStartDate && taskDate < boardStartDate) continue;
+        if (boardEndDate && taskDate > boardEndDate) continue;
+      }
       grouped[task.status].push(task);
     }
     return grouped;
-  }, [tasks]);
+  }, [tasks, boardStartDate, boardEndDate, boardAssigneeUserId]);
 
   const companySuggestions = useMemo(() => {
     const normalizedTerm = normalizeLookupText(companySearchTerm);
@@ -1606,6 +1616,27 @@ export default function TasksModule({
       <article className="panel top-gap">
         <h3>Fluxo da agenda</h3>
         <p className="muted">Arraste cada tarefa para avançar o status.</p>
+        <div className="tasks-calendar-toolbar">
+          <label className="settings-field">
+            <span>Início</span>
+            <input type="date" value={boardStartDate} onChange={(event) => setBoardStartDate(event.target.value)} />
+          </label>
+          <label className="settings-field">
+            <span>Fim</span>
+            <input type="date" value={boardEndDate} onChange={(event) => setBoardEndDate(event.target.value)} />
+          </label>
+          <label className="settings-field">
+            <span>Responsável</span>
+            <select value={boardAssigneeUserId} onChange={(event) => setBoardAssigneeUserId(event.target.value)}>
+              <option value="">Todos os responsáveis</option>
+              {users.map((user) => (
+                <option key={`board-${user.user_id}`} value={user.user_id}>
+                  {userDisplayName(user)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <div className="agenda-board">
           {TASK_STATUSES.map((status) => (
             <section
