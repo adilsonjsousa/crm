@@ -339,9 +339,9 @@ export default function TasksModule({
   const [notifyAssigneeWhatsApp, setNotifyAssigneeWhatsApp] = useState(() => readTaskNotifyDefault());
   const [calendarDate, setCalendarDate] = useState(todayYmd());
   const [calendarAssigneeUserId, setCalendarAssigneeUserId] = useState("");
-  const [boardStartDate, setBoardStartDate] = useState("");
-  const [boardEndDate, setBoardEndDate] = useState("");
-  const [boardAssigneeUserId, setBoardAssigneeUserId] = useState("");
+  const [filterStartDate, setFilterStartDate] = useState("");
+  const [filterEndDate, setFilterEndDate] = useState("");
+  const [filterAssigneeUserId, setFilterAssigneeUserId] = useState("");
   const [onlyOpen, setOnlyOpen] = useState(true);
   const [draggingTaskId, setDraggingTaskId] = useState("");
   const [dragOverStatus, setDragOverStatus] = useState("");
@@ -462,12 +462,26 @@ export default function TasksModule({
     setSuccess("");
   }, [prefillCompanyDraft, prefillCompanyRequest, companies]);
 
+  const filteredTasks = useMemo(() => {
+    if (!filterStartDate && !filterEndDate && !filterAssigneeUserId) return tasks;
+    return tasks.filter((task) => {
+      if (filterAssigneeUserId && task.assignee_user_id !== filterAssigneeUserId) return false;
+      if (filterStartDate || filterEndDate) {
+        const taskDate = localDateKeyFromIso(task.scheduled_start_at) || task.due_date || "";
+        if (!taskDate) return false;
+        if (filterStartDate && taskDate < filterStartDate) return false;
+        if (filterEndDate && taskDate > filterEndDate) return false;
+      }
+      return true;
+    });
+  }, [tasks, filterStartDate, filterEndDate, filterAssigneeUserId]);
+
   const summary = useMemo(() => {
     const today = todayYmd();
-    const openTasks = tasks.filter((item) => isOpenStatus(item.status));
+    const openTasks = filteredTasks.filter((item) => isOpenStatus(item.status));
     const dueToday = openTasks.filter((item) => item.due_date === today).length;
     const overdue = openTasks.filter((item) => item.due_date && item.due_date < today).length;
-    const visits = tasks.filter((item) => isVisitTask(item));
+    const visits = filteredTasks.filter((item) => isVisitTask(item));
     const visitsDone = visits.filter((item) => Boolean(item.visit_checkout_at)).length;
     const inField = visits.filter((item) => item.visit_checkin_at && !item.visit_checkout_at).length;
     const withoutValidation = visits.filter((item) => isOpenStatus(item.status) && !item.visit_checkin_at).length;
@@ -483,19 +497,19 @@ export default function TasksModule({
       withoutValidation,
       punctualRate
     };
-  }, [tasks]);
+  }, [filteredTasks]);
 
   const listRows = useMemo(() => {
-    if (!onlyOpen) return tasks;
-    return tasks.filter((item) => isOpenStatus(item.status));
-  }, [onlyOpen, tasks]);
+    if (!onlyOpen) return filteredTasks;
+    return filteredTasks.filter((item) => isOpenStatus(item.status));
+  }, [onlyOpen, filteredTasks]);
 
   const upcomingAppointments = useMemo(() => {
-    return tasks
+    return filteredTasks
       .filter((item) => isOpenStatus(item.status) && item.scheduled_start_at)
       .sort((a, b) => new Date(a.scheduled_start_at).getTime() - new Date(b.scheduled_start_at).getTime())
       .slice(0, 5);
-  }, [tasks]);
+  }, [filteredTasks]);
 
   const itemsByStatus = useMemo(() => {
     const grouped = TASK_STATUSES.reduce((acc, status) => {
@@ -503,19 +517,12 @@ export default function TasksModule({
       return acc;
     }, {});
 
-    for (const task of tasks) {
+    for (const task of filteredTasks) {
       if (!grouped[task.status]) continue;
-      if (boardAssigneeUserId && task.assignee_user_id !== boardAssigneeUserId) continue;
-      if (boardStartDate || boardEndDate) {
-        const taskDate = localDateKeyFromIso(task.scheduled_start_at) || task.due_date || "";
-        if (!taskDate) continue;
-        if (boardStartDate && taskDate < boardStartDate) continue;
-        if (boardEndDate && taskDate > boardEndDate) continue;
-      }
       grouped[task.status].push(task);
     }
     return grouped;
-  }, [tasks, boardStartDate, boardEndDate, boardAssigneeUserId]);
+  }, [filteredTasks]);
 
   const companySuggestions = useMemo(() => {
     const normalizedTerm = normalizeLookupText(companySearchTerm);
@@ -541,12 +548,12 @@ export default function TasksModule({
   }, [users]);
 
   const calendarRows = useMemo(() => {
-    return tasks
+    return filteredTasks
       .filter((task) => task.scheduled_start_at)
       .filter((task) => localDateKeyFromIso(task.scheduled_start_at) === calendarDate)
       .filter((task) => (calendarAssigneeUserId ? task.assignee_user_id === calendarAssigneeUserId : true))
       .sort((a, b) => new Date(a.scheduled_start_at).getTime() - new Date(b.scheduled_start_at).getTime());
-  }, [tasks, calendarDate, calendarAssigneeUserId]);
+  }, [filteredTasks, calendarDate, calendarAssigneeUserId]);
 
   const calendarConflictData = useMemo(() => {
     const conflictTaskIds = new Set();
@@ -1340,6 +1347,36 @@ export default function TasksModule({
 
   return (
     <section className="module">
+      <div className="tasks-calendar-toolbar" style={{ marginBottom: "1rem" }}>
+        <label className="settings-field">
+          <span>Vendedor (Responsável)</span>
+          <select value={filterAssigneeUserId} onChange={(event) => setFilterAssigneeUserId(event.target.value)}>
+            <option value="">Todos os responsáveis</option>
+            {users.map((user) => (
+              <option key={`filter-${user.user_id}`} value={user.user_id}>
+                {userDisplayName(user)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="settings-field">
+          <span>Data início</span>
+          <input type="date" value={filterStartDate} onChange={(event) => setFilterStartDate(event.target.value)} />
+        </label>
+        <label className="settings-field">
+          <span>Data fim</span>
+          <input type="date" value={filterEndDate} onChange={(event) => setFilterEndDate(event.target.value)} />
+        </label>
+        {(filterStartDate || filterEndDate || filterAssigneeUserId) ? (
+          <button
+            type="button"
+            className="btn-ghost btn-table-action"
+            onClick={() => { setFilterStartDate(""); setFilterEndDate(""); setFilterAssigneeUserId(""); }}
+          >
+            Limpar filtros
+          </button>
+        ) : null}
+      </div>
       <div className="two-col">
         <article className="panel">
           <h2>Agenda de tarefas</h2>
@@ -1616,27 +1653,6 @@ export default function TasksModule({
       <article className="panel top-gap">
         <h3>Fluxo da agenda</h3>
         <p className="muted">Arraste cada tarefa para avançar o status.</p>
-        <div className="tasks-calendar-toolbar">
-          <label className="settings-field">
-            <span>Início</span>
-            <input type="date" value={boardStartDate} onChange={(event) => setBoardStartDate(event.target.value)} />
-          </label>
-          <label className="settings-field">
-            <span>Fim</span>
-            <input type="date" value={boardEndDate} onChange={(event) => setBoardEndDate(event.target.value)} />
-          </label>
-          <label className="settings-field">
-            <span>Responsável</span>
-            <select value={boardAssigneeUserId} onChange={(event) => setBoardAssigneeUserId(event.target.value)}>
-              <option value="">Todos os responsáveis</option>
-              {users.map((user) => (
-                <option key={`board-${user.user_id}`} value={user.user_id}>
-                  {userDisplayName(user)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
         <div className="agenda-board">
           {TASK_STATUSES.map((status) => (
             <section
