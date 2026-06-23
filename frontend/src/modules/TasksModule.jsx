@@ -348,6 +348,9 @@ export default function TasksModule({
   const [checkinTaskId, setCheckinTaskId] = useState("");
   const [checkoutTaskId, setCheckoutTaskId] = useState("");
   const [meetingTaskId, setMeetingTaskId] = useState("");
+  const [reportStartDate, setReportStartDate] = useState("");
+  const [reportEndDate, setReportEndDate] = useState("");
+  const [reportAssigneeUserId, setReportAssigneeUserId] = useState("");
   const [deletingTaskId, setDeletingTaskId] = useState("");
   const [companySearchTerm, setCompanySearchTerm] = useState("");
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
@@ -546,6 +549,78 @@ export default function TasksModule({
     }
     return map;
   }, [users]);
+
+  const reportTasks = useMemo(() => {
+    return tasks.filter((task) => {
+      if (reportAssigneeUserId && task.assignee_user_id !== reportAssigneeUserId) return false;
+      if (reportStartDate || reportEndDate) {
+        const taskDate = localDateKeyFromIso(task.scheduled_start_at) || task.due_date || "";
+        if (!taskDate) return false;
+        if (reportStartDate && taskDate < reportStartDate) return false;
+        if (reportEndDate && taskDate > reportEndDate) return false;
+      }
+      return true;
+    });
+  }, [tasks, reportStartDate, reportEndDate, reportAssigneeUserId]);
+
+  const monthlyReport = useMemo(() => {
+    const byMonth = {};
+    for (const task of reportTasks) {
+      const raw = localDateKeyFromIso(task.scheduled_start_at) || task.due_date || localDateKeyFromIso(task.created_at) || "";
+      const month = raw.slice(0, 7) || "sem-data";
+      if (!byMonth[month]) byMonth[month] = { total: 0, visitas: 0, checkin: 0, checkout: 0, concluidas: 0, abertas: 0, canceladas: 0, pontual: 0 };
+      const row = byMonth[month];
+      row.total++;
+      if (isVisitTask(task)) row.visitas++;
+      if (task.visit_checkin_at) row.checkin++;
+      if (task.visit_checkout_at) row.checkout++;
+      if (task.status === "done") row.concluidas++;
+      if (task.status === "todo" || task.status === "in_progress") row.abertas++;
+      if (task.status === "cancelled") row.canceladas++;
+      if (task.visit_checkout_at && punctualVisit(task)) row.pontual++;
+    }
+    return Object.entries(byMonth)
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([month, data]) => ({ month, ...data }));
+  }, [reportTasks]);
+
+  const reportTotals = useMemo(() => {
+    const t = { total: 0, visitas: 0, checkin: 0, checkout: 0, concluidas: 0, abertas: 0, canceladas: 0, pontual: 0 };
+    for (const row of monthlyReport) {
+      t.total += row.total;
+      t.visitas += row.visitas;
+      t.checkin += row.checkin;
+      t.checkout += row.checkout;
+      t.concluidas += row.concluidas;
+      t.abertas += row.abertas;
+      t.canceladas += row.canceladas;
+      t.pontual += row.pontual;
+    }
+    return t;
+  }, [monthlyReport]);
+
+  const reportByAssignee = useMemo(() => {
+    const byUser = {};
+    for (const task of reportTasks) {
+      const uid = task.assignee_user_id || "sem-responsavel";
+      if (!byUser[uid]) byUser[uid] = { total: 0, visitas: 0, checkin: 0, checkout: 0, concluidas: 0, abertas: 0, pontual: 0 };
+      const row = byUser[uid];
+      row.total++;
+      if (isVisitTask(task)) row.visitas++;
+      if (task.visit_checkin_at) row.checkin++;
+      if (task.visit_checkout_at) row.checkout++;
+      if (task.status === "done") row.concluidas++;
+      if (task.status === "todo" || task.status === "in_progress") row.abertas++;
+      if (task.visit_checkout_at && punctualVisit(task)) row.pontual++;
+    }
+    return Object.entries(byUser)
+      .sort((a, b) => b[1].total - a[1].total)
+      .map(([userId, data]) => ({
+        userId,
+        name: userId === "sem-responsavel" ? "Sem responsável" : userDisplayName(userById[userId]),
+        ...data
+      }));
+  }, [reportTasks, userById]);
 
   const calendarRows = useMemo(() => {
     return filteredTasks
@@ -1830,6 +1905,148 @@ export default function TasksModule({
                   <td colSpan={11} className="muted">
                     Nenhuma tarefa encontrada.
                   </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article className="panel top-gap">
+        <h3>Relatório de visitas</h3>
+        <p className="muted">Acompanhe visitas e tarefas por mês ou período personalizado.</p>
+        <div className="tasks-calendar-toolbar">
+          <label className="settings-field">
+            <span>Responsável</span>
+            <select value={reportAssigneeUserId} onChange={(event) => setReportAssigneeUserId(event.target.value)}>
+              <option value="">Todos os responsáveis</option>
+              {users.map((user) => (
+                <option key={`report-${user.user_id}`} value={user.user_id}>
+                  {userDisplayName(user)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-field">
+            <span>Data início</span>
+            <input type="date" value={reportStartDate} onChange={(event) => setReportStartDate(event.target.value)} />
+          </label>
+          <label className="settings-field">
+            <span>Data fim</span>
+            <input type="date" value={reportEndDate} onChange={(event) => setReportEndDate(event.target.value)} />
+          </label>
+          {(reportStartDate || reportEndDate || reportAssigneeUserId) ? (
+            <button
+              type="button"
+              className="btn-ghost btn-table-action"
+              onClick={() => { setReportStartDate(""); setReportEndDate(""); setReportAssigneeUserId(""); }}
+            >
+              Limpar filtros
+            </button>
+          ) : null}
+        </div>
+
+        <div className="dashboard-strip" style={{ marginTop: "1rem" }}>
+          <article className="metric-tile">
+            <span>Total de tarefas</span>
+            <strong>{reportTotals.total}</strong>
+          </article>
+          <article className="metric-tile">
+            <span>Visitas</span>
+            <strong>{reportTotals.visitas}</strong>
+          </article>
+          <article className="metric-tile">
+            <span>Check-in</span>
+            <strong>{reportTotals.checkin}</strong>
+          </article>
+          <article className="metric-tile">
+            <span>Check-out</span>
+            <strong>{reportTotals.checkout}</strong>
+          </article>
+          <article className="metric-tile">
+            <span>Concluídas</span>
+            <strong>{reportTotals.concluidas}</strong>
+          </article>
+          <article className="metric-tile">
+            <span>Abertas</span>
+            <strong>{reportTotals.abertas}</strong>
+          </article>
+          <article className="metric-tile">
+            <span>Pontualidade</span>
+            <strong>{reportTotals.checkout ? `${Math.round((reportTotals.pontual / reportTotals.checkout) * 100)}%` : "-"}</strong>
+          </article>
+        </div>
+
+        <h4 style={{ marginTop: "1.5rem" }}>Resumo mensal</h4>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mês</th>
+                <th>Total</th>
+                <th>Visitas</th>
+                <th>Check-in</th>
+                <th>Check-out</th>
+                <th>Concluídas</th>
+                <th>Abertas</th>
+                <th>Canceladas</th>
+                <th>Pontualidade</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthlyReport.map((row) => (
+                <tr key={row.month}>
+                  <td>{row.month}</td>
+                  <td>{row.total}</td>
+                  <td>{row.visitas}</td>
+                  <td>{row.checkin}</td>
+                  <td>{row.checkout}</td>
+                  <td>{row.concluidas}</td>
+                  <td>{row.abertas}</td>
+                  <td>{row.canceladas}</td>
+                  <td>{row.checkout ? `${Math.round((row.pontual / row.checkout) * 100)}%` : "-"}</td>
+                </tr>
+              ))}
+              {!monthlyReport.length ? (
+                <tr>
+                  <td colSpan={9} className="muted">Nenhuma tarefa encontrada com os filtros atuais.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        <h4 style={{ marginTop: "1.5rem" }}>Desempenho por vendedor</h4>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Responsável</th>
+                <th>Total</th>
+                <th>Visitas</th>
+                <th>Check-in</th>
+                <th>Check-out</th>
+                <th>Concluídas</th>
+                <th>Abertas</th>
+                <th>Pontualidade</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reportByAssignee.map((row) => (
+                <tr key={row.userId}>
+                  <td>{row.name}</td>
+                  <td>{row.total}</td>
+                  <td>{row.visitas}</td>
+                  <td>{row.checkin}</td>
+                  <td>{row.checkout}</td>
+                  <td>{row.concluidas}</td>
+                  <td>{row.abertas}</td>
+                  <td>{row.checkout ? `${Math.round((row.pontual / row.checkout) * 100)}%` : "-"}</td>
+                </tr>
+              ))}
+              {!reportByAssignee.length ? (
+                <tr>
+                  <td colSpan={8} className="muted">Nenhuma tarefa encontrada com os filtros atuais.</td>
                 </tr>
               ) : null}
             </tbody>
