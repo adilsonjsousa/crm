@@ -15,6 +15,7 @@ import {
   listCompanyOpportunityStageHistory,
   listCompanySalesOrders,
   listCompanyTasks,
+  listProposalDocumentVersions,
   searchContacts,
   updateContact,
   uploadCompanyAssetPhoto
@@ -126,6 +127,25 @@ function visitMethodLabel(value) {
     geo_pin: "Geolocalizacao + PIN"
   };
   return map[value] || "Geolocalizacao";
+}
+
+function versionEventLabel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "manual_save") return "Snapshot manual";
+  if (normalized === "export_docx") return "Exportou DOCX";
+  if (normalized === "export_pdf") return "Exportou PDF";
+  if (normalized === "send_email") return "Preparou envio e-mail";
+  if (normalized === "send_whatsapp") return "Preparou envio WhatsApp";
+  return "Atualizacao";
+}
+
+function versionFormatLabel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "docx") return "DOCX";
+  if (normalized === "pdf") return "PDF";
+  if (normalized === "email") return "E-mail";
+  if (normalized === "whatsapp") return "WhatsApp";
+  return "Snapshot";
 }
 
 function opportunityStatusLabel(value) {
@@ -361,6 +381,9 @@ export default function CustomerHistoryModal({
     customer: {}
   });
 
+  const [proposalVersionsByOpp, setProposalVersionsByOpp] = useState({});
+  const [proposalVersionsLoading, setProposalVersionsLoading] = useState(false);
+
   const [linkContactOpen, setLinkContactOpen] = useState(false);
   const [linkContactMode, setLinkContactMode] = useState("search");
   const [linkContactSearch, setLinkContactSearch] = useState("");
@@ -402,6 +425,8 @@ export default function CustomerHistoryModal({
     setAssetForm(emptyAssetForm());
     setInternalMessageForm(emptyInternalMessageForm());
     setInternalMessageFeedback({ type: "", message: "" });
+    setProposalVersionsByOpp({});
+    setProposalVersionsLoading(false);
     setOmiePurchasesLoading(false);
     setOmiePurchasesError("");
     setOmiePurchasesFetched(false);
@@ -552,6 +577,33 @@ export default function CustomerHistoryModal({
       active = false;
     };
   }, [open, selectedTab, companyProfile?.cnpj, omieReceivablesFetched]);
+
+  useEffect(() => {
+    if (!open || selectedTab !== "opportunities" || !opportunities.length) return;
+    const alreadyLoaded = Object.keys(proposalVersionsByOpp).length > 0;
+    if (alreadyLoaded) return;
+
+    let active = true;
+    setProposalVersionsLoading(true);
+    Promise.all(
+      opportunities.map((opp) =>
+        listProposalDocumentVersions(opp.id, { limit: 20 }).then((versions) => ({ oppId: opp.id, versions }))
+      )
+    )
+      .then((results) => {
+        if (!active) return;
+        const map = {};
+        for (const { oppId, versions } of results) {
+          if (versions.length) map[oppId] = versions;
+        }
+        setProposalVersionsByOpp(map);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setProposalVersionsLoading(false);
+      });
+    return () => { active = false; };
+  }, [open, selectedTab, opportunities]);
 
   const visitTasks = useMemo(() => tasks.filter((task) => isVisitTask(task)), [tasks]);
   const pendingTasks = useMemo(
@@ -1581,6 +1633,41 @@ export default function CustomerHistoryModal({
                 </tbody>
               </table>
             </div>
+
+            <h4 className="top-gap">Versões de documentos (PDF / DOCX)</h4>
+            {proposalVersionsLoading ? <p className="muted">Carregando versões...</p> : null}
+            {!proposalVersionsLoading && !Object.keys(proposalVersionsByOpp).length ? (
+              <p className="muted">Nenhuma versão de documento salva para as propostas deste cliente.</p>
+            ) : null}
+            {!proposalVersionsLoading && opportunities.filter((opp) => proposalVersionsByOpp[opp.id]?.length).map((opp) => (
+              <div key={`versions-${opp.id}`} className="top-gap">
+                <h5>{opp.title || "Proposta"} — {stageLabel(opp.stage)}</h5>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Versão</th>
+                        <th>Evento</th>
+                        <th>Formato</th>
+                        <th>Arquivo</th>
+                        <th>Data/Hora</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(proposalVersionsByOpp[opp.id] || []).map((version) => (
+                        <tr key={version.id}>
+                          <td><strong>V{version.version_number}</strong></td>
+                          <td>{versionEventLabel(version.event_type)}</td>
+                          <td>{versionFormatLabel(version.output_format)}</td>
+                          <td>{version.file_name || "-"}</td>
+                          <td>{formatDateTime(version.created_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
           </div>
         ) : null}
 
