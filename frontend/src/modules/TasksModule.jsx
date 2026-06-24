@@ -5,6 +5,7 @@ import {
   listCompanyOptions,
   listSystemUsers,
   listTaskScheduleConflicts,
+  listOpenOpportunitiesSummary,
   listTasks,
   sendWhatsAppMessage,
   logTaskFlowComment,
@@ -330,6 +331,7 @@ export default function TasksModule({
   const taskDefaultsRef = useRef(readTaskFormDefaults());
   const [tasks, setTasks] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [openOpportunities, setOpenOpportunities] = useState([]);
   const [users, setUsers] = useState([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -415,9 +417,10 @@ export default function TasksModule({
   async function load() {
     setError("");
     try {
-      const [taskRows, companyRows] = await Promise.all([listTasks(), listCompanyOptions()]);
+      const [taskRows, companyRows, oppRows] = await Promise.all([listTasks(), listCompanyOptions(), listOpenOpportunitiesSummary()]);
       setTasks(taskRows);
       setCompanies(companyRows);
+      setOpenOpportunities(oppRows);
     } catch (err) {
       setError(err.message);
     }
@@ -1638,54 +1641,74 @@ export default function TasksModule({
     }
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(detailData), "Tarefas");
 
-    const companiesWithOpenTasks = new Set();
-    const oportunidadeRows = [["Empresa", "CNPJ", "Cidade", "UF", "Atividade", "Responsável", "Criado por", "Prioridade", "Status", "Agendamento", "Data limite", "Atraso (dias)", "Check-in", "Check-out", "Descrição", "Criado em"]];
+    const oppByCompany = {};
+    for (const opp of openOpportunities) {
+      if (!opp.company_id) continue;
+      if (!oppByCompany[opp.company_id]) oppByCompany[opp.company_id] = [];
+      oppByCompany[opp.company_id].push(opp);
+    }
+    const companiesWithOpp = new Set(Object.keys(oppByCompany));
+
+    const comOppRows = [["Empresa", "CNPJ", "Cidade", "UF", "Oportunidade", "Etapa", "Valor estimado", "Prev. fechamento", "Atividade (agenda)", "Responsável agenda", "Status agenda", "Prioridade", "Agendamento", "Data limite", "Atraso (dias)", "Check-in", "Check-out"]];
     const tasksWithCompany = rows
-      .filter((t) => t.company_id && t.companies?.trade_name)
+      .filter((t) => t.company_id && companiesWithOpp.has(t.company_id))
       .sort((a, b) => (a.companies?.trade_name || "").localeCompare(b.companies?.trade_name || "", "pt-BR"));
     for (const t of tasksWithCompany) {
-      if (isOpenStatus(t.status)) companiesWithOpenTasks.add(t.company_id);
+      const companyOpps = oppByCompany[t.company_id] || [];
       const agingDias = (isOpenStatus(t.status) && t.due_date && t.due_date < today)
         ? Math.floor((Date.now() - new Date(t.due_date + "T00:00:00").getTime()) / 86400000)
         : 0;
-      oportunidadeRows.push([
+      const oppTitle = companyOpps.map((o) => o.title).join(" | ");
+      const oppStage = companyOpps.map((o) => o.stage).join(" | ");
+      const oppValue = companyOpps.reduce((sum, o) => sum + (Number(o.estimated_value) || 0), 0);
+      const oppClose = companyOpps.map((o) => o.expected_close_date ? formatDate(o.expected_close_date) : "-").join(" | ");
+      comOppRows.push([
+        t.companies?.trade_name || "-",
+        t.companies?.cnpj || "-",
+        t.companies?.city || "-",
+        t.companies?.state || "-",
+        oppTitle,
+        oppStage,
+        oppValue,
+        oppClose,
+        t.title,
+        userDisplayName(t.assignee || userById[t.assignee_user_id]),
+        statusLabel(t.status),
+        priorityLabel(t.priority),
+        t.scheduled_start_at ? formatDateTime(t.scheduled_start_at) : "-",
+        t.due_date ? formatDate(t.due_date) : "-",
+        agingDias,
+        t.visit_checkin_at ? formatDateTime(t.visit_checkin_at) : "-",
+        t.visit_checkout_at ? formatDateTime(t.visit_checkout_at) : "-"
+      ]);
+    }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(comOppRows), "Com oportunidades");
+
+    const semOppRows = [["Empresa", "CNPJ", "Cidade", "UF", "Atividade (agenda)", "Responsável agenda", "Status agenda", "Prioridade", "Agendamento", "Data limite", "Atraso (dias)", "Check-in", "Check-out"]];
+    const tasksSemOpp = rows
+      .filter((t) => t.company_id && !companiesWithOpp.has(t.company_id))
+      .sort((a, b) => (a.companies?.trade_name || "").localeCompare(b.companies?.trade_name || "", "pt-BR"));
+    for (const t of tasksSemOpp) {
+      const agingDias = (isOpenStatus(t.status) && t.due_date && t.due_date < today)
+        ? Math.floor((Date.now() - new Date(t.due_date + "T00:00:00").getTime()) / 86400000)
+        : 0;
+      semOppRows.push([
         t.companies?.trade_name || "-",
         t.companies?.cnpj || "-",
         t.companies?.city || "-",
         t.companies?.state || "-",
         t.title,
         userDisplayName(t.assignee || userById[t.assignee_user_id]),
-        userDisplayName(t.creator || userById[t.created_by_user_id]),
-        priorityLabel(t.priority),
         statusLabel(t.status),
+        priorityLabel(t.priority),
         t.scheduled_start_at ? formatDateTime(t.scheduled_start_at) : "-",
         t.due_date ? formatDate(t.due_date) : "-",
         agingDias,
         t.visit_checkin_at ? formatDateTime(t.visit_checkin_at) : "-",
-        t.visit_checkout_at ? formatDateTime(t.visit_checkout_at) : "-",
-        t.description || "",
-        t.created_at ? formatDateTime(t.created_at) : "-"
+        t.visit_checkout_at ? formatDateTime(t.visit_checkout_at) : "-"
       ]);
     }
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(oportunidadeRows), "Agendas por empresa");
-
-    for (const t of tasks) {
-      if (isOpenStatus(t.status) && t.company_id) companiesWithOpenTasks.add(t.company_id);
-    }
-    const semAgendaRows = [["Empresa", "CNPJ", "Cidade", "UF"]];
-    const companiesSorted = [...companies].sort((a, b) =>
-      (a.trade_name || "").localeCompare(b.trade_name || "", "pt-BR")
-    );
-    for (const c of companiesSorted) {
-      if (companiesWithOpenTasks.has(c.id)) continue;
-      semAgendaRows.push([
-        c.trade_name || c.legal_name || "-",
-        c.cnpj || "-",
-        c.city || "-",
-        c.state || "-"
-      ]);
-    }
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(semAgendaRows), "Sem agendas abertas");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(semOppRows), "Sem oportunidades abertas");
 
     const dateSuffix = [filterStartDate, filterEndDate].filter(Boolean).join("_a_") || todayYmd();
     XLSX.writeFile(workbook, `relatorio_agenda_analitico_${dateSuffix}.xlsx`);

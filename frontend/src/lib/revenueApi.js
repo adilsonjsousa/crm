@@ -1627,6 +1627,27 @@ export async function deleteTicket(ticketId) {
   if (error) throw new Error(normalizeError(error, "Falha ao excluir chamado."));
 }
 
+export async function listOpenOpportunitiesSummary() {
+  const supabase = ensureSupabase();
+  const rows = [];
+  const pageSize = 500;
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("opportunities")
+      .select("id,company_id,title,stage,estimated_value,expected_close_date,owner_user_id,created_at,updated_at")
+      .eq("status", "open")
+      .order("created_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(normalizeError(error, "Falha ao listar oportunidades abertas."));
+    if (!data?.length) break;
+    rows.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return rows;
+}
+
 export async function listTasks() {
   const supabase = ensureSupabase();
   const { data, error } = await supabase
