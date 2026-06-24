@@ -700,6 +700,8 @@ function buildProposalItemsTableHtml(items = []) {
 function buildProposalDocumentHtml({
   proposalNumber,
   companyName,
+  companyCnpj = "",
+  contactName = "",
   renderedText,
   logoDataUrl,
   issueDate,
@@ -707,7 +709,13 @@ function buildProposalDocumentHtml({
   items,
   freightTerms = "",
   paymentTerms = "",
-  deliveryTerms = ""
+  deliveryTerms = "",
+  warrantyTerms = "",
+  includedOffer = "",
+  excludedOffer = "",
+  closingText = "",
+  financingTerms = "",
+  ownerName = ""
 }) {
   const textHtml = escapeHtml(renderedText).replace(/\n/g, "<br />");
   const logoHtml = logoDataUrl
@@ -719,6 +727,15 @@ function buildProposalDocumentHtml({
   const safeFreightTerms = escapeHtml(String(freightTerms || "-"));
   const safePaymentTerms = escapeHtml(String(paymentTerms || "-"));
   const safeDeliveryTerms = escapeHtml(String(deliveryTerms || "-"));
+  const cnpjDigits = String(companyCnpj || "").replace(/\D/g, "");
+  const cnpjFormatted = cnpjDigits.length === 14
+    ? `${cnpjDigits.slice(0,2)}.${cnpjDigits.slice(2,5)}.${cnpjDigits.slice(5,8)}/${cnpjDigits.slice(8,12)}-${cnpjDigits.slice(12)}`
+    : "";
+  const observationBullets = [];
+  if (includedOffer) String(includedOffer).split("\n").forEach((l) => { if (l.trim()) observationBullets.push(l.trim()); });
+  if (warrantyTerms) observationBullets.push(warrantyTerms);
+  if (excludedOffer) String(excludedOffer).split("\n").forEach((l) => { if (l.trim()) observationBullets.push(l.trim()); });
+  const safeContactName = contactName && contactName !== companyName ? escapeHtml(contactName) : "";
   return `<!doctype html>
 <html lang="pt-BR">
   <head>
@@ -897,10 +914,20 @@ function buildProposalDocumentHtml({
         </div>
       </div>
       <div class="proposal-content">
-        <h1>${escapeHtml(proposalNumber || "Proposta Comercial")}</h1>
-        <p class="company-name">${escapeHtml(companyName || "Cliente")}</p>
-        <h2 class="section-title">Condicoes gerais</h2>
+        <h1 style="font-size:22px;margin:0 0 4px;">PROPOSTA COMERCIAL</h1>
+        <p style="color:#6b7280;font-size:11px;margin:0 0 6px;">Nº ${escapeHtml(proposalNumber || "-")} · ${safeIssueDate} · Validade: ${safeValidity} dias</p>
+        <p style="font-weight:700;font-size:15px;margin:10px 0 2px;">${escapeHtml(companyName || "Cliente")}</p>
+        ${cnpjFormatted ? `<p style="color:#4b5563;font-size:11px;margin:0;">CNPJ: ${escapeHtml(cnpjFormatted)}</p>` : ""}
+        ${safeContactName ? `<p style="color:#4b5563;font-size:11px;margin:0;">A/C: ${safeContactName}</p>` : ""}
+        <div class="content" style="margin-top:12px;">${textHtml}</div>
+        <h2 class="section-title">Itens da oportunidade</h2>
+        ${itemsTableHtml}
+        <h2 class="section-title">Condições Comerciais</h2>
         <div class="conditions-grid">
+          <div class="condition-card" style="grid-column:1/-1;">
+            <strong>Prazo de Pagamento</strong>
+            <span>${safePaymentTerms}</span>
+          </div>
           <div class="condition-card">
             <strong>Frete</strong>
             <span>${safeFreightTerms}</span>
@@ -910,18 +937,26 @@ function buildProposalDocumentHtml({
             <span>${safeDeliveryTerms}</span>
           </div>
           <div class="condition-card">
-            <strong>Prazo de pagamento</strong>
-            <span>${safePaymentTerms}</span>
-          </div>
-          <div class="condition-card">
             <strong>Validade da proposta</strong>
             <span>${safeValidity} dias</span>
           </div>
         </div>
-        <h2 class="section-title">Itens da oportunidade</h2>
-        ${itemsTableHtml}
-        <h2 class="section-title">Texto da proposta</h2>
-        <div class="content">${textHtml}</div>
+        ${observationBullets.length ? `
+        <h2 class="section-title">Observações</h2>
+        <ul style="margin:0 0 8px;padding-left:18px;font-size:12px;line-height:1.6;color:#374151;">
+          ${observationBullets.map((b) => `<li>${escapeHtml(b)}</li>`).join("\n          ")}
+        </ul>` : ""}
+        ${closingText || financingTerms ? `
+        <h2 class="section-title">Condições de Fechamento</h2>
+        <div class="conditions-grid">
+          ${closingText ? `<div class="condition-card" style="grid-column:1/-1;"><strong>Prazo de Pagamento</strong><span>${escapeHtml(closingText)}</span></div>` : ""}
+          ${financingTerms ? `<div class="condition-card" style="grid-column:1/-1;"><strong>Financiamento</strong><span>${escapeHtml(financingTerms)}</span></div>` : ""}
+        </div>` : ""}
+        <div style="margin-top:18px;font-size:12px;color:#6b7280;">
+          <p style="margin:0;">Atenciosamente,</p>
+          ${ownerName ? `<p style="margin:4px 0 0;font-weight:700;color:#1f2937;">${escapeHtml(ownerName)}</p>` : ""}
+          <p style="margin:2px 0 0;">Equipe Comercial ArtPrinter</p>
+        </div>
       </div>
     </div>
   </body>
@@ -1803,9 +1838,13 @@ export default function PipelineModule({
 
   const renderedProposalHtml = useMemo(() => {
     if (!proposalEditor) return "";
+    const opp = items.find((item) => item.id === proposalEditor.opportunity_id);
+    const ownerUser = pipelineUsers.find((u) => u.user_id === (opp?.owner_user_id || viewerUserId));
     return buildProposalDocumentHtml({
       proposalNumber: proposalEditor.proposal_number,
       companyName: proposalCompanyName || proposalEditor.client_name,
+      companyCnpj: opp?.companies?.cnpj || "",
+      contactName: proposalEditor.client_name || "",
       renderedText: renderedProposalText,
       logoDataUrl: proposalLogoDataUrl,
       issueDate: proposalEditor.issue_date,
@@ -1813,25 +1852,42 @@ export default function PipelineModule({
       items: proposalItemsForDocument,
       freightTerms: proposalEditor.freight_terms,
       paymentTerms: proposalEditor.payment_terms,
-      deliveryTerms: proposalEditor.delivery_terms
+      deliveryTerms: proposalEditor.delivery_terms,
+      warrantyTerms: proposalEditor.warranty_terms || "",
+      includedOffer: proposalEditor.included_offer || "",
+      excludedOffer: proposalEditor.excluded_offer || "",
+      closingText: proposalEditor.closing_text || "",
+      financingTerms: proposalEditor.financing_terms || "",
+      ownerName: ownerUser?.full_name || ""
     });
-  }, [proposalCompanyName, proposalEditor, renderedProposalText, proposalLogoDataUrl, proposalItemsForDocument]);
+  }, [proposalCompanyName, proposalEditor, renderedProposalText, proposalLogoDataUrl, proposalItemsForDocument, items, pipelineUsers, viewerUserId]);
 
   const proposalDocumentPayload = useMemo(() => {
     if (!proposalEditor) return null;
+    const opp = items.find((item) => item.id === proposalEditor.opportunity_id);
+    const companyCnpj = opp?.companies?.cnpj || "";
+    const ownerUser = pipelineUsers.find((u) => u.user_id === (opp?.owner_user_id || viewerUserId));
     return {
       proposalNumber: proposalEditor.proposal_number,
       companyName: proposalCompanyName || proposalEditor.client_name,
+      companyCnpj,
+      contactName: proposalEditor.client_name || "",
       issueDate: formatDateBr(proposalEditor.issue_date),
       validityDays: proposalEditor.validity_days,
       freightTerms: proposalEditor.freight_terms,
       paymentTerms: proposalEditor.payment_terms,
       deliveryTerms: proposalEditor.delivery_terms,
+      warrantyTerms: proposalEditor.warranty_terms || "",
+      includedOffer: proposalEditor.included_offer || "",
+      excludedOffer: proposalEditor.excluded_offer || "",
+      financingTerms: proposalEditor.financing_terms || "",
+      closingText: proposalEditor.closing_text || "",
+      ownerName: ownerUser?.full_name || "",
       renderedText: renderedProposalText,
       logoDataUrl: proposalLogoDataUrl,
       items: proposalItemsForDocument
     };
-  }, [proposalCompanyName, proposalEditor, proposalItemsForDocument, proposalLogoDataUrl, renderedProposalText]);
+  }, [proposalCompanyName, proposalEditor, proposalItemsForDocument, proposalLogoDataUrl, renderedProposalText, items, pipelineUsers, viewerUserId]);
 
   const hasArtPrinterLogo = Boolean(proposalLogoDataUrl);
 

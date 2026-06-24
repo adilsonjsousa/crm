@@ -1405,7 +1405,7 @@ export async function listOpportunities(options = {}) {
   let query = supabase
     .from("opportunities")
     .select(
-      "id,company_id,owner_user_id,title,stage,status,estimated_value,expected_close_date,line_items,created_at,companies:company_id(trade_name,email,phone)"
+      "id,company_id,owner_user_id,title,stage,status,estimated_value,expected_close_date,line_items,created_at,companies:company_id(trade_name,cnpj,email,phone)"
     );
 
   if (viewerUserId && !canViewAll) {
