@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   createTask,
   deleteTask,
@@ -352,6 +352,7 @@ export default function TasksModule({
   const [reportEndDate, setReportEndDate] = useState("");
   const [reportAssigneeUserId, setReportAssigneeUserId] = useState("");
   const [deletingTaskId, setDeletingTaskId] = useState("");
+  const [expandedTaskId, setExpandedTaskId] = useState("");
   const [companySearchTerm, setCompanySearchTerm] = useState("");
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
   const [form, setForm] = useState({
@@ -1474,11 +1475,14 @@ export default function TasksModule({
 
   return (
     <section className="module">
-      <div className="tasks-calendar-toolbar" style={{ marginBottom: "1rem" }}>
+      {error ? <p className="error-text">{error}</p> : null}
+      {success ? <p className="success-text">{success}</p> : null}
+
+      <div className="tasks-filter-bar">
         <label className="settings-field">
-          <span>Vendedor (Responsável)</span>
+          <span>Responsável</span>
           <select value={filterAssigneeUserId} onChange={(event) => setFilterAssigneeUserId(event.target.value)}>
-            <option value="">Todos os responsáveis</option>
+            <option value="">Todos</option>
             {users.map((user) => (
               <option key={`filter-${user.user_id}`} value={user.user_id}>
                 {userDisplayName(user)}
@@ -1487,33 +1491,67 @@ export default function TasksModule({
           </select>
         </label>
         <label className="settings-field">
-          <span>Data início</span>
+          <span>De</span>
           <input type="date" value={filterStartDate} onChange={(event) => setFilterStartDate(event.target.value)} />
         </label>
         <label className="settings-field">
-          <span>Data fim</span>
+          <span>Até</span>
           <input type="date" value={filterEndDate} onChange={(event) => setFilterEndDate(event.target.value)} />
         </label>
-        {(filterStartDate || filterEndDate || filterAssigneeUserId) ? (
-          <button
-            type="button"
-            className="btn-ghost btn-table-action"
-            onClick={() => { setFilterStartDate(""); setFilterEndDate(""); setFilterAssigneeUserId(""); }}
-          >
-            Limpar filtros
+        <div className="inline-actions">
+          {(filterStartDate || filterEndDate || filterAssigneeUserId) ? (
+            <button
+              type="button"
+              className="btn-ghost btn-table-action"
+              onClick={() => { setFilterStartDate(""); setFilterEndDate(""); setFilterAssigneeUserId(""); }}
+            >
+              Limpar
+            </button>
+          ) : null}
+          <button type="button" className="btn-ghost btn-table-action" onClick={() => setOnlyOpen((prev) => !prev)}>
+            {onlyOpen ? "Todas" : "Somente abertas"}
           </button>
-        ) : null}
+        </div>
       </div>
-      <div className="two-col">
-        <article className="panel">
-          <h2>Agenda de tarefas</h2>
-          <p className="muted">Cadastre tarefas para os usuários e acompanhe no fluxo da agenda.</p>
-          {usersLoading ? <p className="muted">Carregando usuários...</p> : null}
-          {!usersLoading && !users.length ? <p className="error-text">Cadastre ao menos um usuário na aba Configurações.</p> : null}
-          <form className="form-grid" onSubmit={handleSubmit}>
-            <div className="tasks-users-grid">
+
+      <div className="tasks-indicators-strip">
+        <article className="metric-tile">
+          <span>Abertas</span>
+          <strong>{summary.openCount}</strong>
+        </article>
+        <article className="metric-tile">
+          <span>Vencem hoje</span>
+          <strong>{summary.dueToday}</strong>
+        </article>
+        <article className="metric-tile">
+          <span>Em atraso</span>
+          <strong>{summary.overdue}</strong>
+        </article>
+        <article className="metric-tile">
+          <span>Visitas realizadas</span>
+          <strong>{summary.visitsDone}</strong>
+        </article>
+        <article className="metric-tile">
+          <span>Pontualidade</span>
+          <strong>{summary.punctualRate === null ? "-" : `${summary.punctualRate}%`}</strong>
+        </article>
+        <article className="metric-tile">
+          <span>Sem validação</span>
+          <strong>{summary.withoutValidation}</strong>
+          <small>{summary.inField} em campo</small>
+        </article>
+      </div>
+
+      <details className="tasks-form-toggle">
+        <summary>Nova tarefa</summary>
+        {usersLoading ? <p className="muted" style={{ padding: "0 14px" }}>Carregando usuários...</p> : null}
+        {!usersLoading && !users.length ? <p className="error-text" style={{ padding: "0 14px" }}>Cadastre ao menos um usuário na aba Configurações.</p> : null}
+        <form className="form-grid" onSubmit={handleSubmit}>
+          <div className="tasks-form-section">
+            <p className="tasks-form-section-label">Responsáveis</p>
+            <div className="tasks-form-row">
               <label className="settings-field">
-                <span>Usuário criando agenda</span>
+                <span>Criador</span>
                 <select
                   value={creatorUserId}
                   onChange={(event) => handleCreatorChange(event.target.value)}
@@ -1527,9 +1565,8 @@ export default function TasksModule({
                   ))}
                 </select>
               </label>
-
               <label className="settings-field">
-                <span>Responsável pela agenda</span>
+                <span>Responsável</span>
                 <select
                   value={form.assignee_user_id}
                   onChange={(event) => setForm((prev) => ({ ...prev, assignee_user_id: event.target.value }))}
@@ -1543,108 +1580,125 @@ export default function TasksModule({
                   ))}
                 </select>
               </label>
+              <div className="tasks-company-autocomplete">
+                <input
+                  type="text"
+                  placeholder="Empresa (nome ou CNPJ)"
+                  value={companySearchTerm}
+                  onChange={(event) => handleCompanySearchChange(event.target.value)}
+                  onFocus={() => setCompanySuggestionsOpen(Boolean(companySearchTerm.trim()))}
+                  onBlur={() => window.setTimeout(() => setCompanySuggestionsOpen(false), 120)}
+                />
+                {companySuggestionsOpen && companySearchTerm.trim().length >= 1 ? (
+                  <div className="tasks-company-suggestions">
+                    {!companySuggestions.length ? <p className="muted">Nenhuma empresa encontrada.</p> : null}
+                    {companySuggestions.length ? (
+                      <ul className="search-suggestions-list">
+                        {companySuggestions.map((company) => (
+                          <li key={company.id}>
+                            <button
+                              type="button"
+                              className="search-suggestion-btn"
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                handleSelectCompany(company);
+                              }}
+                            >
+                              <strong>{company.trade_name || "Empresa"}</strong>
+                              <span>{company.cnpj ? formatCnpj(company.cnpj) : "Sem CNPJ"}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {!companySuggestions.length ? (
+                      <div className="tasks-company-suggestions-actions">
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action tasks-create-company-btn"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={handleRequestCreateCompany}
+                        >
+                          + Cadastrar nova empresa
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
             </div>
+          </div>
 
-            <div className="tasks-company-autocomplete">
-              <input
-                type="text"
-                placeholder="Empresa (opcional: digite nome ou CNPJ)"
-                value={companySearchTerm}
-                onChange={(event) => handleCompanySearchChange(event.target.value)}
-                onFocus={() => setCompanySuggestionsOpen(Boolean(companySearchTerm.trim()))}
-                onBlur={() => window.setTimeout(() => setCompanySuggestionsOpen(false), 120)}
-              />
-              {companySuggestionsOpen && companySearchTerm.trim().length >= 1 ? (
-                <div className="tasks-company-suggestions">
-                  {!companySuggestions.length ? <p className="muted">Nenhuma empresa encontrada.</p> : null}
-                  {companySuggestions.length ? (
-                    <ul className="search-suggestions-list">
-                      {companySuggestions.map((company) => (
-                        <li key={company.id}>
-                          <button
-                            type="button"
-                            className="search-suggestion-btn"
-                            onMouseDown={(event) => {
-                              event.preventDefault();
-                              handleSelectCompany(company);
-                            }}
-                          >
-                            <strong>{company.trade_name || "Empresa"}</strong>
-                            <span>{company.cnpj ? formatCnpj(company.cnpj) : "Sem CNPJ"}</span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  {!companySuggestions.length ? (
-                    <div className="tasks-company-suggestions-actions">
-                      <button
-                        type="button"
-                        className="btn-ghost btn-table-action tasks-create-company-btn"
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={handleRequestCreateCompany}
-                      >
-                        + Cadastrar nova empresa
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+          <div className="tasks-form-section">
+            <p className="tasks-form-section-label">Detalhes</p>
+            <div className="tasks-form-row">
+              <select
+                required
+                value={form.activity}
+                onChange={(e) => setForm((prev) => ({ ...prev, activity: e.target.value }))}
+              >
+                {ACTIVITY_OPTIONS.map((activity) => (
+                  <option key={activity} value={activity}>{activity}</option>
+                ))}
+              </select>
+              <select value={form.priority} onChange={(e) => setForm((prev) => ({ ...prev, priority: e.target.value }))}>
+                {TASK_PRIORITIES.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
+                ))}
+              </select>
+              <select value={form.status} onChange={(e) => setForm((prev) => ({ ...prev, status: e.target.value }))}>
+                {TASK_STATUSES.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
+                ))}
+              </select>
             </div>
-            <select
-              required
-              value={form.activity}
-              onChange={(e) => setForm((prev) => ({ ...prev, activity: e.target.value }))}
-            >
-              {ACTIVITY_OPTIONS.map((activity) => (
-                <option key={activity} value={activity}>
-                  {activity}
-                </option>
-              ))}
-            </select>
-            <select value={form.priority} onChange={(e) => setForm((prev) => ({ ...prev, priority: e.target.value }))}>
-              {TASK_PRIORITIES.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-            <select value={form.status} onChange={(e) => setForm((prev) => ({ ...prev, status: e.target.value }))}>
-              {TASK_STATUSES.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-            <input
-              type="datetime-local"
-              value={form.scheduled_start_local}
-              onChange={(e) => setForm((prev) => ({ ...prev, scheduled_start_local: e.target.value }))}
-            />
-            <input
-              type="datetime-local"
-              value={form.scheduled_end_local}
-              onChange={(e) => setForm((prev) => ({ ...prev, scheduled_end_local: e.target.value }))}
-            />
-            <input
-              type="date"
-              required
-              value={form.due_date}
-              onChange={(e) => setForm((prev) => ({ ...prev, due_date: e.target.value }))}
-            />
-            <textarea
-              required
-              placeholder="Descrição (obrigatória)"
-              value={form.description}
-              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-            />
+          </div>
+
+          <div className="tasks-form-section">
+            <p className="tasks-form-section-label">Datas</p>
+            <div className="tasks-form-row">
+              <label className="settings-field">
+                <span>Início agendamento</span>
+                <input
+                  type="datetime-local"
+                  value={form.scheduled_start_local}
+                  onChange={(e) => setForm((prev) => ({ ...prev, scheduled_start_local: e.target.value }))}
+                />
+              </label>
+              <label className="settings-field">
+                <span>Fim agendamento</span>
+                <input
+                  type="datetime-local"
+                  value={form.scheduled_end_local}
+                  onChange={(e) => setForm((prev) => ({ ...prev, scheduled_end_local: e.target.value }))}
+                />
+              </label>
+              <label className="settings-field">
+                <span>Data limite</span>
+                <input
+                  type="date"
+                  required
+                  value={form.due_date}
+                  onChange={(e) => setForm((prev) => ({ ...prev, due_date: e.target.value }))}
+                />
+              </label>
+            </div>
+          </div>
+
+          <textarea
+            required
+            placeholder="Descrição (obrigatória)"
+            value={form.description}
+            onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+          />
+          <div className="inline-actions" style={{ justifyContent: "space-between" }}>
             <label className="checkbox-inline">
               <input
                 type="checkbox"
                 checked={notifyAssigneeWhatsApp}
                 onChange={(event) => setNotifyAssigneeWhatsApp(event.target.checked)}
               />
-              Avisar responsável no WhatsApp ao salvar
+              Avisar no WhatsApp
             </label>
             <div className="inline-actions">
               <button type="submit" value="save" className="btn-primary" disabled={saving || !users.length}>
@@ -1654,81 +1708,36 @@ export default function TasksModule({
                 Salvar e criar outra
               </button>
             </div>
-          </form>
+          </div>
+        </form>
+      </details>
+
+      <div className="two-col">
+        <article className="panel">
+          <h3>Próximos agendamentos</h3>
+          <ul className="activity-list">
+            {upcomingAppointments.map((task) => (
+              <li key={`upcoming-${task.id}`} className="activity-item">
+                <div>
+                  <p className="activity-title">{task.title}</p>
+                  <p className="activity-meta">{task.companies?.trade_name || "SEM VÍNCULO"}</p>
+                  <p className="activity-meta">Responsável: {userDisplayName(task.assignee || userById[task.assignee_user_id])}</p>
+                </div>
+                <span className="activity-date">{formatDateTime(task.scheduled_start_at)}</span>
+              </li>
+            ))}
+            {!upcomingAppointments.length ? <li className="muted">Sem agendamentos próximos.</li> : null}
+          </ul>
         </article>
 
         <article className="panel">
-          <h3>Indicadores da agenda</h3>
-          {error ? <p className="error-text">{error}</p> : null}
-          {success ? <p className="success-text">{success}</p> : null}
-          <div className="dashboard-strip">
-            <article className="metric-tile">
-              <span>Abertas</span>
-              <strong>{summary.openCount}</strong>
-            </article>
-            <article className="metric-tile">
-              <span>Vencem hoje</span>
-              <strong>{summary.dueToday}</strong>
-            </article>
-            <article className="metric-tile">
-              <span>Em atraso</span>
-              <strong>{summary.overdue}</strong>
-            </article>
-            <article className="metric-tile">
-              <span>Visitas realizadas</span>
-              <strong>{summary.visitsDone}</strong>
-            </article>
-            <article className="metric-tile">
-              <span>Pontualidade</span>
-              <strong>{summary.punctualRate === null ? "-" : `${summary.punctualRate}%`}</strong>
-            </article>
-            <article className="metric-tile">
-              <span>Sem validação</span>
-              <strong>{summary.withoutValidation}</strong>
-              <small>{summary.inField} em campo</small>
-            </article>
+          <h3>Calendário diário</h3>
+          <div className="tasks-calendar-toolbar">
+            <label className="settings-field">
+              <span>Data</span>
+              <input type="date" value={calendarDate} onChange={(event) => setCalendarDate(event.target.value)} />
+            </label>
           </div>
-          <div className="inline-actions top-gap">
-            <button type="button" className="btn-ghost btn-table-action" onClick={() => setOnlyOpen((prev) => !prev)}>
-              {onlyOpen ? "Mostrar todas na lista" : "Mostrar somente abertas na lista"}
-            </button>
-          </div>
-          <div className="top-gap">
-            <h3>Próximos agendamentos</h3>
-            <ul className="activity-list">
-              {upcomingAppointments.map((task) => (
-                <li key={`upcoming-${task.id}`} className="activity-item">
-                  <div>
-                    <p className="activity-title">{task.title}</p>
-                    <p className="activity-meta">{task.companies?.trade_name || "SEM VÍNCULO"}</p>
-                    <p className="activity-meta">Responsável: {userDisplayName(task.assignee || userById[task.assignee_user_id])}</p>
-                  </div>
-                  <span className="activity-date">{formatDateTime(task.scheduled_start_at)}</span>
-                </li>
-              ))}
-              {!upcomingAppointments.length ? <li className="muted">Sem agendamentos próximos.</li> : null}
-            </ul>
-          </div>
-
-          <div className="top-gap">
-            <h3>Calendário diário</h3>
-            <div className="tasks-calendar-toolbar">
-              <label className="settings-field">
-                <span>Data</span>
-                <input type="date" value={calendarDate} onChange={(event) => setCalendarDate(event.target.value)} />
-              </label>
-              <label className="settings-field">
-                <span>Responsável</span>
-                <select value={calendarAssigneeUserId} onChange={(event) => setCalendarAssigneeUserId(event.target.value)}>
-                  <option value="">Todos os responsáveis</option>
-                  {users.map((user) => (
-                    <option key={`calendar-${user.user_id}`} value={user.user_id}>
-                      {userDisplayName(user)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
 
             {calendarConflictData.count ? (
               <p className="tasks-calendar-warning">
@@ -1773,7 +1782,6 @@ export default function TasksModule({
               })}
               {!calendarRows.length ? <li className="muted">Sem compromissos para este dia.</li> : null}
             </ul>
-          </div>
         </article>
       </div>
 
@@ -1788,15 +1796,20 @@ export default function TasksModule({
               onDragOver={(event) => handleDragOver(event, status.value)}
               onDrop={(event) => handleDrop(event, status.value)}
             >
-              <header className="agenda-column-header">
+              <header className={`agenda-column-header agenda-column-header-${status.value}`}>
                 <span>{status.label}</span>
                 <strong>{itemsByStatus[status.value]?.length || 0}</strong>
               </header>
               <div className="agenda-column-body">
-                {(itemsByStatus[status.value] || []).map((task) => (
+                {(itemsByStatus[status.value] || []).map((task) => {
+                  const today = todayYmd();
+                  const dueKey = task.due_date || "";
+                  const isOverdue = dueKey && dueKey < today && isOpenStatus(task.status);
+                  const isDueToday = dueKey === today && isOpenStatus(task.status);
+                  return (
                   <article
                     key={task.id}
-                    className={`agenda-card ${draggingTaskId === task.id ? "is-dragging" : ""}`}
+                    className={`agenda-card ${draggingTaskId === task.id ? "is-dragging" : ""} ${isOverdue ? "agenda-card-overdue" : ""} ${isDueToday ? "agenda-card-due-today" : ""}`}
                     draggable
                     onDragStart={(event) => handleDragStart(event, task.id)}
                     onDragEnd={handleDragEnd}
@@ -1810,7 +1823,8 @@ export default function TasksModule({
                     <p className="agenda-card-due">{scheduleLabel(task)}</p>
                     {isVisitTask(task) ? <p className="agenda-card-field-status">{visitProgressLabel(task)}</p> : null}
                   </article>
-                ))}
+                  );
+                })}
                 {!itemsByStatus[status.value]?.length ? <p className="pipeline-empty">Sem tarefas</p> : null}
               </div>
             </section>
@@ -1821,140 +1835,121 @@ export default function TasksModule({
       <article className="panel top-gap">
         <h3>Lista de tarefas</h3>
         <div className="table-wrap">
-          <table>
+          <table className="tasks-table-compact">
             <thead>
               <tr>
                 <th>Atividade</th>
                 <th>Empresa</th>
-                <th>Criado por</th>
                 <th>Responsável</th>
                 <th>Prioridade</th>
                 <th>Agendamento</th>
-                <th>Data limite</th>
                 <th>Status</th>
-                <th>Reunião online</th>
-                <th>Execução em campo</th>
                 <th>Ações</th>
               </tr>
             </thead>
             <tbody>
-              {listRows.map((task) => (
-                <tr key={task.id}>
+              {listRows.map((task) => {
+                const isExpanded = expandedTaskId === task.id;
+                return (
+                <Fragment key={task.id}>
+                <tr
+                  style={{ cursor: "pointer" }}
+                  onClick={() => setExpandedTaskId(isExpanded ? "" : task.id)}
+                >
                   <td>{task.title}</td>
                   <td>{task.companies?.trade_name || "-"}</td>
-                  <td>{userDisplayName(task.creator || userById[task.created_by_user_id])}</td>
                   <td>{userDisplayName(task.assignee || userById[task.assignee_user_id])}</td>
                   <td>
                     <span className={`badge badge-priority-${task.priority}`}>{priorityLabel(task.priority)}</span>
                   </td>
                   <td>{task.scheduled_start_at ? scheduleLabel(task) : "-"}</td>
-                  <td>{formatDate(task.due_date)}</td>
                   <td>
                     <select
                       value={task.status}
-                      onChange={(e) => handleStatusChange(task, e.target.value)}
+                      onChange={(e) => { e.stopPropagation(); handleStatusChange(task, e.target.value); }}
+                      onClick={(e) => e.stopPropagation()}
                       className="status-select"
                     >
                       {TASK_STATUSES.map((item) => (
-                        <option key={item.value} value={item.value}>
-                          {item.label}
-                        </option>
+                        <option key={item.value} value={item.value}>{item.label}</option>
                       ))}
                     </select>
-                    <span className={`badge badge-status-${task.status}`}>{statusLabel(task.status)}</span>
                   </td>
                   <td>
-                    <div className="meeting-cell">
-                      {task.meeting_join_url ? (
-                        <a
-                          href={task.meeting_join_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="btn-ghost btn-table-action"
-                        >
-                          Abrir reunião
-                        </a>
-                      ) : null}
-                      <p className="meeting-summary">{buildMeetingHint(task)}</p>
-                      <div className="meeting-actions">
-                        <button
-                          type="button"
-                          className="btn-ghost btn-table-action"
-                          onClick={() => handleScheduleOnlineMeeting(task)}
-                          disabled={meetingTaskId === task.id}
-                        >
-                          {meetingTaskId === task.id
-                            ? "Agendando..."
-                            : task.meeting_join_url
-                              ? "Reagendar/Reenviar"
-                              : "Agendar reunião"}
-                        </button>
-                      </div>
+                    <div className="inline-actions" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className="btn-ghost btn-table-action"
+                        onClick={() => handleDeleteTask(task)}
+                        disabled={deletingTaskId === task.id}
+                      >
+                        {deletingTaskId === task.id ? "Excluindo..." : "Excluir"}
+                      </button>
                     </div>
                   </td>
-                  <td>
-                    {!isVisitTask(task) ? (
-                      <span className="muted">-</span>
-                    ) : (
-                      <div className="visit-checkin-cell">
-                        <span
-                          className={`badge visit-status-chip ${
-                            task.visit_checkout_at
-                              ? "visit-status-chip-done"
-                              : task.visit_checkin_at
-                                ? "visit-status-chip-progress"
-                                : "visit-status-chip-pending"
-                          }`}
-                        >
-                          {task.visit_checkout_at ? "Concluída" : task.visit_checkin_at ? "Em visita" : "Pendente"}
-                        </span>
-                        <p className="visit-checkin-summary">{visitProgressLabel(task)}</p>
-                        <p className="visit-checkin-summary muted">{buildVisitHint(task)}</p>
-                        <div className="visit-checkin-actions">
-                          {!task.visit_checkin_at ? (
-                            <button
-                              type="button"
-                              className="btn-ghost btn-table-action"
-                              onClick={() => handleCheckin(task)}
-                              disabled={
-                                checkinTaskId === task.id ||
-                                checkoutTaskId === task.id ||
-                                task.status === "done" ||
-                                task.status === "cancelled"
-                              }
-                            >
-                              {checkinTaskId === task.id ? "Registrando..." : "Check-in"}
-                            </button>
-                          ) : null}
-                          {task.visit_checkin_at && !task.visit_checkout_at ? (
-                            <button
-                              type="button"
-                              className="btn-ghost btn-table-action"
-                              onClick={() => handleCheckout(task)}
-                              disabled={checkoutTaskId === task.id || checkinTaskId === task.id}
-                            >
-                              {checkoutTaskId === task.id ? "Concluindo..." : "Check-out"}
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className="btn-ghost btn-table-action"
-                      onClick={() => handleDeleteTask(task)}
-                      disabled={deletingTaskId === task.id}
-                    >
-                      {deletingTaskId === task.id ? "Excluindo..." : "Excluir"}
-                    </button>
-                  </td>
                 </tr>
-              ))}
+                {isExpanded ? (
+                  <tr className="tasks-table-detail-row">
+                    <td colSpan={7}>
+                      <dl className="tasks-table-detail-grid">
+                        <dt>Criado por</dt>
+                        <dd>{userDisplayName(task.creator || userById[task.created_by_user_id])}</dd>
+                        <dt>Data limite</dt>
+                        <dd>{formatDate(task.due_date)}</dd>
+                        <dt>Reunião online</dt>
+                        <dd>
+                          {task.meeting_join_url ? (
+                            <a href={task.meeting_join_url} target="_blank" rel="noreferrer" className="btn-ghost btn-table-action">Abrir reunião</a>
+                          ) : <span className="muted">-</span>}
+                          {" "}
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action"
+                            onClick={() => handleScheduleOnlineMeeting(task)}
+                            disabled={meetingTaskId === task.id}
+                          >
+                            {meetingTaskId === task.id ? "Agendando..." : task.meeting_join_url ? "Reagendar" : "Agendar"}
+                          </button>
+                        </dd>
+                        <dt>Execução em campo</dt>
+                        <dd>
+                          {!isVisitTask(task) ? <span className="muted">-</span> : (
+                            <>
+                              <span className={`badge visit-status-chip ${task.visit_checkout_at ? "visit-status-chip-done" : task.visit_checkin_at ? "visit-status-chip-progress" : "visit-status-chip-pending"}`}>
+                                {task.visit_checkout_at ? "Concluída" : task.visit_checkin_at ? "Em visita" : "Pendente"}
+                              </span>
+                              {" "}{visitProgressLabel(task)}
+                              <div className="visit-checkin-actions" style={{ marginTop: 4 }}>
+                                {!task.visit_checkin_at ? (
+                                  <button type="button" className="btn-ghost btn-table-action" onClick={() => handleCheckin(task)} disabled={checkinTaskId === task.id || checkoutTaskId === task.id || task.status === "done" || task.status === "cancelled"}>
+                                    {checkinTaskId === task.id ? "Registrando..." : "Check-in"}
+                                  </button>
+                                ) : null}
+                                {task.visit_checkin_at && !task.visit_checkout_at ? (
+                                  <button type="button" className="btn-ghost btn-table-action" onClick={() => handleCheckout(task)} disabled={checkoutTaskId === task.id || checkinTaskId === task.id}>
+                                    {checkoutTaskId === task.id ? "Concluindo..." : "Check-out"}
+                                  </button>
+                                ) : null}
+                              </div>
+                            </>
+                          )}
+                        </dd>
+                        {task.description ? (
+                          <>
+                            <dt>Descrição</dt>
+                            <dd>{task.description}</dd>
+                          </>
+                        ) : null}
+                      </dl>
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
+                );
+              })}
               {!listRows.length ? (
                 <tr>
-                  <td colSpan={11} className="muted">
+                  <td colSpan={7} className="muted">
                     Nenhuma tarefa encontrada.
                   </td>
                 </tr>

@@ -2335,20 +2335,29 @@ a.btn-table-action {
 
 .metric-tile {
   border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--accent-1);
   border-radius: 12px;
   background: var(--bg-surface);
-  padding: 10px;
+  padding: 12px 14px;
   display: grid;
   gap: 4px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.metric-tile:hover {
+  border-color: var(--accent-1);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.12);
 }
 
 .metric-tile span {
   color: var(--text-sub);
   font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .metric-tile strong {
-  font-size: 1rem;
+  font-size: 1.1rem;
 }
 
 .table-wrap {
@@ -2892,6 +2901,105 @@ tbody tr:hover {
   width: 100%;
 }
 
+.tasks-filter-bar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin-bottom: 12px;
+  align-items: end;
+}
+
+.tasks-filter-bar .settings-field {
+  margin: 0;
+}
+
+.tasks-indicators-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.tasks-form-toggle {
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-panel);
+  margin-bottom: 12px;
+}
+
+.tasks-form-toggle > summary {
+  padding: 12px 14px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tasks-form-toggle > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tasks-form-toggle > summary::before {
+  content: "+";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--accent-1);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.tasks-form-toggle[open] > summary::before {
+  content: "\2212";
+}
+
+.tasks-form-toggle .form-grid {
+  padding: 0 14px 14px;
+}
+
+.tasks-form-section {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-surface-muted);
+}
+
+.tasks-form-section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-1);
+  margin: 0;
+}
+
+.tasks-form-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 9px;
+}
+
 .tasks-users-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -2903,6 +3011,50 @@ tbody tr:hover {
   grid-template-columns: 1fr;
   gap: 10px;
   margin-bottom: 8px;
+}
+
+.agenda-card-overdue {
+  border-left: 3px solid #dc2626;
+}
+
+.agenda-card-due-today {
+  border-left: 3px solid #d97706;
+}
+
+.agenda-column-header-todo { border-bottom: 2px solid #3b82f6; }
+.agenda-column-header-in_progress { border-bottom: 2px solid #f59e0b; }
+.agenda-column-header-done { border-bottom: 2px solid #10b981; }
+.agenda-column-header-cancelled { border-bottom: 2px solid #9ca3af; }
+
+.tasks-table-compact th,
+.tasks-table-compact td {
+  font-size: 0.82rem;
+  padding: 7px 8px;
+}
+
+.tasks-table-detail-row td {
+  background: var(--bg-surface-muted);
+  padding: 10px 12px;
+  font-size: 0.8rem;
+}
+
+.tasks-table-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.tasks-table-detail-grid dt {
+  font-weight: 700;
+  color: var(--text-sub);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tasks-table-detail-grid dd {
+  margin: 0 0 6px;
+  font-size: 0.82rem;
 }
 
 .tasks-calendar-warning {
@@ -3587,6 +3739,14 @@ tbody tr:hover {
     grid-template-columns: repeat(2, minmax(170px, 1fr));
   }
 
+  .tasks-filter-bar {
+    grid-template-columns: repeat(2, minmax(170px, 1fr));
+  }
+
+  .tasks-form-row {
+    grid-template-columns: repeat(2, minmax(170px, 1fr));
+  }
+
   .customer-popup-facts {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
@@ -3657,6 +3817,14 @@ tbody tr:hover {
 
   .two-col {
     grid-template-columns: repeat(2, minmax(320px, 1fr));
+  }
+
+  .tasks-filter-bar {
+    grid-template-columns: minmax(200px, 1fr) minmax(150px, 180px) minmax(150px, 180px) auto;
+  }
+
+  .tasks-form-row {
+    grid-template-columns: repeat(3, 1fr);
   }
 
   .reports-toolbar {
