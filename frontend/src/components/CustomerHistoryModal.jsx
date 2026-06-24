@@ -383,6 +383,7 @@ export default function CustomerHistoryModal({
 
   const [proposalVersionsByOpp, setProposalVersionsByOpp] = useState({});
   const [proposalVersionsLoading, setProposalVersionsLoading] = useState(false);
+  const [previewOppId, setPreviewOppId] = useState("");
 
   const [linkContactOpen, setLinkContactOpen] = useState(false);
   const [linkContactMode, setLinkContactMode] = useState("search");
@@ -1151,6 +1152,44 @@ export default function CustomerHistoryModal({
     }
   }
 
+  function getLatestSnapshot(oppId) {
+    const versions = proposalVersionsByOpp[oppId] || [];
+    for (const v of versions) {
+      if (v.snapshot && typeof v.snapshot === "object") return v.snapshot;
+    }
+    return null;
+  }
+
+  async function handleGeneratePdf(opp) {
+    const snapshot = getLatestSnapshot(opp.id);
+    if (!snapshot) return;
+    const payload = {
+      proposalNumber: snapshot.editor?.proposal_number || opp.title || "",
+      companyName: snapshot.company_name || companyName || "",
+      issueDate: snapshot.editor?.issue_date || "",
+      validityDays: snapshot.editor?.validity_days || "",
+      freightTerms: snapshot.editor?.freight_terms || "",
+      paymentTerms: snapshot.editor?.payment_terms || "",
+      deliveryTerms: snapshot.editor?.delivery_terms || "",
+      renderedText: snapshot.rendered_text || "",
+      logoDataUrl: null,
+      items: snapshot.commercial_items || []
+    };
+    try {
+      const { buildProposalPdfBlob } = await import("../lib/proposalDocumentExport");
+      const blob = buildProposalPdfBlob(payload);
+      const fileName = `${(opp.title || "proposta").replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || "Falha ao gerar PDF.");
+    }
+  }
+
   if (!open) return null;
 
   const customerLabel = companyProfile?.trade_name || companyName || "Cliente";
@@ -1549,21 +1588,47 @@ export default function CustomerHistoryModal({
                     <th>Status</th>
                     <th>Valor estimado</th>
                     <th>Fechamento previsto</th>
+                    <th>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {opportunities.map((item) => (
+                  {opportunities.map((item) => {
+                    const hasSnapshot = Boolean(getLatestSnapshot(item.id));
+                    return (
                     <tr key={item.id}>
                       <td>{item.title || "-"}</td>
                       <td>{stageLabel(item.stage) || "-"}</td>
                       <td>{opportunityStatusLabel(item.status)}</td>
                       <td>{brl(item.estimated_value)}</td>
                       <td>{formatDate(item.expected_close_date)}</td>
+                      <td>
+                        <div className="inline-actions">
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action"
+                            disabled={!hasSnapshot}
+                            title={hasSnapshot ? "Visualizar prévia da proposta" : "Nenhuma versão salva"}
+                            onClick={() => setPreviewOppId(previewOppId === item.id ? "" : item.id)}
+                          >
+                            {previewOppId === item.id ? "Fechar" : "Visualizar"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action"
+                            disabled={!hasSnapshot}
+                            title={hasSnapshot ? "Gerar e baixar PDF" : "Nenhuma versão salva"}
+                            onClick={() => handleGeneratePdf(item)}
+                          >
+                            PDF
+                          </button>
+                        </div>
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {!opportunities.length ? (
                     <tr>
-                      <td colSpan={5} className="muted">
+                      <td colSpan={6} className="muted">
                         Nenhuma proposta no pipeline para este cliente.
                       </td>
                     </tr>
@@ -1571,6 +1636,18 @@ export default function CustomerHistoryModal({
                 </tbody>
               </table>
             </div>
+
+            {previewOppId && getLatestSnapshot(previewOppId) ? (
+              <article className="customer-popup-card top-gap">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <h4>Prévia da proposta</h4>
+                  <button type="button" className="btn-ghost btn-table-action" onClick={() => setPreviewOppId("")}>Fechar</button>
+                </div>
+                <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "400px", overflow: "auto", padding: "12px", background: "var(--surface-2, #1a1a2e)", borderRadius: "6px", fontSize: "0.85rem", marginTop: "8px" }}>
+                  {getLatestSnapshot(previewOppId)?.rendered_text || "Sem conteúdo de prévia disponível."}
+                </pre>
+              </article>
+            ) : null}
 
             <div className="table-wrap top-gap">
               <table>
