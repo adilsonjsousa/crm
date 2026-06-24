@@ -690,7 +690,7 @@ function buildProposalItemsTableHtml(items = []) {
     <tbody>${rowsHtml}</tbody>
     <tfoot>
       <tr>
-        <td colspan="4">Valor total do pedido</td>
+        <td colspan="5">Valor total do pedido</td>
         <td class="is-right">${escapeHtml(brl(totalValue))}</td>
       </tr>
     </tfoot>

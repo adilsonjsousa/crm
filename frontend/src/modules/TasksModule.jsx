@@ -1986,6 +1986,17 @@ export default function TasksModule({
               <span>Data</span>
               <input type="date" value={calendarDate} onChange={(event) => setCalendarDate(event.target.value)} />
             </label>
+            <label className="settings-field">
+              <span>Responsável</span>
+              <select value={calendarAssigneeUserId} onChange={(event) => setCalendarAssigneeUserId(event.target.value)}>
+                <option value="">Todos</option>
+                {users.map((user) => (
+                  <option key={`cal-user-${user.user_id}`} value={user.user_id}>
+                    {userDisplayName(user)}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
 
             {calendarConflictData.count ? (

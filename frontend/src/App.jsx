@@ -24,7 +24,7 @@ import CustomerHistoryModal from "./components/CustomerHistoryModal";
 
 const THEME_STORAGE_KEY = "crm-theme";
 const CANONICAL_CRM_HOST = "crm-kappa-peach.vercel.app";
-const LEGACY_ALIAS_REDIRECT_HOSTS = new Set(["crm-adilson-sousas-projects.vercel.app"]);
+const LEGACY_ALIAS_REDIRECT_HOSTS = new Set(["crm-adilson-sousas-projects.vercel.app", "frontend-silk-three-82.vercel.app"]);
 const ALLOWED_WORKSPACE_DOMAINS = new Set(["artprinter.com.br", "artestampa.com.br"]);
 const EMERGENCY_SUPER_ADMIN_ID = "emergency-super-admin";
 const EMERGENCY_SUPER_ADMIN = {

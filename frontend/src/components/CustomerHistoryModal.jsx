@@ -413,7 +413,7 @@ export default function CustomerHistoryModal({
     }
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [open, onClose]);
+  }, [open, onClose, linkContactOpen]);
 
   useEffect(() => {
     if (!open || !companyId) return;
@@ -426,6 +426,7 @@ export default function CustomerHistoryModal({
     setAssetForm(emptyAssetForm());
     setInternalMessageForm(emptyInternalMessageForm());
     setInternalMessageFeedback({ type: "", message: "" });
+    setPreviewOppId("");
     setProposalVersionsByOpp({});
     setProposalVersionsLoading(false);
     setOmiePurchasesLoading(false);
@@ -526,7 +527,7 @@ export default function CustomerHistoryModal({
     return () => {
       active = false;
     };
-  }, [open, selectedTab, companyProfile?.cnpj, omiePurchasesFetched]);
+  }, [open, selectedTab, companyId, companyProfile?.cnpj, omiePurchasesFetched]);
 
   useEffect(() => {
     if (!open || selectedTab !== "omie_receivables" || omieReceivablesFetched) return;
@@ -577,7 +578,7 @@ export default function CustomerHistoryModal({
     return () => {
       active = false;
     };
-  }, [open, selectedTab, companyProfile?.cnpj, omieReceivablesFetched]);
+  }, [open, selectedTab, companyId, companyProfile?.cnpj, omieReceivablesFetched]);
 
   useEffect(() => {
     if (!open || selectedTab !== "opportunities" || !opportunities.length) return;
