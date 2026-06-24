@@ -1420,6 +1420,58 @@ export default function TasksModule({
     setDraggingTaskId("");
   }
 
+  async function handleExportReportExcel() {
+    if (!reportTasks.length) {
+      setError("Nenhuma tarefa para exportar com os filtros atuais.");
+      return;
+    }
+    const XLSX = await import("xlsx");
+    const workbook = XLSX.utils.book_new();
+
+    const monthlyRows = monthlyReport.map((row) => ({
+      "Mês": row.month,
+      "Total": row.total,
+      "Visitas": row.visitas,
+      "Check-in": row.checkin,
+      "Check-out": row.checkout,
+      "Concluídas": row.concluidas,
+      "Abertas": row.abertas,
+      "Canceladas": row.canceladas,
+      "Pontualidade": row.checkout ? `${Math.round((row.pontual / row.checkout) * 100)}%` : "-"
+    }));
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(monthlyRows), "Resumo mensal");
+
+    const assigneeRows = reportByAssignee.map((row) => ({
+      "Responsável": row.name,
+      "Total": row.total,
+      "Visitas": row.visitas,
+      "Check-in": row.checkin,
+      "Check-out": row.checkout,
+      "Concluídas": row.concluidas,
+      "Abertas": row.abertas,
+      "Pontualidade": row.checkout ? `${Math.round((row.pontual / row.checkout) * 100)}%` : "-"
+    }));
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(assigneeRows), "Por vendedor");
+
+    const detailRows = reportTasks.map((task) => ({
+      "Título": task.title,
+      "Empresa": task.companies?.trade_name || "-",
+      "Responsável": userDisplayName(task.assignee || userById[task.assignee_user_id]),
+      "Criado por": userDisplayName(task.creator || userById[task.created_by_user_id]),
+      "Prioridade": priorityLabel(task.priority),
+      "Status": statusLabel(task.status),
+      "Agendamento": task.scheduled_start_at ? formatDateTime(task.scheduled_start_at) : "-",
+      "Data limite": task.due_date ? formatDate(task.due_date) : "-",
+      "Check-in": task.visit_checkin_at ? formatDateTime(task.visit_checkin_at) : "-",
+      "Check-out": task.visit_checkout_at ? formatDateTime(task.visit_checkout_at) : "-",
+      "Criado em": formatDateTime(task.created_at)
+    }));
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detailRows), "Detalhamento");
+
+    const suffix = [reportStartDate, reportEndDate].filter(Boolean).join("_a_") || "completo";
+    XLSX.writeFile(workbook, `relatorio_visitas_${suffix}.xlsx`);
+  }
+
   return (
     <section className="module">
       <div className="tasks-calendar-toolbar" style={{ marginBottom: "1rem" }}>
@@ -1944,6 +1996,14 @@ export default function TasksModule({
               Limpar filtros
             </button>
           ) : null}
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handleExportReportExcel}
+            disabled={!reportTasks.length}
+          >
+            Exportar Excel (.xlsx)
+          </button>
         </div>
 
         <div className="dashboard-strip" style={{ marginTop: "1rem" }}>
