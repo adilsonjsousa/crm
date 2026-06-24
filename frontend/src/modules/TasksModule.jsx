@@ -1473,6 +1473,175 @@ export default function TasksModule({
     XLSX.writeFile(workbook, `relatorio_visitas_${suffix}.xlsx`);
   }
 
+  async function handleExportFilteredExcel() {
+    const rows = listRows;
+    if (!rows.length) {
+      setError("Nenhuma tarefa para exportar com os filtros atuais.");
+      return;
+    }
+    const XLSX = await import("xlsx");
+    const workbook = XLSX.utils.book_new();
+    const today = todayYmd();
+
+    const resumoData = [
+      ["Indicador", "Valor"],
+      ["Tarefas no filtro", rows.length],
+      ["Abertas", summary.openCount],
+      ["Vencem hoje", summary.dueToday],
+      ["Em atraso", summary.overdue],
+      ["Visitas realizadas", summary.visitsDone],
+      ["Em campo", summary.inField],
+      ["Sem validação", summary.withoutValidation],
+      ["Pontualidade (%)", summary.punctualRate !== null ? summary.punctualRate : "-"],
+      ["Concluídas", rows.filter((t) => t.status === "done").length],
+      ["Canceladas", rows.filter((t) => t.status === "cancelled").length],
+    ];
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(resumoData), "Resumo");
+
+    const byStatusMap = {};
+    for (const t of rows) {
+      const s = statusLabel(t.status);
+      if (!byStatusMap[s]) byStatusMap[s] = { status: s, total: 0, visitas: 0, atraso: 0, valor_atraso_dias: 0 };
+      byStatusMap[s].total += 1;
+      if (isVisitTask(t)) byStatusMap[s].visitas += 1;
+      if (isOpenStatus(t.status) && t.due_date && t.due_date < today) {
+        byStatusMap[s].atraso += 1;
+        const diff = Math.floor((Date.now() - new Date(t.due_date + "T00:00:00").getTime()) / 86400000);
+        byStatusMap[s].valor_atraso_dias += diff;
+      }
+    }
+    const statusRows = [["Status", "Tarefas", "Visitas", "Em atraso", "Aging médio atraso (dias)"]];
+    for (const r of Object.values(byStatusMap)) {
+      statusRows.push([r.status, r.total, r.visitas, r.atraso, r.atraso ? Math.round(r.valor_atraso_dias / r.atraso) : 0]);
+    }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(statusRows), "Por status");
+
+    const byAssigneeMap = {};
+    for (const t of rows) {
+      const uid = t.assignee_user_id || "sem_responsavel";
+      const name = userDisplayName(t.assignee || userById[uid]);
+      if (!byAssigneeMap[uid]) byAssigneeMap[uid] = { name, total: 0, abertas: 0, concluidas: 0, canceladas: 0, visitas: 0, checkin: 0, checkout: 0, atraso: 0, pontual: 0 };
+      const r = byAssigneeMap[uid];
+      r.total += 1;
+      if (isOpenStatus(t.status)) r.abertas += 1;
+      if (t.status === "done") r.concluidas += 1;
+      if (t.status === "cancelled") r.canceladas += 1;
+      if (isVisitTask(t)) {
+        r.visitas += 1;
+        if (t.visit_checkin_at) r.checkin += 1;
+        if (t.visit_checkout_at) {
+          r.checkout += 1;
+          if (punctualVisit(t)) r.pontual += 1;
+        }
+      }
+      if (isOpenStatus(t.status) && t.due_date && t.due_date < today) r.atraso += 1;
+    }
+    const assigneeRows = [["Responsável", "Tarefas", "Abertas", "Concluídas", "Canceladas", "Visitas", "Check-in", "Check-out", "Em atraso", "Pontualidade (%)"]];
+    for (const r of Object.values(byAssigneeMap)) {
+      assigneeRows.push([r.name, r.total, r.abertas, r.concluidas, r.canceladas, r.visitas, r.checkin, r.checkout, r.atraso, r.checkout ? Math.round((r.pontual / r.checkout) * 100) : "-"]);
+    }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(assigneeRows), "Por responsavel");
+
+    const byActivityMap = {};
+    for (const t of rows) {
+      const act = t.title || "Sem título";
+      const actKey = ACTIVITY_OPTIONS.find((a) => act.toLowerCase().startsWith(a.toLowerCase())) || "Outros";
+      if (!byActivityMap[actKey]) byActivityMap[actKey] = { atividade: actKey, total: 0, abertas: 0, concluidas: 0, atraso: 0 };
+      const r = byActivityMap[actKey];
+      r.total += 1;
+      if (isOpenStatus(t.status)) r.abertas += 1;
+      if (t.status === "done") r.concluidas += 1;
+      if (isOpenStatus(t.status) && t.due_date && t.due_date < today) r.atraso += 1;
+    }
+    const actRows = [["Atividade", "Tarefas", "Abertas", "Concluídas", "Em atraso"]];
+    for (const r of Object.values(byActivityMap)) {
+      actRows.push([r.atividade, r.total, r.abertas, r.concluidas, r.atraso]);
+    }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(actRows), "Por atividade");
+
+    const byPriorityMap = {};
+    for (const t of rows) {
+      const p = priorityLabel(t.priority);
+      if (!byPriorityMap[p]) byPriorityMap[p] = { prioridade: p, total: 0, abertas: 0, concluidas: 0, atraso: 0 };
+      const r = byPriorityMap[p];
+      r.total += 1;
+      if (isOpenStatus(t.status)) r.abertas += 1;
+      if (t.status === "done") r.concluidas += 1;
+      if (isOpenStatus(t.status) && t.due_date && t.due_date < today) r.atraso += 1;
+    }
+    const prioRows = [["Prioridade", "Tarefas", "Abertas", "Concluídas", "Em atraso"]];
+    for (const r of Object.values(byPriorityMap)) {
+      prioRows.push([r.prioridade, r.total, r.abertas, r.concluidas, r.atraso]);
+    }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(prioRows), "Por prioridade");
+
+    const riskRows = [["Empresa", "Atividade", "Responsável", "Status", "Prioridade", "Data limite", "Atraso (dias)", "Agendamento", "Check-in", "Check-out", "Motivos"]];
+    const overdueTasks = rows
+      .filter((t) => isOpenStatus(t.status) && t.due_date && t.due_date < today)
+      .sort((a, b) => (a.due_date || "").localeCompare(b.due_date || ""));
+    for (const t of overdueTasks) {
+      const agingDias = Math.floor((Date.now() - new Date(t.due_date + "T00:00:00").getTime()) / 86400000);
+      const motivos = [];
+      motivos.push(`Vencida há ${agingDias} dia(s)`);
+      if (t.priority === "critical" || t.priority === "high") motivos.push(`Prioridade ${priorityLabel(t.priority)}`);
+      if (isVisitTask(t) && !t.visit_checkin_at) motivos.push("Sem check-in");
+      riskRows.push([
+        t.companies?.trade_name || "-",
+        t.title,
+        userDisplayName(t.assignee || userById[t.assignee_user_id]),
+        statusLabel(t.status),
+        priorityLabel(t.priority),
+        formatDate(t.due_date),
+        agingDias,
+        t.scheduled_start_at ? formatDateTime(t.scheduled_start_at) : "-",
+        t.visit_checkin_at ? formatDateTime(t.visit_checkin_at) : "-",
+        t.visit_checkout_at ? formatDateTime(t.visit_checkout_at) : "-",
+        motivos.join(" | ")
+      ]);
+    }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(riskRows), "Atrasos e riscos");
+
+    const byCompanyMap = {};
+    for (const t of rows) {
+      const cName = t.companies?.trade_name || "SEM VÍNCULO";
+      if (!byCompanyMap[cName]) byCompanyMap[cName] = { empresa: cName, total: 0, abertas: 0, concluidas: 0, visitas: 0, atraso: 0 };
+      const r = byCompanyMap[cName];
+      r.total += 1;
+      if (isOpenStatus(t.status)) r.abertas += 1;
+      if (t.status === "done") r.concluidas += 1;
+      if (isVisitTask(t)) r.visitas += 1;
+      if (isOpenStatus(t.status) && t.due_date && t.due_date < today) r.atraso += 1;
+    }
+    const companyRows = [["Empresa", "Tarefas", "Abertas", "Concluídas", "Visitas", "Em atraso"]];
+    for (const r of Object.values(byCompanyMap).sort((a, b) => b.total - a.total)) {
+      companyRows.push([r.empresa, r.total, r.abertas, r.concluidas, r.visitas, r.atraso]);
+    }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(companyRows), "Por empresa");
+
+    const detailData = [["Empresa", "Atividade", "Responsável", "Criado por", "Prioridade", "Status", "Agendamento início", "Agendamento fim", "Data limite", "Check-in", "Check-out", "Descrição", "Criado em"]];
+    for (const t of rows) {
+      detailData.push([
+        t.companies?.trade_name || "-",
+        t.title,
+        userDisplayName(t.assignee || userById[t.assignee_user_id]),
+        userDisplayName(t.creator || userById[t.created_by_user_id]),
+        priorityLabel(t.priority),
+        statusLabel(t.status),
+        t.scheduled_start_at ? formatDateTime(t.scheduled_start_at) : "-",
+        t.scheduled_end_at ? formatDateTime(t.scheduled_end_at) : "-",
+        t.due_date ? formatDate(t.due_date) : "-",
+        t.visit_checkin_at ? formatDateTime(t.visit_checkin_at) : "-",
+        t.visit_checkout_at ? formatDateTime(t.visit_checkout_at) : "-",
+        t.description || "",
+        t.created_at ? formatDateTime(t.created_at) : "-"
+      ]);
+    }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(detailData), "Tarefas");
+
+    const dateSuffix = [filterStartDate, filterEndDate].filter(Boolean).join("_a_") || todayYmd();
+    XLSX.writeFile(workbook, `relatorio_agenda_analitico_${dateSuffix}.xlsx`);
+  }
+
   return (
     <section className="module">
       {error ? <p className="error-text">{error}</p> : null}
@@ -1510,6 +1679,14 @@ export default function TasksModule({
           ) : null}
           <button type="button" className="btn-ghost btn-table-action" onClick={() => setOnlyOpen((prev) => !prev)}>
             {onlyOpen ? "Todas" : "Somente abertas"}
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handleExportFilteredExcel}
+            disabled={!listRows.length}
+          >
+            Exportar Excel
           </button>
         </div>
       </div>
