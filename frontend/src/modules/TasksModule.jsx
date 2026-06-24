@@ -1638,6 +1638,55 @@ export default function TasksModule({
     }
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(detailData), "Tarefas");
 
+    const companiesWithOpenTasks = new Set();
+    const oportunidadeRows = [["Empresa", "CNPJ", "Cidade", "UF", "Atividade", "Responsável", "Criado por", "Prioridade", "Status", "Agendamento", "Data limite", "Atraso (dias)", "Check-in", "Check-out", "Descrição", "Criado em"]];
+    const tasksWithCompany = rows
+      .filter((t) => t.company_id && t.companies?.trade_name)
+      .sort((a, b) => (a.companies?.trade_name || "").localeCompare(b.companies?.trade_name || "", "pt-BR"));
+    for (const t of tasksWithCompany) {
+      if (isOpenStatus(t.status)) companiesWithOpenTasks.add(t.company_id);
+      const agingDias = (isOpenStatus(t.status) && t.due_date && t.due_date < today)
+        ? Math.floor((Date.now() - new Date(t.due_date + "T00:00:00").getTime()) / 86400000)
+        : 0;
+      oportunidadeRows.push([
+        t.companies?.trade_name || "-",
+        t.companies?.cnpj || "-",
+        t.companies?.city || "-",
+        t.companies?.state || "-",
+        t.title,
+        userDisplayName(t.assignee || userById[t.assignee_user_id]),
+        userDisplayName(t.creator || userById[t.created_by_user_id]),
+        priorityLabel(t.priority),
+        statusLabel(t.status),
+        t.scheduled_start_at ? formatDateTime(t.scheduled_start_at) : "-",
+        t.due_date ? formatDate(t.due_date) : "-",
+        agingDias,
+        t.visit_checkin_at ? formatDateTime(t.visit_checkin_at) : "-",
+        t.visit_checkout_at ? formatDateTime(t.visit_checkout_at) : "-",
+        t.description || "",
+        t.created_at ? formatDateTime(t.created_at) : "-"
+      ]);
+    }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(oportunidadeRows), "Agendas por empresa");
+
+    for (const t of tasks) {
+      if (isOpenStatus(t.status) && t.company_id) companiesWithOpenTasks.add(t.company_id);
+    }
+    const semAgendaRows = [["Empresa", "CNPJ", "Cidade", "UF"]];
+    const companiesSorted = [...companies].sort((a, b) =>
+      (a.trade_name || "").localeCompare(b.trade_name || "", "pt-BR")
+    );
+    for (const c of companiesSorted) {
+      if (companiesWithOpenTasks.has(c.id)) continue;
+      semAgendaRows.push([
+        c.trade_name || c.legal_name || "-",
+        c.cnpj || "-",
+        c.city || "-",
+        c.state || "-"
+      ]);
+    }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(semAgendaRows), "Sem agendas abertas");
+
     const dateSuffix = [filterStartDate, filterEndDate].filter(Boolean).join("_a_") || todayYmd();
     XLSX.writeFile(workbook, `relatorio_agenda_analitico_${dateSuffix}.xlsx`);
   }
