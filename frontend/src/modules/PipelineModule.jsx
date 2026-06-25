@@ -1561,6 +1561,11 @@ function createProposalDraft({
     excluded_offer: selectedCommercialTerms?.excluded_offer || "",
     financing_terms: selectedCommercialTerms?.financing_terms || "",
     closing_text: selectedCommercialTerms?.closing_text || "",
+    negotiated_value: "",
+    installment_entry: "",
+    installment_count: "",
+    installment_value: "",
+    contract_value: "",
     notes: "",
     contact_id: preferredContact?.id || "",
     client_name: preferredContact?.full_name || opportunity?.companies?.trade_name || "Cliente",
@@ -1626,6 +1631,7 @@ export default function PipelineModule({
   const [boardSearchTerm, setBoardSearchTerm] = useState("");
   const [pipelineViewMode, setPipelineViewMode] = useState("kanban");
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
+  const [closingModal, setClosingModal] = useState(false);
 
   const viewerUser = useMemo(
     () => pipelineUsers.find((item) => item.user_id === viewerUserId) || null,
@@ -2908,6 +2914,8 @@ export default function PipelineModule({
           "client_name", "client_email", "client_whatsapp", "contact_id",
           "payment_terms", "freight_terms", "delivery_terms", "warranty_terms",
           "included_offer", "excluded_offer", "financing_terms", "closing_text",
+          "negotiated_value", "installment_entry", "installment_count",
+          "installment_value", "contract_value",
           "notes", "template_body",
           "selected_template_id", "selected_template_name",
           "selected_product_profile_id", "selected_product_profile_name",
@@ -2984,6 +2992,33 @@ export default function PipelineModule({
       }
       return next;
     });
+  }
+
+  function buildClosingTextFromFields(editor) {
+    const parts = [];
+    const neg = String(editor.negotiated_value || "").trim();
+    const entry = String(editor.installment_entry || "").trim();
+    const count = String(editor.installment_count || "").trim();
+    const instVal = String(editor.installment_value || "").trim();
+    const contract = String(editor.contract_value || "").trim();
+
+    if (neg) parts.push(`Valor negociado: R$ ${neg}`);
+    if (entry && count && instVal) {
+      parts.push(`Entrada de R$ ${entry} - saldo em ${count} parcelas de R$ ${instVal}`);
+    } else if (entry) {
+      parts.push(`Entrada: R$ ${entry}`);
+    }
+    if (contract) parts.push(`Valor de contrato: R$ ${contract}`);
+    return parts.join("\n");
+  }
+
+  function handleClosingModalSave() {
+    setProposalEditor((prev) => {
+      if (!prev) return prev;
+      const autoText = buildClosingTextFromFields(prev);
+      return { ...prev, closing_text: autoText || prev.closing_text };
+    });
+    setClosingModal(false);
   }
 
   function handleProposalCommercialItemChange(index, field, value) {
@@ -3392,6 +3427,10 @@ export default function PipelineModule({
       const fileName = `${sanitizeFilePart(proposalEditor.proposal_number)}-${sanitizeFilePart(proposalEditor.client_name)}.pdf`;
       const { buildProposalPdfBlob } = await import("../lib/proposalDocumentExport");
       const pdfBlob = buildProposalPdfBlob(proposalDocumentPayload);
+      if (!pdfBlob) {
+        setError("Falha ao gerar o PDF. Verifique os dados da proposta.");
+        return;
+      }
       downloadBlobFile({
         fileName,
         blob: pdfBlob
@@ -4257,25 +4296,24 @@ export default function PipelineModule({
                   />
                 </label>
                 <div className="proposal-closing-section">
-                  <h4 className="proposal-closing-title">Condições de Fechamento</h4>
-                  <label className="proposal-field-label">
-                    <span>Texto de fechamento / Prazo de pagamento negociado</span>
-                    <textarea
-                      placeholder="Ex: Entrada de R$ 30.000,00 - saldo em 10 parcelas de R$ 9.509,00"
-                      value={proposalEditor.closing_text}
-                      onChange={(event) => handleProposalField("closing_text", event.target.value)}
-                      rows={3}
-                    />
-                  </label>
-                  <label className="proposal-field-label">
-                    <span>Condições de financiamento</span>
-                    <textarea
-                      placeholder="Ex: Convênios financeiros disponíveis sujeitos a aprovação"
-                      value={proposalEditor.financing_terms}
-                      onChange={(event) => handleProposalField("financing_terms", event.target.value)}
-                      rows={3}
-                    />
-                  </label>
+                  <div className="proposal-closing-header">
+                    <h4 className="proposal-closing-title">Condições de Fechamento</h4>
+                    <button type="button" className="btn-primary btn-sm" onClick={() => setClosingModal(true)}>
+                      Editar Condições
+                    </button>
+                  </div>
+                  {proposalEditor.closing_text ? (
+                    <p className="proposal-closing-preview">{proposalEditor.closing_text}</p>
+                  ) : (
+                    <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
+                      Nenhuma condição de fechamento definida. Clique em "Editar Condições" para adicionar.
+                    </p>
+                  )}
+                  {proposalEditor.financing_terms ? (
+                    <p className="proposal-closing-preview" style={{ marginTop: 4 }}>
+                      <strong>Financiamento:</strong> {proposalEditor.financing_terms}
+                    </p>
+                  ) : null}
                 </div>
                 <label className="proposal-field-label">
                   <span>Observações</span>
@@ -4544,6 +4582,93 @@ export default function PipelineModule({
         appViewerUser={viewerUser}
         onClose={closeCustomerHistoryModal}
       />
+
+      {closingModal && proposalEditor ? (
+        <div className="modal-overlay" onClick={() => setClosingModal(false)}>
+          <div className="modal-box closing-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Condições de Fechamento</h3>
+              <button type="button" className="btn-ghost btn-table-action" onClick={() => setClosingModal(false)}>✕</button>
+            </div>
+            <div className="closing-modal-body">
+              <label className="proposal-field-label">
+                <span>Valor negociado (R$)</span>
+                <input
+                  type="text"
+                  placeholder="Ex: 125.090,00"
+                  value={proposalEditor.negotiated_value}
+                  onChange={(e) => handleProposalField("negotiated_value", e.target.value)}
+                />
+              </label>
+              <div className="closing-modal-installments">
+                <label className="proposal-field-label">
+                  <span>Valor de entrada (R$)</span>
+                  <input
+                    type="text"
+                    placeholder="Ex: 30.000,00"
+                    value={proposalEditor.installment_entry}
+                    onChange={(e) => handleProposalField("installment_entry", e.target.value)}
+                  />
+                </label>
+                <label className="proposal-field-label">
+                  <span>Nº de parcelas</span>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Ex: 10"
+                    value={proposalEditor.installment_count}
+                    onChange={(e) => handleProposalField("installment_count", e.target.value)}
+                  />
+                </label>
+                <label className="proposal-field-label">
+                  <span>Valor da parcela (R$)</span>
+                  <input
+                    type="text"
+                    placeholder="Ex: 9.509,00"
+                    value={proposalEditor.installment_value}
+                    onChange={(e) => handleProposalField("installment_value", e.target.value)}
+                  />
+                </label>
+              </div>
+              <label className="proposal-field-label">
+                <span>Valor de contrato (R$)</span>
+                <input
+                  type="text"
+                  placeholder="Ex: valor mensal ou anual de contrato"
+                  value={proposalEditor.contract_value}
+                  onChange={(e) => handleProposalField("contract_value", e.target.value)}
+                />
+              </label>
+              <label className="proposal-field-label">
+                <span>Condições de financiamento</span>
+                <textarea
+                  placeholder="Ex: Convênios financeiros disponíveis sujeitos a aprovação"
+                  value={proposalEditor.financing_terms}
+                  onChange={(e) => handleProposalField("financing_terms", e.target.value)}
+                  rows={3}
+                />
+              </label>
+              <label className="proposal-field-label">
+                <span>Texto livre de fechamento</span>
+                <textarea
+                  placeholder="Texto livre para condições especiais de fechamento"
+                  value={proposalEditor.closing_text}
+                  onChange={(e) => handleProposalField("closing_text", e.target.value)}
+                  rows={3}
+                />
+              </label>
+            </div>
+            <div className="closing-modal-footer">
+              <button type="button" className="btn-primary" onClick={handleClosingModalSave}>
+                Salvar e aplicar
+              </button>
+              <button type="button" className="btn-ghost" onClick={() => setClosingModal(false)}>
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
