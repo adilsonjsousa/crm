@@ -1623,6 +1623,7 @@ export default function PipelineModule({
   const [form, setForm] = useState(() => emptyOpportunityForm("", "", pipelineDefaultsRef.current));
   const [opportunityItems, setOpportunityItems] = useState([]);
   const [companySearchTerm, setCompanySearchTerm] = useState("");
+  const [boardSearchTerm, setBoardSearchTerm] = useState("");
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
 
   const viewerUser = useMemo(
@@ -1747,9 +1748,27 @@ export default function PipelineModule({
 
     return grouped;
   }, [items]);
+
+  const filteredItemsByStage = useMemo(() => {
+    const term = boardSearchTerm.trim().toLowerCase();
+    if (!term) return itemsByStage;
+    const filtered = {};
+    for (const key of Object.keys(itemsByStage)) {
+      filtered[key] = (itemsByStage[key] || []).filter((item) => {
+        const title = (item.title || "").toLowerCase();
+        const company = (item.companies?.trade_name || "").toLowerCase();
+        const products = Array.isArray(item.line_items)
+          ? item.line_items.map((li) => (li.product_name || li.name || "").toLowerCase()).join(" ")
+          : "";
+        return title.includes(term) || company.includes(term) || products.includes(term);
+      });
+    }
+    return filtered;
+  }, [itemsByStage, boardSearchTerm]);
+
   const stageSummary = useMemo(() => {
     const byStage = PIPELINE_STAGES.reduce((acc, stage) => {
-      const rows = itemsByStage[stage.value] || [];
+      const rows = filteredItemsByStage[stage.value] || [];
       const count = rows.length;
       const totalValue = rows.reduce((sum, row) => sum + toPositiveMoneyNumber(row.estimated_value), 0);
       acc[stage.value] = {
@@ -1770,7 +1789,7 @@ export default function PipelineModule({
       funnelTotalCount,
       funnelTotalValue
     };
-  }, [itemsByStage]);
+  }, [filteredItemsByStage]);
 
   const proposalItemsForDocument = useMemo(() => {
     if (!proposalEditor) return [];
@@ -3771,6 +3790,16 @@ export default function PipelineModule({
             Para ver o conteudo da proposta, clique em <strong>Modelo</strong> em qualquer card do pipeline.
           </p>
         ) : null}
+        <div style={{ marginBottom: "0.75rem" }}>
+          <input
+            type="text"
+            className="input"
+            placeholder="Pesquisar por nome, empresa ou produto..."
+            value={boardSearchTerm}
+            onChange={(e) => setBoardSearchTerm(e.target.value)}
+            style={{ maxWidth: 400 }}
+          />
+        </div>
         <div className="pipeline-board">
           {PIPELINE_STAGES.map((stage) => (
             <section
@@ -3792,7 +3821,7 @@ export default function PipelineModule({
               </header>
 
               <div className="pipeline-column-body">
-                {(itemsByStage[stage.value] || []).map((item) => {
+                {(filteredItemsByStage[stage.value] || []).map((item) => {
                   const linkedProposal = proposalsByOpportunity[item.id];
                   return (
                     <article
