@@ -4058,9 +4058,35 @@ export default function PipelineModule({
                 Personalize o texto da proposta, gere DOCX/PDF real e registre versoes para auditoria.
               </p>
             </div>
-            <button type="button" className="btn-ghost btn-table-action" onClick={closeProposalEditor}>
-              Fechar
-            </button>
+            <div className="proposal-header-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleSaveProposalPdf}
+                disabled={Boolean(proposalExporting)}
+              >
+                {proposalExporting === "pdf" ? "Gerando PDF..." : "Baixar PDF"}
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleSaveProposalDocx}
+                disabled={Boolean(proposalExporting)}
+              >
+                {proposalExporting === "docx" ? "Gerando DOCX..." : "Baixar DOCX"}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={handleSaveProposalSnapshot}
+                disabled={Boolean(proposalExporting)}
+              >
+                {proposalExporting === "snapshot" ? "Salvando..." : "Salvar versão"}
+              </button>
+              <button type="button" className="btn-ghost btn-table-action" onClick={closeProposalEditor}>
+                Fechar
+              </button>
+            </div>
           </div>
 
           {proposalLoadingContacts ? <p className="muted">Carregando contatos do cliente...</p> : null}

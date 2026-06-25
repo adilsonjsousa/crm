@@ -3297,6 +3297,12 @@ tbody tr:hover {
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
+.proposal-header-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
 
 .proposal-model-grid {
   display: grid;
