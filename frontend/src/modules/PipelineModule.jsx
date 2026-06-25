@@ -2890,16 +2890,47 @@ export default function PipelineModule({
       setSavedProposalCommercialTerms((terms || []).filter((entry) => Boolean(entry?.is_active)));
       setProposalContacts(contacts);
       setProposalVersions(versions || []);
-      setProposalEditor(
-        createProposalDraft({
-          opportunity: item,
-          linkedOrder,
-          contacts,
-          templates,
-          productProfiles: profiles,
-          commercialTerms: terms
-        })
-      );
+      const baseDraft = createProposalDraft({
+        opportunity: item,
+        linkedOrder,
+        contacts,
+        templates,
+        productProfiles: profiles,
+        commercialTerms: terms
+      });
+      const latestVersion = (versions || []).find((v) => v.snapshot && typeof v.snapshot === "object");
+      if (latestVersion?.snapshot?.editor) {
+        const saved = latestVersion.snapshot.editor;
+        const restoredDraft = { ...baseDraft };
+        const restoreFields = [
+          "proposal_number", "issue_date", "validity_days", "proposal_type",
+          "category", "product", "estimated_value",
+          "client_name", "client_email", "client_whatsapp", "contact_id",
+          "payment_terms", "freight_terms", "delivery_terms", "warranty_terms",
+          "included_offer", "excluded_offer", "financing_terms", "closing_text",
+          "notes", "template_body",
+          "selected_template_id", "selected_template_name",
+          "selected_product_profile_id", "selected_product_profile_name",
+          "selected_commercial_terms_id", "selected_commercial_terms_name",
+          "profile_product_code", "profile_headline", "profile_intro_text",
+          "profile_technical_text", "profile_video_url",
+          "profile_included_accessories", "profile_optional_accessories"
+        ];
+        for (const field of restoreFields) {
+          if (saved[field] !== undefined && saved[field] !== null && saved[field] !== "") {
+            restoredDraft[field] = saved[field];
+          }
+        }
+        if (Array.isArray(saved.commercial_items) && saved.commercial_items.length) {
+          restoredDraft.commercial_items = saved.commercial_items;
+        }
+        if (Array.isArray(saved.opportunity_items) && saved.opportunity_items.length) {
+          restoredDraft.opportunity_items = saved.opportunity_items;
+        }
+        setProposalEditor(restoredDraft);
+      } else {
+        setProposalEditor(baseDraft);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
