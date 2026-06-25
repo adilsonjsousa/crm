@@ -3308,6 +3308,39 @@ tbody tr:hover {
   min-width: 0;
 }
 
+.proposal-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.proposal-field-label > span {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.proposal-field-label textarea {
+  resize: vertical;
+}
+
+.proposal-closing-section {
+  border: 2px solid #7c3aed;
+  border-radius: 10px;
+  padding: 12px;
+  background: #faf8ff;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.proposal-closing-title {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #5b21b6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .proposal-template-input {
   min-height: 220px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;

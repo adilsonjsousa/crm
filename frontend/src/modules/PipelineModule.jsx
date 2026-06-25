@@ -4145,51 +4145,90 @@ export default function PipelineModule({
                   value={proposalEditor.estimated_value}
                   onChange={(event) => handleProposalField("estimated_value", Number(event.target.value || 0))}
                 />
-                <textarea
-                  placeholder="Condicoes de pagamento"
-                  value={proposalEditor.payment_terms}
-                  onChange={(event) => handleProposalField("payment_terms", event.target.value)}
-                />
-                <textarea
-                  placeholder="Frete"
-                  value={proposalEditor.freight_terms}
-                  onChange={(event) => handleProposalField("freight_terms", event.target.value)}
-                />
-                <textarea
-                  placeholder="Prazo de entrega"
-                  value={proposalEditor.delivery_terms}
-                  onChange={(event) => handleProposalField("delivery_terms", event.target.value)}
-                />
-                <textarea
-                  placeholder="Garantia"
-                  value={proposalEditor.warranty_terms}
-                  onChange={(event) => handleProposalField("warranty_terms", event.target.value)}
-                />
-                <textarea
-                  placeholder="Incluso na oferta"
-                  value={proposalEditor.included_offer}
-                  onChange={(event) => handleProposalField("included_offer", event.target.value)}
-                />
-                <textarea
-                  placeholder="Nao incluso na oferta"
-                  value={proposalEditor.excluded_offer}
-                  onChange={(event) => handleProposalField("excluded_offer", event.target.value)}
-                />
-                <textarea
-                  placeholder="Condições de financiamento"
-                  value={proposalEditor.financing_terms}
-                  onChange={(event) => handleProposalField("financing_terms", event.target.value)}
-                />
-                <textarea
-                  placeholder="Texto de fechamento"
-                  value={proposalEditor.closing_text}
-                  onChange={(event) => handleProposalField("closing_text", event.target.value)}
-                />
-                <textarea
-                  placeholder="Observacoes"
-                  value={proposalEditor.notes}
-                  onChange={(event) => handleProposalField("notes", event.target.value)}
-                />
+                <label className="proposal-field-label">
+                  <span>Condições de pagamento</span>
+                  <textarea
+                    placeholder="Ex: 50% de entrada e 50% na entrega"
+                    value={proposalEditor.payment_terms}
+                    onChange={(event) => handleProposalField("payment_terms", event.target.value)}
+                    rows={2}
+                  />
+                </label>
+                <label className="proposal-field-label">
+                  <span>Frete</span>
+                  <textarea
+                    placeholder="Ex: FOB Blumenau / SC"
+                    value={proposalEditor.freight_terms}
+                    onChange={(event) => handleProposalField("freight_terms", event.target.value)}
+                    rows={2}
+                  />
+                </label>
+                <label className="proposal-field-label">
+                  <span>Prazo de entrega</span>
+                  <textarea
+                    placeholder="Ex: Entrega em ate 15 dias uteis"
+                    value={proposalEditor.delivery_terms}
+                    onChange={(event) => handleProposalField("delivery_terms", event.target.value)}
+                    rows={2}
+                  />
+                </label>
+                <label className="proposal-field-label">
+                  <span>Garantia</span>
+                  <textarea
+                    placeholder="Ex: Garantia de 12 meses contra defeitos"
+                    value={proposalEditor.warranty_terms}
+                    onChange={(event) => handleProposalField("warranty_terms", event.target.value)}
+                    rows={2}
+                  />
+                </label>
+                <label className="proposal-field-label">
+                  <span>Incluso na oferta</span>
+                  <textarea
+                    placeholder="Ex: Instalação, treinamento e Suporte Premium"
+                    value={proposalEditor.included_offer}
+                    onChange={(event) => handleProposalField("included_offer", event.target.value)}
+                    rows={2}
+                  />
+                </label>
+                <label className="proposal-field-label">
+                  <span>Não incluso na oferta</span>
+                  <textarea
+                    placeholder="Ex: Kits iniciais de tinta — não inclusos"
+                    value={proposalEditor.excluded_offer}
+                    onChange={(event) => handleProposalField("excluded_offer", event.target.value)}
+                    rows={2}
+                  />
+                </label>
+                <div className="proposal-closing-section">
+                  <h4 className="proposal-closing-title">Condições de Fechamento</h4>
+                  <label className="proposal-field-label">
+                    <span>Texto de fechamento / Prazo de pagamento negociado</span>
+                    <textarea
+                      placeholder="Ex: Entrada de R$ 30.000,00 - saldo em 10 parcelas de R$ 9.509,00"
+                      value={proposalEditor.closing_text}
+                      onChange={(event) => handleProposalField("closing_text", event.target.value)}
+                      rows={3}
+                    />
+                  </label>
+                  <label className="proposal-field-label">
+                    <span>Condições de financiamento</span>
+                    <textarea
+                      placeholder="Ex: Convênios financeiros disponíveis sujeitos a aprovação"
+                      value={proposalEditor.financing_terms}
+                      onChange={(event) => handleProposalField("financing_terms", event.target.value)}
+                      rows={3}
+                    />
+                  </label>
+                </div>
+                <label className="proposal-field-label">
+                  <span>Observações</span>
+                  <textarea
+                    placeholder="Anotações internas sobre a proposta"
+                    value={proposalEditor.notes}
+                    onChange={(event) => handleProposalField("notes", event.target.value)}
+                    rows={2}
+                  />
+                </label>
                 <div className="proposal-commercial-items">
                   <div className="proposal-commercial-items-header">
                     <strong>Itens comerciais da proposta</strong>
