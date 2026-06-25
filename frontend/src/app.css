@@ -3177,6 +3177,39 @@ tbody tr:hover {
   font-size: 0.78rem;
 }
 
+.btn-active {
+  background: var(--primary) !important;
+  color: #fff !important;
+  border-color: var(--primary) !important;
+}
+
+.pipeline-stage-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.pipeline-stage-lead { background: #e3e8ef; color: #4a5568; }
+.pipeline-stage-qualificacao { background: #bee3f8; color: #2a69ac; }
+.pipeline-stage-proposta { background: #fefcbf; color: #975a16; }
+.pipeline-stage-follow_up { background: #fed7aa; color: #9c4221; }
+.pipeline-stage-ganho { background: #c6f6d5; color: #276749; }
+.pipeline-stage-perdido { background: #fed7d7; color: #9b2c2c; }
+
+.pipeline-list-view {
+  overflow-x: auto;
+}
+.pipeline-list-view .data-table td,
+.pipeline-list-view .data-table th {
+  font-size: 0.82rem;
+  padding: 6px 10px;
+}
+
 .error-text {
   color: var(--danger);
   margin-top: 8px;

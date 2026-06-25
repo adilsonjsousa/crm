@@ -1624,6 +1624,7 @@ export default function PipelineModule({
   const [opportunityItems, setOpportunityItems] = useState([]);
   const [companySearchTerm, setCompanySearchTerm] = useState("");
   const [boardSearchTerm, setBoardSearchTerm] = useState("");
+  const [pipelineViewMode, setPipelineViewMode] = useState("kanban");
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
 
   const viewerUser = useMemo(
@@ -3790,16 +3791,36 @@ export default function PipelineModule({
             Para ver o conteudo da proposta, clique em <strong>Modelo</strong> em qualquer card do pipeline.
           </p>
         ) : null}
-        <div style={{ marginBottom: "0.75rem" }}>
+        <div className="pipeline-toolbar" style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap" }}>
           <input
             type="text"
             className="input"
             placeholder="Pesquisar por nome, empresa ou produto..."
             value={boardSearchTerm}
             onChange={(e) => setBoardSearchTerm(e.target.value)}
-            style={{ maxWidth: 400 }}
+            style={{ maxWidth: 400, flex: 1 }}
           />
+          <div style={{ display: "flex", gap: "0.25rem" }}>
+            <button
+              type="button"
+              className={`btn-ghost${pipelineViewMode === "kanban" ? " btn-active" : ""}`}
+              onClick={() => setPipelineViewMode("kanban")}
+              title="Visualização Kanban"
+            >
+              Kanban
+            </button>
+            <button
+              type="button"
+              className={`btn-ghost${pipelineViewMode === "lista" ? " btn-active" : ""}`}
+              onClick={() => setPipelineViewMode("lista")}
+              title="Visualização Lista"
+            >
+              Lista
+            </button>
+          </div>
         </div>
+
+        {pipelineViewMode === "kanban" ? (
         <div className="pipeline-board">
           {PIPELINE_STAGES.map((stage) => (
             <section
@@ -3905,11 +3926,96 @@ export default function PipelineModule({
                   );
                 })}
 
-                {!itemsByStage[stage.value]?.length ? <p className="pipeline-empty">Sem oportunidades</p> : null}
+                {!filteredItemsByStage[stage.value]?.length ? <p className="pipeline-empty">Sem oportunidades</p> : null}
               </div>
             </section>
           ))}
         </div>
+        ) : (
+        <div className="pipeline-list-view">
+          <table className="data-table" style={{ width: "100%" }}>
+            <thead>
+              <tr>
+                <th>Etapa</th>
+                <th>Oportunidade</th>
+                <th>Empresa</th>
+                <th>Responsável</th>
+                <th>Cadastro</th>
+                <th>Previsão</th>
+                <th>Valor</th>
+                <th>Proposta</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {PIPELINE_STAGES.flatMap((stage) =>
+                (filteredItemsByStage[stage.value] || []).map((item) => {
+                  const linkedProposal = proposalsByOpportunity[item.id];
+                  return (
+                    <tr key={item.id}>
+                      <td>
+                        <span className={`pipeline-stage-badge pipeline-stage-${stage.value}`}>{stage.label}</span>
+                      </td>
+                      <td><strong>{item.title}</strong></td>
+                      <td>
+                        {item.company_id ? (
+                          <button
+                            type="button"
+                            className="pipeline-card-company-link"
+                            onClick={(event) => handleOpenCustomerHistory(event, item)}
+                          >
+                            {item.companies?.trade_name || "Cliente"}
+                          </button>
+                        ) : "-"}
+                      </td>
+                      <td>{ownerNameById[item.owner_user_id] || "-"}</td>
+                      <td>{formatDateOnlyBr(item.created_at)}</td>
+                      <td>{formatDateOnlyBr(item.expected_close_date)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{brl(item.estimated_value)}</td>
+                      <td>
+                        {linkedProposal
+                          ? `${linkedProposal.order_number} (${brl(linkedProposal.total_amount)})`
+                          : "-"}
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", gap: "0.25rem", flexWrap: "wrap" }}>
+                          <button type="button" className="btn-ghost btn-table-action" onClick={(event) => handleOpenProposalModel(event, item)}>
+                            Modelo
+                          </button>
+                          {autoProposalMode ? (
+                            <button
+                              type="button"
+                              className="btn-ghost btn-table-action"
+                              disabled={Boolean(linkedProposal) || creatingProposalId === item.id}
+                              onClick={(event) => handleCreateAutomatedProposal(event, item)}
+                            >
+                              {linkedProposal ? "Proposta criada" : creatingProposalId === item.id ? "Gerando..." : "Gerar proposta"}
+                            </button>
+                          ) : null}
+                          <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditOpportunity(item)}>
+                            {editingOpportunityId === item.id ? "Editando" : "Editar"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-table-action"
+                            disabled={deletingOpportunityId === item.id}
+                            onClick={(event) => handleDeleteOpportunity(event, item)}
+                          >
+                            {deletingOpportunityId === item.id ? "Excluindo..." : "Excluir"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+              {stageSummary.funnelTotalCount === 0 ? (
+                <tr><td colSpan="9" style={{ textAlign: "center" }}>Sem oportunidades</td></tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+        )}
       </article>
 
       {proposalEditor ? (
