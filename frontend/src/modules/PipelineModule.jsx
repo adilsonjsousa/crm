@@ -1910,6 +1910,8 @@ export default function PipelineModule({
       financingTerms: proposalEditor.financing_terms || "",
       closingText: proposalEditor.closing_text || "",
       ownerName: ownerUser?.full_name || "",
+      ownerPhone: ownerUser?.whatsapp || "",
+      ownerEmail: ownerUser?.email || "",
       renderedText: renderedProposalText,
       logoDataUrl: proposalLogoDataUrl,
       items: proposalItemsForDocument

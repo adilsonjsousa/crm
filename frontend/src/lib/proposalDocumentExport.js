@@ -100,13 +100,6 @@ function decodeBase64(base64) {
   return bytes;
 }
 
-function inferPdfImageFormat(mimeType) {
-  const normalized = String(mimeType || "").toLowerCase();
-  if (normalized.includes("png")) return "PNG";
-  if (normalized.includes("jpeg") || normalized.includes("jpg")) return "JPEG";
-  return "";
-}
-
 function docxTextCell(value, { bold = false, align = AlignmentType.LEFT, shade = "" } = {}) {
   return new TableCell({
     verticalAlign: "center",
@@ -198,21 +191,21 @@ function createMetaTable({ issueDate, validityDays, proposalNumber }) {
       bottom: { style: BorderStyle.SINGLE, color: "D8DBEB", size: 1 },
       left: { style: BorderStyle.SINGLE, color: "D8DBEB", size: 1 },
       right: { style: BorderStyle.SINGLE, color: "D8DBEB", size: 1 },
-      insideHorizontal: { style: BorderStyle.SINGLE, color: "D8DBEB", size: 1 },
-      insideVertical: { style: BorderStyle.SINGLE, color: "D8DBEB", size: 1 }
+      insideHorizontal: { style: BorderStyle.SINGLE, color: "E4E7F2", size: 1 },
+      insideVertical: { style: BorderStyle.SINGLE, color: "E4E7F2", size: 1 }
     },
     rows: [
       new TableRow({
         children: [
-          docxTextCell("Data de emissao", { bold: true, shade: "F7F4FF" }),
-          docxTextCell("Validade", { bold: true, shade: "F7F4FF" }),
-          docxTextCell("Documento", { bold: true, shade: "F7F4FF" })
+          docxTextCell("DATA DE EMISSAO", { bold: true, shade: "F7F4FF" }),
+          docxTextCell("VALIDADE", { bold: true, shade: "F7F4FF" }),
+          docxTextCell("DOCUMENTO", { bold: true, shade: "F7F4FF" })
         ]
       }),
       new TableRow({
         children: [
           docxTextCell(issueDate),
-          docxTextCell(`${safeText(validityDays)} dias`),
+          docxTextCell(`${validityDays} dias`),
           docxTextCell(proposalNumber)
         ]
       })
@@ -312,26 +305,29 @@ export async function buildProposalDocxBlob(payload = {}) {
     new Paragraph({ text: "Texto da proposta", heading: HeadingLevel.HEADING_3 })
   );
 
-  const textLines = renderedText.split("\n");
-  if (!textLines.length) {
-    children.push(new Paragraph({ text: "-" }));
-  } else {
-    for (const line of textLines) {
-      children.push(new Paragraph({ text: line || " " }));
-    }
+  for (const paragraph of renderedText.split("\n")) {
+    children.push(
+      new Paragraph({
+        spacing: { after: 80 },
+        children: [new TextRun({ text: paragraph })]
+      })
+    );
   }
+
+  children.push(
+    new Paragraph({ text: "" }),
+    new Paragraph({ children: [new TextRun({ text: "Atenciosamente,", italics: true })] }),
+    new Paragraph({
+      children: [new TextRun({ text: "Equipe ArtPrinter", bold: true })]
+    })
+  );
 
   const document = new Document({
     sections: [
       {
         properties: {
           page: {
-            margin: {
-              top: 1000,
-              right: 900,
-              bottom: 1000,
-              left: 900
-            }
+            margin: { top: 720, right: 720, bottom: 720, left: 720 }
           }
         },
         children
@@ -346,6 +342,15 @@ function formatCnpjMask(value) {
   const digits = String(value || "").replace(/\D/g, "");
   if (digits.length !== 14) return value || "";
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+}
+
+function formatDateBr(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "-";
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return `${match[3]}/${match[2]}/${match[1]}`;
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) return raw;
+  return raw;
 }
 
 function writePdfTextWithPaging(doc, lines, { margin = 42, startY = 42, lineHeight = 13, bottomMargin = 44 } = {}) {
@@ -373,6 +378,29 @@ function ensurePdfSpace(doc, cursorY, needed, margin) {
   return cursorY;
 }
 
+function inferPdfImageFormat(mimeType) {
+  const normalized = String(mimeType || "").toLowerCase();
+  if (normalized.includes("png")) return "PNG";
+  if (normalized.includes("jpeg") || normalized.includes("jpg")) return "JPEG";
+  return "";
+}
+
+function cleanRenderedTextForPdf(text) {
+  let cleaned = String(text || "");
+  cleaned = cleaned.replace(/^PROPOSTA\s+COMERCIAL\s*/i, "");
+  cleaned = cleaned.replace(/\nPROPOSTA\s+COMERCIAL\s*/i, "\n");
+  const lines = cleaned.split("\n");
+  const endIdx = lines.length - 1;
+  for (let i = endIdx; i >= Math.max(0, endIdx - 5); i--) {
+    const trimmed = lines[i].trim().toLowerCase();
+    if (trimmed === "atenciosamente," || trimmed === "equipe artprinter" || trimmed === "equipe comercial artprinter" || trimmed === "equipe comercial") {
+      lines[i] = "";
+    }
+  }
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  return lines.join("\n").trim();
+}
+
 function drawPdfHeaderBar(doc, payload, margin) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const barHeight = 36;
@@ -384,19 +412,22 @@ function drawPdfHeaderBar(doc, payload, margin) {
   doc.setLineWidth(2);
   doc.line(0, barY + barHeight, pageWidth, barY + barHeight);
 
+  const ownerPhone = safeText(payload.ownerPhone, "(47) 98431-0200").trim();
+  const ownerEmail = safeText(payload.ownerEmail, "comercial@artprinter.com.br").trim();
+
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
   doc.setTextColor(80, 80, 100);
   const contactY = barY + 22;
-  doc.text("(47) 98431-0200", margin + 14, contactY);
-  doc.text("www.artprinter.com.br", margin + 150, contactY);
-  doc.text("adilson@helyo.com.br", margin + 310, contactY);
+  doc.text(ownerPhone, margin + 6, contactY);
 
-  doc.setFontSize(7);
-  doc.setTextColor(124, 58, 237);
-  doc.text("☎", margin + 4, contactY);
-  doc.text("⊕", margin + 142, contactY);
-  doc.text("✉", margin + 302, contactY);
+  const phoneWidth = doc.getTextWidth(ownerPhone);
+  const webX = margin + 6 + phoneWidth + 30;
+  doc.text("www.artprinter.com.br", webX, contactY);
+
+  const webWidth = doc.getTextWidth("www.artprinter.com.br");
+  const emailX = webX + webWidth + 30;
+  doc.text(ownerEmail, emailX, contactY);
 
   const imageMeta = parseImageDataUrl(payload.logoDataUrl);
   if (imageMeta) {
@@ -430,7 +461,8 @@ export function buildProposalPdfBlob(payload = {}) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(107, 114, 128);
-  const subtitle = `Nº ${safeText(payload.proposalNumber, "-")}  ·  ${safeText(payload.issueDate, "-")}  ·  Validade: ${safeText(payload.validityDays, "-")} dias`;
+  const issueDateFormatted = formatDateBr(payload.issueDate);
+  const subtitle = `Nº ${safeText(payload.proposalNumber, "-")}  ·  ${issueDateFormatted}  ·  Validade: ${safeText(payload.validityDays, "-")} dias`;
   doc.text(subtitle, margin, y);
   y += 22;
 
@@ -459,19 +491,26 @@ export function buildProposalPdfBlob(payload = {}) {
   }
 
   y += 6;
-  const proposalText = normalizeMultilineText(payload.renderedText || "");
+  const proposalText = cleanRenderedTextForPdf(normalizeMultilineText(payload.renderedText || ""));
   if (proposalText.trim()) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.setTextColor(31, 41, 55);
-    const wrapped = doc.splitTextToSize(proposalText, contentWidth);
-    y = writePdfTextWithPaging(doc, wrapped, {
-      margin,
-      startY: y,
-      lineHeight: 13,
-      bottomMargin: 44
-    });
-    y += 10;
+    const companyNameUpper = safeText(payload.companyName, "").toUpperCase().trim();
+    let filteredText = proposalText;
+    if (companyNameUpper) {
+      filteredText = filteredText.replace(new RegExp("^" + companyNameUpper.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\n?", "i"), "");
+    }
+    if (filteredText.trim()) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(31, 41, 55);
+      const wrapped = doc.splitTextToSize(filteredText.trim(), contentWidth);
+      y = writePdfTextWithPaging(doc, wrapped, {
+        margin,
+        startY: y,
+        lineHeight: 13,
+        bottomMargin: 44
+      });
+      y += 10;
+    }
   }
 
   y = ensurePdfSpace(doc, y, 60, margin);
@@ -484,9 +523,9 @@ export function buildProposalPdfBlob(payload = {}) {
     margin: { left: margin, right: margin },
     styles: { fontSize: 9, cellPadding: 6, textColor: [31, 41, 55] },
     headStyles: { fillColor: [243, 240, 255], textColor: [91, 33, 182], fontStyle: "bold" },
-    footStyles: { fillColor: [243, 240, 255], textColor: [31, 41, 55], fontStyle: "bold" },
+    footStyles: { fillColor: [40, 40, 40], textColor: [255, 255, 255], fontStyle: "bold" },
     columnStyles: {
-      0: { cellWidth: contentWidth * 0.28 },
+      0: { cellWidth: contentWidth * 0.28, fontStyle: "bold" },
       1: { cellWidth: contentWidth * 0.50 },
       2: { halign: "right", cellWidth: contentWidth * 0.22 }
     },
@@ -495,11 +534,14 @@ export function buildProposalPdfBlob(payload = {}) {
       const nameParts = String(item.description || "").split(" - ");
       const productName = nameParts.length > 1 ? nameParts.slice(1).join(" - ").trim() : item.description;
       const descParts = [];
+      const detailText = safeText(item.detail, "").trim();
+      if (detailText) {
+        descParts.push(detailText.replace(/\\n/g, "\n"));
+      }
       if (item.quantity > 1) descParts.push(`Qtd: ${item.quantityLabel}`);
       if (item.discount > 0) descParts.push(`Desconto: ${item.discountLabel}`);
-      const detailText = safeText(item.detail, "").trim();
-      if (detailText) descParts.unshift(detailText);
-      return [productName, descParts.join("\n") || "-", item.subtotalLabel];
+      const descCol = descParts.join("\n") || (productName !== item.description ? item.description : "");
+      return [productName, descCol, item.subtotalLabel];
     }),
     foot: [["", "TOTAL DO INVESTIMENTO:", formatCurrencyBr(totalValue)]],
     theme: "grid"
@@ -542,9 +584,15 @@ export function buildProposalPdfBlob(payload = {}) {
   const included = safeText(payload.includedOffer, "").trim();
   const excluded = safeText(payload.excludedOffer, "").trim();
 
-  if (included) included.split("\n").forEach((line) => { if (line.trim()) observationBullets.push(line.trim()); });
-  if (warranty) observationBullets.push(warranty);
-  if (excluded) excluded.split("\n").forEach((line) => { if (line.trim()) observationBullets.push(line.trim()); });
+  if (included) {
+    included.replace(/\\n/g, "\n").split("\n").forEach((line) => { if (line.trim()) observationBullets.push(line.trim()); });
+  }
+  if (warranty) {
+    warranty.replace(/\\n/g, "\n").split("\n").forEach((line) => { if (line.trim()) observationBullets.push(line.trim()); });
+  }
+  if (excluded) {
+    excluded.replace(/\\n/g, "\n").split("\n").forEach((line) => { if (line.trim()) observationBullets.push(line.trim()); });
+  }
 
   if (observationBullets.length) {
     doc.setFont("helvetica", "bold");
@@ -578,8 +626,8 @@ export function buildProposalPdfBlob(payload = {}) {
     y += 10;
 
     const closingBody = [];
-    if (closingText) closingBody.push(["Prazo de Pagamento", closingText]);
-    if (financingTerms) closingBody.push(["Financiamento", financingTerms]);
+    if (closingText) closingBody.push(["Prazo de Pagamento", closingText.replace(/\\n/g, "\n")]);
+    if (financingTerms) closingBody.push(["Financiamento", financingTerms.replace(/\\n/g, "\n")]);
 
     autoTable(doc, {
       startY: y,

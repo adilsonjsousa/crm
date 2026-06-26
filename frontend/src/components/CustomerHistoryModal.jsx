@@ -1190,6 +1190,8 @@ export default function CustomerHistoryModal({
       closingText: ed.closing_text || "",
       financingTerms: ed.financing_terms || "",
       ownerName: ed.owner_name || ownerUser?.full_name || "",
+      ownerPhone: ownerUser?.whatsapp || "",
+      ownerEmail: ownerUser?.email || "",
       renderedText: snapshot?.rendered_text || "",
       logoDataUrl: null,
       items: snapshot?.commercial_items || lineItems
