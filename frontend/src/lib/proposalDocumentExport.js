@@ -403,14 +403,8 @@ function cleanRenderedTextForPdf(text) {
 
 function drawPdfHeaderBar(doc, payload, margin) {
   const pageWidth = doc.internal.pageSize.getWidth();
-  const barHeight = 36;
-  const barY = 20;
-
-  doc.setFillColor(248, 245, 255);
-  doc.rect(0, barY, pageWidth, barHeight, "F");
-  doc.setDrawColor(124, 58, 237);
-  doc.setLineWidth(2);
-  doc.line(0, barY + barHeight, pageWidth, barY + barHeight);
+  const barY = 18;
+  const contactY = barY + 14;
 
   const ownerPhone = safeText(payload.ownerPhone, "(47) 98431-0200").trim();
   const ownerEmail = safeText(payload.ownerEmail, "comercial@artprinter.com.br").trim();
@@ -418,30 +412,61 @@ function drawPdfHeaderBar(doc, payload, margin) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
   doc.setTextColor(80, 80, 100);
-  const contactY = barY + 22;
-  doc.text(ownerPhone, margin + 6, contactY);
 
-  const phoneWidth = doc.getTextWidth(ownerPhone);
-  const webX = margin + 6 + phoneWidth + 30;
-  doc.text("www.artprinter.com.br", webX, contactY);
+  const iconRadius = 5;
+  const phoneX = margin + 4;
+  doc.setFillColor(37, 211, 102);
+  doc.circle(phoneX, contactY - 3, iconRadius, "F");
+  doc.setFontSize(6);
+  doc.setTextColor(255, 255, 255);
+  doc.text("W", phoneX - 2.5, contactY - 1);
 
-  const webWidth = doc.getTextWidth("www.artprinter.com.br");
-  const emailX = webX + webWidth + 30;
-  doc.text(ownerEmail, emailX, contactY);
+  doc.setFontSize(8.5);
+  doc.setTextColor(80, 80, 100);
+  doc.text(ownerPhone, phoneX + iconRadius + 4, contactY);
+
+  const phoneTextW = doc.getTextWidth(ownerPhone);
+  const webIconX = phoneX + iconRadius + 4 + phoneTextW + 30;
+  doc.setFillColor(124, 58, 237);
+  doc.circle(webIconX, contactY - 3, iconRadius, "F");
+  doc.setFontSize(5);
+  doc.setTextColor(255, 255, 255);
+  doc.text("+", webIconX - 1.5, contactY - 1.5);
+
+  doc.setFontSize(8.5);
+  doc.setTextColor(80, 80, 100);
+  doc.text("www.artprinter.com.br", webIconX + iconRadius + 4, contactY);
+
+  const webTextW = doc.getTextWidth("www.artprinter.com.br");
+  const emailIconX = webIconX + iconRadius + 4 + webTextW + 30;
+  doc.setFillColor(124, 58, 237);
+  doc.circle(emailIconX, contactY - 3, iconRadius, "F");
+  doc.setFontSize(5);
+  doc.setTextColor(255, 255, 255);
+  doc.text("@", emailIconX - 2, contactY - 1.5);
+
+  doc.setFontSize(8.5);
+  doc.setTextColor(80, 80, 100);
+  doc.text(ownerEmail, emailIconX + iconRadius + 4, contactY);
 
   const imageMeta = parseImageDataUrl(payload.logoDataUrl);
   if (imageMeta) {
     const format = inferPdfImageFormat(imageMeta.mimeType);
     if (format) {
       try {
-        doc.addImage(payload.logoDataUrl, format, pageWidth - margin - 120, barY + 2, 115, 32);
+        doc.addImage(payload.logoDataUrl, format, pageWidth - margin - 110, barY - 6, 105, 30);
       } catch {
         // ignore
       }
     }
   }
 
-  return barY + barHeight + 24;
+  const lineY = contactY + 14;
+  doc.setDrawColor(200, 190, 230);
+  doc.setLineWidth(0.5);
+  doc.line(margin, lineY, pageWidth - margin, lineY);
+
+  return lineY + 16;
 }
 
 export function buildProposalPdfBlob(payload = {}) {
@@ -518,18 +543,38 @@ export function buildProposalPdfBlob(payload = {}) {
   const normalizedItems = normalizeExportItems(payload.items || []);
   const totalValue = getItemsTotal(payload.items || []);
 
+  const col0W = contentWidth * 0.28;
+  const col1W = contentWidth * 0.50;
+  const col2W = contentWidth * 0.22;
+  const headerGap = 6;
+  const headerH = 28;
+  const headerR = 6;
+
+  doc.setFillColor(243, 240, 255);
+  doc.roundedRect(margin, y, col0W - headerGap, headerH, headerR, headerR, "F");
+  doc.roundedRect(margin + col0W, y, col1W - headerGap, headerH, headerR, headerR, "F");
+  doc.roundedRect(margin + col0W + col1W, y, col2W, headerH, headerR, headerR, "F");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(91, 33, 182);
+  const headerTextY = y + 18;
+  doc.text("PRODUTO", margin + 10, headerTextY);
+  doc.text("DESCRIÇÃO", margin + col0W + 10, headerTextY);
+  doc.text("INVESTIMENTO", margin + col0W + col1W + 10, headerTextY);
+
+  y += headerH + 4;
+
   autoTable(doc, {
     startY: y,
     margin: { left: margin, right: margin },
     styles: { fontSize: 9, cellPadding: 6, textColor: [31, 41, 55] },
-    headStyles: { fillColor: [243, 240, 255], textColor: [91, 33, 182], fontStyle: "bold" },
-    footStyles: { fillColor: [40, 40, 40], textColor: [255, 255, 255], fontStyle: "bold" },
+    showHead: false,
     columnStyles: {
-      0: { cellWidth: contentWidth * 0.28, fontStyle: "bold" },
-      1: { cellWidth: contentWidth * 0.50 },
-      2: { halign: "right", cellWidth: contentWidth * 0.22 }
+      0: { cellWidth: col0W, fontStyle: "bold" },
+      1: { cellWidth: col1W },
+      2: { halign: "right", cellWidth: col2W }
     },
-    head: [["PRODUTO", "DESCRIÇÃO", "INVESTIMENTO"]],
     body: normalizedItems.map((item) => {
       const nameParts = String(item.description || "").split(" - ");
       const productName = nameParts.length > 1 ? nameParts.slice(1).join(" - ").trim() : item.description;
@@ -543,11 +588,24 @@ export function buildProposalPdfBlob(payload = {}) {
       const descCol = descParts.join("\n") || (productName !== item.description ? item.description : "");
       return [productName, descCol, item.subtotalLabel];
     }),
-    foot: [["", "TOTAL DO INVESTIMENTO:", formatCurrencyBr(totalValue)]],
     theme: "grid"
   });
 
-  y = (doc.lastAutoTable?.finalY || y) + 22;
+  y = (doc.lastAutoTable?.finalY || y) + 10;
+
+  const totalText = `TOTAL DO INVESTIMENTO:   ${formatCurrencyBr(totalValue)}`;
+  const totalPillW = contentWidth * 0.58;
+  const totalPillH = 30;
+  const totalPillX = margin + contentWidth - totalPillW;
+  y = ensurePdfSpace(doc, y, totalPillH + 10, margin);
+  doc.setFillColor(35, 35, 35);
+  doc.roundedRect(totalPillX, y, totalPillW, totalPillH, totalPillH / 2, totalPillH / 2, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(255, 255, 255);
+  doc.text(totalText, totalPillX + totalPillW / 2, y + totalPillH / 2 + 3.5, { align: "center" });
+
+  y += totalPillH + 22;
   y = ensurePdfSpace(doc, y, 120, margin);
 
   doc.setFont("helvetica", "bold");
