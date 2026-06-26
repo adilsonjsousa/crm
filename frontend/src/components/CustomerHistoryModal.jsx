@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createCompanyInternalMessage,
   createCompanyAsset,
@@ -428,6 +428,7 @@ export default function CustomerHistoryModal({
     setInternalMessageFeedback({ type: "", message: "" });
     setPreviewOppId("");
     setProposalVersionsByOpp({});
+    versionsLoadedForRef.current = "";
     setProposalVersionsLoading(false);
     setOmiePurchasesLoading(false);
     setOmiePurchasesError("");
@@ -580,10 +581,12 @@ export default function CustomerHistoryModal({
     };
   }, [open, selectedTab, companyId, companyProfile?.cnpj, omieReceivablesFetched]);
 
+  const versionsLoadedForRef = useRef("");
   useEffect(() => {
     if (!open || selectedTab !== "opportunities" || !opportunities.length) return;
-    const alreadyLoaded = Object.keys(proposalVersionsByOpp).length > 0;
-    if (alreadyLoaded) return;
+    const loadKey = opportunities.map((o) => o.id).sort().join(",");
+    if (versionsLoadedForRef.current === loadKey) return;
+    versionsLoadedForRef.current = loadKey;
 
     let active = true;
     setProposalVersionsLoading(true);
@@ -1163,28 +1166,49 @@ export default function CustomerHistoryModal({
 
   async function handleGeneratePdf(opp) {
     const snapshot = getLatestSnapshot(opp.id);
-    if (!snapshot) return;
+    const ed = snapshot?.editor || {};
+    const ownerUser = (appUsers || []).find((u) => u.user_id === opp.owner_user_id);
+    const lineItems = Array.isArray(opp.line_items) ? opp.line_items.map((li, idx) => ({
+      item_description: li.product_name || li.title_product || li.name || `Item ${idx + 1}`,
+      quantity: li.quantity || 1,
+      unit_price: li.estimated_value || li.unit_price || 0,
+      discount_percent: li.discount_percent || 0
+    })) : [];
     const payload = {
-      proposalNumber: snapshot.editor?.proposal_number || opp.title || "",
-      companyName: snapshot.company_name || companyName || "",
-      issueDate: snapshot.editor?.issue_date || "",
-      validityDays: snapshot.editor?.validity_days || "",
-      freightTerms: snapshot.editor?.freight_terms || "",
-      paymentTerms: snapshot.editor?.payment_terms || "",
-      deliveryTerms: snapshot.editor?.delivery_terms || "",
-      renderedText: snapshot.rendered_text || "",
+      proposalNumber: ed.proposal_number || opp.title || "",
+      companyName: snapshot?.company_name || companyName || "",
+      companyCnpj: companyProfile?.cnpj || "",
+      contactName: ed.client_name || "",
+      issueDate: ed.issue_date || opp.created_at?.slice(0, 10) || "",
+      validityDays: ed.validity_days || "7",
+      freightTerms: ed.freight_terms || "FOB Blumenau / SC (frete por conta do destinatario).",
+      paymentTerms: ed.payment_terms || "À vista",
+      deliveryTerms: ed.delivery_terms || "Entrega em ate 15 dias uteis apos aprovacao.",
+      warrantyTerms: ed.warranty_terms || "Garantia de 12 meses contra defeitos de fabricacao.",
+      includedOffer: ed.included_offer || "",
+      excludedOffer: ed.excluded_offer || "",
+      closingText: ed.closing_text || "",
+      financingTerms: ed.financing_terms || "",
+      ownerName: ed.owner_name || ownerUser?.full_name || "",
+      renderedText: snapshot?.rendered_text || "",
       logoDataUrl: null,
-      items: snapshot.commercial_items || []
+      items: snapshot?.commercial_items || lineItems
     };
     try {
       const { buildProposalPdfBlob } = await import("../lib/proposalDocumentExport");
       const blob = buildProposalPdfBlob(payload);
-      const fileName = `${(opp.title || "proposta").replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`;
+      if (!blob) {
+        setError("Falha ao gerar o PDF.");
+        return;
+      }
+      const fileName = `${(ed.proposal_number || opp.title || "proposta").replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`;
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
       link.download = fileName;
+      document.body.appendChild(link);
       link.click();
+      link.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
       setError(err.message || "Falha ao gerar PDF.");
@@ -1616,8 +1640,7 @@ export default function CustomerHistoryModal({
                           <button
                             type="button"
                             className="btn-ghost btn-table-action"
-                            disabled={!hasSnapshot}
-                            title={hasSnapshot ? "Gerar e baixar PDF" : "Nenhuma versão salva"}
+                            title="Gerar e baixar PDF"
                             onClick={() => handleGeneratePdf(item)}
                           >
                             PDF
