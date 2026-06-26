@@ -4362,7 +4362,8 @@ export default function PipelineModule({
                     {(proposalEditor.commercial_items || []).map((entry, index) => {
                       const subtotal = computeCommercialItemSubtotal(entry);
                       return (
-                        <div className="proposal-commercial-item-row" key={`${entry.item_code || "item"}-${index}`}>
+                        <div key={`${entry.item_code || "item"}-${index}`}>
+                        <div className="proposal-commercial-item-row">
                           <select
                             value={entry.item_type || "equipment"}
                             onChange={(event) => handleProposalCommercialItemChange(index, "item_type", event.target.value)}
@@ -4420,6 +4421,17 @@ export default function PipelineModule({
                           >
                             Remover
                           </button>
+                        </div>
+                        <div className="proposal-commercial-item-detail-row">
+                          <textarea
+                            placeholder="Descrição detalhada do item (aparece no PDF)"
+                            value={entry.item_detail || ""}
+                            onChange={(event) =>
+                              handleProposalCommercialItemChange(index, "item_detail", event.target.value)
+                            }
+                            rows={2}
+                          />
+                        </div>
                         </div>
                       );
                     })}

@@ -61,6 +61,7 @@ function normalizeExportItems(items = []) {
     return {
       index: index + 1,
       description: safeText(entry?.item_description || entry?.title_product || entry?.product || "Item"),
+      detail: String(entry?.item_detail || entry?.detail || ""),
       quantity,
       unitPrice,
       discount,
@@ -493,8 +494,12 @@ export function buildProposalPdfBlob(payload = {}) {
     body: normalizedItems.map((item) => {
       const nameParts = String(item.description || "").split(" - ");
       const productName = nameParts.length > 1 ? nameParts.slice(1).join(" - ").trim() : item.description;
-      const descText = item.quantity > 1 ? `Qtd: ${item.quantityLabel}` : "";
-      return [productName, descText, item.subtotalLabel];
+      const descParts = [];
+      if (item.quantity > 1) descParts.push(`Qtd: ${item.quantityLabel}`);
+      if (item.discount > 0) descParts.push(`Desconto: ${item.discountLabel}`);
+      const detailText = safeText(item.detail, "").trim();
+      if (detailText) descParts.unshift(detailText);
+      return [productName, descParts.join("\n") || "-", item.subtotalLabel];
     }),
     foot: [["", "TOTAL DO INVESTIMENTO:", formatCurrencyBr(totalValue)]],
     theme: "grid"
