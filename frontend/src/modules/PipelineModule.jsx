@@ -1584,6 +1584,7 @@ export default function PipelineModule({
 }) {
   const handledPrefillRequestRef = useRef(0);
   const importFileInputRef = useRef(null);
+  const proposalEditorRef = useRef(null);
   const pipelineDefaultsRef = useRef(readPipelineFormDefaults());
   const [pipelineUsers, setPipelineUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -2939,12 +2940,20 @@ export default function PipelineModule({
       } else {
         setProposalEditor(baseDraft);
       }
+      setTimeout(() => {
+        proposalEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 150);
     } catch (err) {
       setError(err.message);
     } finally {
       setProposalLoadingContacts(false);
       setProposalVersionsLoading(false);
     }
+  }
+
+  async function handleOpenClosingConditions(event, item) {
+    await handleOpenProposalModel(event, item);
+    setTimeout(() => setClosingModal(true), 300);
   }
 
   function handleOpenCustomerHistory(event, item) {
@@ -3956,6 +3965,14 @@ export default function PipelineModule({
                         >
                           Modelo
                         </button>
+                        <button
+                          type="button"
+                          className="btn-ghost btn-table-action"
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onClick={(event) => handleOpenClosingConditions(event, item)}
+                        >
+                          Condições
+                        </button>
                         {autoProposalMode ? (
                           <button
                             type="button"
@@ -4052,6 +4069,9 @@ export default function PipelineModule({
                           <button type="button" className="btn-ghost btn-table-action" onClick={(event) => handleOpenProposalModel(event, item)}>
                             Modelo
                           </button>
+                          <button type="button" className="btn-ghost btn-table-action" onClick={(event) => handleOpenClosingConditions(event, item)}>
+                            Condições
+                          </button>
                           {autoProposalMode ? (
                             <button
                               type="button"
@@ -4089,7 +4109,7 @@ export default function PipelineModule({
       </article>
 
       {proposalEditor ? (
-        <article className="panel top-gap">
+        <article className="panel top-gap" ref={proposalEditorRef}>
           <div className="proposal-model-header">
             <div>
               <h3>Modelo de proposta</h3>
@@ -4098,6 +4118,13 @@ export default function PipelineModule({
               </p>
             </div>
             <div className="proposal-header-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => setClosingModal(true)}
+              >
+                Condições de Fechamento
+              </button>
               <button
                 type="button"
                 className="btn-primary"
