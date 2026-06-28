@@ -1566,6 +1566,15 @@ function createProposalDraft({
     installment_count: "",
     installment_value: "",
     contract_value: "",
+    closing_payment_terms: "",
+    all_in_enabled: false,
+    all_in_fixed: "",
+    all_in_cor: "",
+    all_in_mono: "",
+    contract_data_enabled: false,
+    contract_resp_financeiro: "",
+    contract_resp_operador: "",
+    contract_email_danfe: "",
     notes: "",
     contact_id: preferredContact?.id || "",
     client_name: preferredContact?.full_name || opportunity?.companies?.trade_name || "Cliente",
@@ -1633,6 +1642,9 @@ export default function PipelineModule({
   const [pipelineViewMode, setPipelineViewMode] = useState("kanban");
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
   const [closingModal, setClosingModal] = useState(false);
+  const [showOpportunityModal, setShowOpportunityModal] = useState(false);
+  const [generatingDirectPdfId, setGeneratingDirectPdfId] = useState("");
+  const [opportunityNotes, setOpportunityNotes] = useState("");
 
   const viewerUser = useMemo(
     () => pipelineUsers.find((item) => item.user_id === viewerUserId) || null,
@@ -1909,6 +1921,13 @@ export default function PipelineModule({
       excludedOffer: proposalEditor.excluded_offer || "",
       financingTerms: proposalEditor.financing_terms || "",
       closingText: proposalEditor.closing_text || "",
+      closingPaymentTerms: proposalEditor.closing_payment_terms || "",
+      allInFixed: proposalEditor.all_in_enabled ? (proposalEditor.all_in_fixed || "") : "",
+      allInCor: proposalEditor.all_in_enabled ? (proposalEditor.all_in_cor || "") : "",
+      allInMono: proposalEditor.all_in_enabled ? (proposalEditor.all_in_mono || "") : "",
+      contractRespFinanceiro: proposalEditor.contract_data_enabled ? (proposalEditor.contract_resp_financeiro || "") : "",
+      contractRespOperador: proposalEditor.contract_data_enabled ? (proposalEditor.contract_resp_operador || "") : "",
+      contractEmailDanfe: proposalEditor.contract_data_enabled ? (proposalEditor.contract_email_danfe || "") : "",
       ownerName: ownerUser?.full_name || "",
       ownerPhone: ownerUser?.whatsapp || "",
       ownerEmail: ownerUser?.email || "",
@@ -2312,6 +2331,10 @@ export default function PipelineModule({
       }
       setCompanySuggestionsOpen(false);
       await load();
+      if (!createAnotherAfterSave) {
+        setShowOpportunityModal(false);
+        setOpportunityNotes("");
+      }
       if (postSaveSuccessMessage) {
         setSuccess(postSaveSuccessMessage);
       }
@@ -2434,6 +2457,7 @@ export default function PipelineModule({
     });
     setCompanySearchTerm(companyLabel);
     setCompanySuggestionsOpen(false);
+    setShowOpportunityModal(true);
   }
 
   function cancelEditOpportunity() {
@@ -2919,6 +2943,10 @@ export default function PipelineModule({
           "included_offer", "excluded_offer", "financing_terms", "closing_text",
           "negotiated_value", "installment_entry", "installment_count",
           "installment_value", "contract_value",
+          "closing_payment_terms", "all_in_enabled",
+          "all_in_fixed", "all_in_cor", "all_in_mono",
+          "contract_data_enabled", "contract_resp_financeiro",
+          "contract_resp_operador", "contract_email_danfe",
           "notes", "template_body",
           "selected_template_id", "selected_template_name",
           "selected_product_profile_id", "selected_product_profile_name",
@@ -2956,6 +2984,89 @@ export default function PipelineModule({
   async function handleOpenClosingConditions(event, item) {
     await handleOpenProposalModel(event, item);
     setTimeout(() => setClosingModal(true), 300);
+  }
+
+  async function handleGenerateDirectPdf(event, item) {
+    event.stopPropagation();
+    if (!item?.id) return;
+
+    setError("");
+    setSuccess("");
+    setGeneratingDirectPdfId(item.id);
+
+    try {
+      const [contacts, templates, profiles, terms] = await Promise.all([
+        item.company_id ? listCompanyContacts(item.company_id) : Promise.resolve([]),
+        listProposalTemplates({ includeInactive: false }),
+        listProposalProductProfiles({ includeInactive: false }),
+        listProposalCommercialTerms({ includeInactive: false })
+      ]);
+      const linkedOrder = proposalsByOpportunity[item.id] || null;
+      const draft = createProposalDraft({
+        opportunity: item,
+        linkedOrder,
+        contacts,
+        templates,
+        productProfiles: profiles,
+        commercialTerms: terms
+      });
+      const parsedItems = parseOpportunityLineItems(item);
+      const fallbackItem = normalizeOpportunityItem({
+        opportunity_type: draft.proposal_type,
+        title_subcategory: draft.category,
+        title_product: draft.product,
+        estimated_value: item.estimated_value
+      });
+      const docItems = ensureProposalItems(parsedItems, fallbackItem);
+      const commercialItems = draft.commercial_items?.length ? draft.commercial_items : docItems;
+      const companyCnpj = item.companies?.cnpj || "";
+      const ownerUser = pipelineUsers.find((u) => u.user_id === (item.owner_user_id || viewerUserId));
+      const companyName = item.companies?.trade_name || draft.client_name || "Cliente";
+
+      const pdfPayload = {
+        proposalNumber: draft.proposal_number,
+        companyName,
+        companyCnpj,
+        contactName: draft.client_name || "",
+        issueDate: formatDateBr(draft.issue_date),
+        validityDays: draft.validity_days,
+        freightTerms: draft.freight_terms,
+        paymentTerms: draft.payment_terms,
+        deliveryTerms: draft.delivery_terms,
+        warrantyTerms: draft.warranty_terms || "",
+        includedOffer: draft.included_offer || "",
+        excludedOffer: draft.excluded_offer || "",
+        financingTerms: draft.financing_terms || "",
+        closingText: draft.closing_text || "",
+        closingPaymentTerms: draft.closing_payment_terms || "",
+        allInFixed: draft.all_in_enabled ? (draft.all_in_fixed || "") : "",
+        allInCor: draft.all_in_enabled ? (draft.all_in_cor || "") : "",
+        allInMono: draft.all_in_enabled ? (draft.all_in_mono || "") : "",
+        contractRespFinanceiro: draft.contract_data_enabled ? (draft.contract_resp_financeiro || "") : "",
+        contractRespOperador: draft.contract_data_enabled ? (draft.contract_resp_operador || "") : "",
+        contractEmailDanfe: draft.contract_data_enabled ? (draft.contract_email_danfe || "") : "",
+        ownerName: ownerUser?.full_name || "",
+        ownerPhone: ownerUser?.whatsapp || "",
+        ownerEmail: ownerUser?.email || "",
+        renderedText: "",
+        logoDataUrl: proposalLogoDataUrl,
+        items: commercialItems
+      };
+
+      const fileName = `${sanitizeFilePart(draft.proposal_number)}-${sanitizeFilePart(companyName)}.pdf`;
+      const { buildProposalPdfBlob } = await import("../lib/proposalDocumentExport");
+      const pdfBlob = buildProposalPdfBlob(pdfPayload);
+      if (!pdfBlob) {
+        setError("Falha ao gerar o PDF.");
+        return;
+      }
+      downloadBlobFile({ fileName, blob: pdfBlob });
+      setSuccess(`PDF gerado: ${fileName}`);
+    } catch (err) {
+      setError(err.message || "Falha ao gerar PDF.");
+    } finally {
+      setGeneratingDirectPdfId("");
+    }
   }
 
   function handleOpenCustomerHistory(event, item) {
@@ -3030,6 +3141,43 @@ export default function PipelineModule({
       return { ...prev, closing_text: autoText || prev.closing_text };
     });
     setClosingModal(false);
+  }
+
+  async function handleClosingModalGeneratePdf() {
+    if (!proposalEditor || !proposalDocumentPayload) return;
+    setProposalEditor((prev) => {
+      if (!prev) return prev;
+      const autoText = buildClosingTextFromFields(prev);
+      return { ...prev, closing_text: autoText || prev.closing_text };
+    });
+
+    setProposalExporting("pdf");
+    setError("");
+    setSuccess("");
+    try {
+      const fileName = `${sanitizeFilePart(proposalEditor.proposal_number)}-${sanitizeFilePart(proposalEditor.client_name)}.pdf`;
+      const { buildProposalPdfBlob } = await import("../lib/proposalDocumentExport");
+      const pdfBlob = buildProposalPdfBlob({
+        ...proposalDocumentPayload,
+        closingPaymentTerms: proposalEditor.closing_payment_terms || "",
+        allInFixed: proposalEditor.all_in_enabled ? (proposalEditor.all_in_fixed || "") : "",
+        allInCor: proposalEditor.all_in_enabled ? (proposalEditor.all_in_cor || "") : "",
+        allInMono: proposalEditor.all_in_enabled ? (proposalEditor.all_in_mono || "") : "",
+        contractRespFinanceiro: proposalEditor.contract_data_enabled ? (proposalEditor.contract_resp_financeiro || "") : "",
+        contractRespOperador: proposalEditor.contract_data_enabled ? (proposalEditor.contract_resp_operador || "") : "",
+        contractEmailDanfe: proposalEditor.contract_data_enabled ? (proposalEditor.contract_email_danfe || "") : ""
+      });
+      if (!pdfBlob) {
+        setError("Falha ao gerar o PDF.");
+        return;
+      }
+      downloadBlobFile({ fileName, blob: pdfBlob });
+      setSuccess(`PDF gerado: ${fileName}`);
+    } catch (err) {
+      setError(err.message || "Falha ao gerar PDF.");
+    } finally {
+      setProposalExporting("");
+    }
   }
 
   function handleProposalCommercialItemChange(index, field, value) {
@@ -3636,6 +3784,23 @@ export default function PipelineModule({
             Com este modo ativo, cada card permite gerar uma proposta automaticamente no modulo Pedidos.
           </p>
         </div>
+        <div className="inline-actions" style={{ marginTop: 8 }}>
+          <button type="button" className="btn-primary" onClick={() => { setShowOpportunityModal(true); setEditingOpportunityId(""); }}>
+            + Nova Oportunidade
+          </button>
+        </div>
+      </article>
+
+      {showOpportunityModal || editingOpportunityId ? (
+        <div className="modal-overlay" onClick={() => { if (!editingOpportunityId) { setShowOpportunityModal(false); setOpportunityNotes(""); } }}>
+          <div className="modal-box opportunity-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{editingOpportunityId ? "Editar Oportunidade" : "Nova Oportunidade"}</h3>
+              <button type="button" className="btn-ghost btn-table-action" onClick={() => { setShowOpportunityModal(false); setOpportunityNotes(""); if (editingOpportunityId) cancelEditOpportunity(); }}>
+                Fechar
+              </button>
+            </div>
+            <div className="modal-body">
         <form className="form-grid pipeline-form-grid" onSubmit={handleSubmit}>
           <div className="pipeline-company-autocomplete">
             <input
@@ -3841,6 +4006,22 @@ export default function PipelineModule({
               onChange={(e) => setForm((prev) => ({ ...prev, expected_close_date: e.target.value }))}
             />
           </label>
+          <label className="proposal-field-label" style={{ gridColumn: "1 / -1" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              Observações
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setOpportunityNotes(
+                "• Instalação, treinamento e Suporte Premium ArtPrinter por 90 dias.\n• Garantia de 12 meses contra defeitos de fabricação.\n• Kits iniciais de tinta e toner — não inclusos.\n• Fretes e içamentos — não inclusos.\n• Transformadores e estabilizadores (quando necessários) — não inclusos."
+              )}>
+                Usar modelo padrão
+              </button>
+            </span>
+            <textarea
+              placeholder={"Observações que aparecerão na proposta...\n• Ex.: Garantia de 12 meses\n• Ex.: Fretes não inclusos"}
+              value={opportunityNotes}
+              onChange={(e) => setOpportunityNotes(e.target.value)}
+              rows={4}
+            />
+          </label>
           <div className="inline-actions pipeline-form-actions">
             <button type="submit" value="save" className="btn-primary" disabled={savingOpportunity}>
               {savingOpportunity ? "Salvando..." : editingOpportunityId ? "Atualizar oportunidade" : "Salvar oportunidade"}
@@ -3851,13 +4032,16 @@ export default function PipelineModule({
               </button>
             ) : null}
             {editingOpportunityId ? (
-              <button type="button" className="btn-ghost" onClick={cancelEditOpportunity}>
+              <button type="button" className="btn-ghost" onClick={() => { cancelEditOpportunity(); setShowOpportunityModal(false); setOpportunityNotes(""); }}>
                 Cancelar edicao
               </button>
             ) : null}
           </div>
         </form>
-      </article>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <article className="panel top-gap">
         <h3>Funil de vendas</h3>
@@ -3958,15 +4142,16 @@ export default function PipelineModule({
                           Proposta: {linkedProposal.order_number} ({brl(linkedProposal.total_amount)})
                         </p>
                       ) : null}
+                      <button
+                        type="button"
+                        className="btn-pdf-direct"
+                        disabled={generatingDirectPdfId === item.id}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onClick={(event) => handleGenerateDirectPdf(event, item)}
+                      >
+                        {generatingDirectPdfId === item.id ? "Gerando PDF..." : "↓ Gerar Proposta (PDF)"}
+                      </button>
                       <div className="pipeline-card-actions">
-                        <button
-                          type="button"
-                          className="btn-ghost btn-table-action"
-                          onMouseDown={(event) => event.stopPropagation()}
-                          onClick={(event) => handleOpenProposalModel(event, item)}
-                        >
-                          Modelo
-                        </button>
                         <button
                           type="button"
                           className="btn-ghost btn-table-action"
@@ -3975,21 +4160,6 @@ export default function PipelineModule({
                         >
                           Condições
                         </button>
-                        {autoProposalMode ? (
-                          <button
-                            type="button"
-                            className="btn-ghost btn-table-action"
-                            disabled={Boolean(linkedProposal) || creatingProposalId === item.id}
-                            onMouseDown={(event) => event.stopPropagation()}
-                            onClick={(event) => handleCreateAutomatedProposal(event, item)}
-                          >
-                            {linkedProposal
-                              ? "Proposta criada"
-                              : creatingProposalId === item.id
-                                ? "Gerando..."
-                                : "Gerar proposta"}
-                          </button>
-                        ) : null}
                         <button
                           type="button"
                           className="btn-ghost btn-table-action"
@@ -3999,7 +4169,7 @@ export default function PipelineModule({
                             startEditOpportunity(item);
                           }}
                         >
-                          {editingOpportunityId === item.id ? "Editando" : "Editar"}
+                          Editar
                         </button>
                         <button
                           type="button"
@@ -4068,24 +4238,19 @@ export default function PipelineModule({
                       </td>
                       <td>
                         <div style={{ display: "flex", gap: "0.25rem", flexWrap: "wrap" }}>
-                          <button type="button" className="btn-ghost btn-table-action" onClick={(event) => handleOpenProposalModel(event, item)}>
-                            Modelo
+                          <button
+                            type="button"
+                            className="btn-primary btn-sm"
+                            disabled={generatingDirectPdfId === item.id}
+                            onClick={(event) => handleGenerateDirectPdf(event, item)}
+                          >
+                            {generatingDirectPdfId === item.id ? "Gerando..." : "↓ Gerar Proposta (PDF)"}
                           </button>
                           <button type="button" className="btn-ghost btn-table-action" onClick={(event) => handleOpenClosingConditions(event, item)}>
                             Condições
                           </button>
-                          {autoProposalMode ? (
-                            <button
-                              type="button"
-                              className="btn-ghost btn-table-action"
-                              disabled={Boolean(linkedProposal) || creatingProposalId === item.id}
-                              onClick={(event) => handleCreateAutomatedProposal(event, item)}
-                            >
-                              {linkedProposal ? "Proposta criada" : creatingProposalId === item.id ? "Gerando..." : "Gerar proposta"}
-                            </button>
-                          ) : null}
                           <button type="button" className="btn-ghost btn-table-action" onClick={() => startEditOpportunity(item)}>
-                            {editingOpportunityId === item.id ? "Editando" : "Editar"}
+                            Editar
                           </button>
                           <button
                             type="button"
@@ -4628,79 +4793,118 @@ export default function PipelineModule({
         <div className="modal-overlay" onClick={() => setClosingModal(false)}>
           <div className="modal-box closing-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Condições de Fechamento</h3>
-              <button type="button" className="btn-ghost btn-table-action" onClick={() => setClosingModal(false)}>✕</button>
+              <h3>Condições Especiais de Fechamento</h3>
+              <button type="button" className="btn-ghost btn-table-action" onClick={() => setClosingModal(false)}>Fechar</button>
             </div>
             <div className="closing-modal-body">
+              <p className="closing-modal-hint">Preencha apenas o que for acordado. Campos em branco não aparecem no PDF.</p>
+
               <label className="proposal-field-label">
-                <span>Valor negociado (R$)</span>
-                <input
-                  type="text"
-                  placeholder="Ex: 125.090,00"
-                  value={proposalEditor.negotiated_value}
-                  onChange={(e) => handleProposalField("negotiated_value", e.target.value)}
+                <span>Prazo de Pagamento</span>
+                <textarea
+                  placeholder="Ex: 3x sem juros · 50% entrada + 50% em 30 dias"
+                  value={proposalEditor.closing_payment_terms}
+                  onChange={(e) => handleProposalField("closing_payment_terms", e.target.value)}
+                  rows={2}
                 />
               </label>
-              <div className="closing-modal-installments">
-                <label className="proposal-field-label">
-                  <span>Valor de entrada (R$)</span>
+
+              <div className="closing-expandable-section">
+                <label className="checkbox-inline">
                   <input
-                    type="text"
-                    placeholder="Ex: 30.000,00"
-                    value={proposalEditor.installment_entry}
-                    onChange={(e) => handleProposalField("installment_entry", e.target.value)}
+                    type="checkbox"
+                    checked={Boolean(proposalEditor.all_in_enabled)}
+                    onChange={(e) => handleProposalField("all_in_enabled", e.target.checked)}
                   />
+                  <strong>Contrato ALL IN</strong>
                 </label>
-                <label className="proposal-field-label">
-                  <span>Nº de parcelas</span>
-                  <input
-                    type="number"
-                    min="1"
-                    placeholder="Ex: 10"
-                    value={proposalEditor.installment_count}
-                    onChange={(e) => handleProposalField("installment_count", e.target.value)}
-                  />
-                </label>
-                <label className="proposal-field-label">
-                  <span>Valor da parcela (R$)</span>
-                  <input
-                    type="text"
-                    placeholder="Ex: 9.509,00"
-                    value={proposalEditor.installment_value}
-                    onChange={(e) => handleProposalField("installment_value", e.target.value)}
-                  />
-                </label>
+                {proposalEditor.all_in_enabled ? (
+                  <div className="closing-expandable-fields">
+                    <div className="closing-expandable-row">
+                      <label className="proposal-field-label">
+                        <span>Taxa fixa (R$/mês)</span>
+                        <input
+                          type="text"
+                          placeholder="Ex: 580,00"
+                          value={proposalEditor.all_in_fixed}
+                          onChange={(e) => handleProposalField("all_in_fixed", e.target.value)}
+                        />
+                      </label>
+                      <label className="proposal-field-label">
+                        <span>COR (R$/impressão)</span>
+                        <input
+                          type="text"
+                          placeholder="Ex: 0,340"
+                          value={proposalEditor.all_in_cor}
+                          onChange={(e) => handleProposalField("all_in_cor", e.target.value)}
+                        />
+                      </label>
+                      <label className="proposal-field-label">
+                        <span>MONO (R$/impressão)</span>
+                        <input
+                          type="text"
+                          placeholder="Ex: 0,170"
+                          value={proposalEditor.all_in_mono}
+                          onChange={(e) => handleProposalField("all_in_mono", e.target.value)}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-              <label className="proposal-field-label">
-                <span>Valor de contrato (R$)</span>
-                <input
-                  type="text"
-                  placeholder="Ex: valor mensal ou anual de contrato"
-                  value={proposalEditor.contract_value}
-                  onChange={(e) => handleProposalField("contract_value", e.target.value)}
-                />
-              </label>
-              <label className="proposal-field-label">
-                <span>Condições de financiamento</span>
-                <textarea
-                  placeholder="Ex: Convênios financeiros disponíveis sujeitos a aprovação"
-                  value={proposalEditor.financing_terms}
-                  onChange={(e) => handleProposalField("financing_terms", e.target.value)}
-                  rows={3}
-                />
-              </label>
-              <label className="proposal-field-label">
-                <span>Texto livre de fechamento</span>
-                <textarea
-                  placeholder="Texto livre para condições especiais de fechamento"
-                  value={proposalEditor.closing_text}
-                  onChange={(e) => handleProposalField("closing_text", e.target.value)}
-                  rows={3}
-                />
-              </label>
+
+              <div className="closing-expandable-section">
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(proposalEditor.contract_data_enabled)}
+                    onChange={(e) => handleProposalField("contract_data_enabled", e.target.checked)}
+                  />
+                  <strong>Dados para Contrato</strong>
+                </label>
+                {proposalEditor.contract_data_enabled ? (
+                  <div className="closing-expandable-fields">
+                    <label className="proposal-field-label">
+                      <span>Resp. Financeiro (nome · telefone · email)</span>
+                      <input
+                        type="text"
+                        placeholder="Ex: João · 47999990000 · financeiro@empresa.com.br"
+                        value={proposalEditor.contract_resp_financeiro}
+                        onChange={(e) => handleProposalField("contract_resp_financeiro", e.target.value)}
+                      />
+                    </label>
+                    <label className="proposal-field-label">
+                      <span>Resp. Operador (nome · telefone · email)</span>
+                      <input
+                        type="text"
+                        placeholder="Ex: Maria · 47999990001 · operador@empresa.com.br"
+                        value={proposalEditor.contract_resp_operador}
+                        onChange={(e) => handleProposalField("contract_resp_operador", e.target.value)}
+                      />
+                    </label>
+                    <label className="proposal-field-label">
+                      <span>E-mail DANFE</span>
+                      <input
+                        type="email"
+                        placeholder="Ex: danfe@empresa.com.br"
+                        value={proposalEditor.contract_email_danfe}
+                        onChange={(e) => handleProposalField("contract_email_danfe", e.target.value)}
+                      />
+                    </label>
+                  </div>
+                ) : null}
+              </div>
             </div>
             <div className="closing-modal-footer">
-              <button type="button" className="btn-primary" onClick={handleClosingModalSave}>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleClosingModalGeneratePdf}
+                disabled={Boolean(proposalExporting)}
+              >
+                {proposalExporting === "pdf" ? "Gerando PDF..." : "↓ Gerar Proposta (PDF)"}
+              </button>
+              <button type="button" className="btn-ghost" onClick={handleClosingModalSave}>
                 Salvar e aplicar
               </button>
               <button type="button" className="btn-ghost" onClick={() => setClosingModal(false)}>

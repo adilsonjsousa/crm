@@ -3415,6 +3415,77 @@ tbody tr:hover {
   border-top: 1px solid var(--border-soft);
 }
 
+.opportunity-modal {
+  max-width: 720px;
+}
+.opportunity-modal .form-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+.opportunity-modal .modal-body {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.opportunity-modal .modal-body .form-grid {
+  gap: 10px;
+}
+.opportunity-modal .pipeline-items-panel {
+  margin: 8px 0;
+}
+.opportunity-modal .pipeline-form-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border-soft);
+}
+.closing-expandable-section {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.closing-expandable-section .checkbox-inline {
+  margin-bottom: 8px;
+}
+.closing-expandable-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+}
+.closing-expandable-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+.closing-modal .closing-modal-body {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.closing-modal-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+.pipeline-card .btn-pdf-direct {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 0.76rem;
+  padding: 5px 10px;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 4px;
+}
+.pipeline-card .btn-pdf-direct:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .proposal-template-input {
   min-height: 220px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
