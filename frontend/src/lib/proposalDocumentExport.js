@@ -469,6 +469,22 @@ function drawPdfHeaderBar(doc, payload, margin) {
   return lineY + 16;
 }
 
+function formatProposalNumber(raw, issueDate) {
+  const text = String(raw || "").trim();
+  if (!text || text === "-") {
+    const d = new Date();
+    return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}-01`;
+  }
+  if (/^RASC-/i.test(text) || text.includes(">") || text.includes("/") && text.split("/").length > 3) {
+    const dateStr = String(issueDate || "").trim();
+    const match = dateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    if (match) return `${match[3]}/${match[2]}/${match[1]}-01`;
+    const d = new Date();
+    return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}-01`;
+  }
+  return text;
+}
+
 export function buildProposalPdfBlob(payload = {}) {
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
   const margin = 42;
@@ -483,11 +499,13 @@ export function buildProposalPdfBlob(payload = {}) {
   doc.text("PROPOSTA COMERCIAL", margin, y);
   y += 18;
 
+  const issueDateFormatted = formatDateBr(payload.issueDate);
+  const proposalNum = formatProposalNumber(payload.proposalNumber, issueDateFormatted);
+
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(107, 114, 128);
-  const issueDateFormatted = formatDateBr(payload.issueDate);
-  const subtitle = `Nº ${safeText(payload.proposalNumber, "-")}  ·  ${issueDateFormatted}  ·  Validade: ${safeText(payload.validityDays, "-")} dias`;
+  const subtitle = `Nº ${proposalNum}  ·  ${issueDateFormatted}  ·  Validade: ${safeText(payload.validityDays, "-")} dias`;
   doc.text(subtitle, margin, y);
   y += 22;
 
@@ -604,8 +622,8 @@ export function buildProposalPdfBlob(payload = {}) {
       if (item.quantity > 1) descParts.push(`Qtd: ${item.quantityLabel}`);
       if (item.discount > 0) descParts.push(`Desconto: ${item.discountLabel}`);
       let descCol = descParts.join("\n");
-      if (!descCol && productName !== item.description) descCol = item.description;
-      if (!descCol && item.description) descCol = item.description;
+      if (!descCol && nameParts.length > 1) descCol = nameParts[0].trim();
+      if (!descCol) descCol = productName;
       return [productName, descCol, item.subtotalLabel];
     }),
     theme: "grid"
@@ -670,6 +688,16 @@ export function buildProposalPdfBlob(payload = {}) {
   }
   if (excluded) {
     excluded.replace(/\\n/g, "\n").split("\n").forEach((line) => { if (line.trim()) observationBullets.push(line.trim()); });
+  }
+
+  if (!observationBullets.length) {
+    observationBullets.push(
+      "Instalação, treinamento e Suporte Premium ArtPrinter por 90 dias",
+      "Garantia de 12 meses contra defeitos de fabricação",
+      "Kits iniciais de toner não inclusos",
+      "Frete incluso para Grande SP (consultar demais regiões)",
+      "Equipamento bivolt com transformador quando necessário"
+    );
   }
 
   if (observationBullets.length) {

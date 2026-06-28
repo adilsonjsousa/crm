@@ -3020,7 +3020,7 @@ export default function PipelineModule({
       const docItems = ensureProposalItems(parsedItems, fallbackItem);
       const commercialItems = draft.commercial_items?.length ? draft.commercial_items : docItems;
       const companyCnpj = item.companies?.cnpj || "";
-      const ownerUser = pipelineUsers.find((u) => u.user_id === (item.owner_user_id || viewerUserId));
+      const ownerUser = pipelineUsers.find((u) => u.user_id === (item.owner_user_id || viewerUserId)) || viewerUser;
       const companyName = item.companies?.trade_name || draft.client_name || "Cliente";
 
       const pdfPayload = {
@@ -3045,9 +3045,9 @@ export default function PipelineModule({
         contractRespFinanceiro: draft.contract_data_enabled ? (draft.contract_resp_financeiro || "") : "",
         contractRespOperador: draft.contract_data_enabled ? (draft.contract_resp_operador || "") : "",
         contractEmailDanfe: draft.contract_data_enabled ? (draft.contract_email_danfe || "") : "",
-        ownerName: ownerUser?.full_name || "",
-        ownerPhone: ownerUser?.whatsapp || "",
-        ownerEmail: ownerUser?.email || "",
+        ownerName: ownerUser?.full_name || viewerUser?.full_name || "",
+        ownerPhone: ownerUser?.whatsapp || viewerUser?.whatsapp || "",
+        ownerEmail: ownerUser?.email || viewerUser?.email || "",
         renderedText: "",
         logoDataUrl: proposalLogoDataUrl,
         items: commercialItems
