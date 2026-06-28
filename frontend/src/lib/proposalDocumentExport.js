@@ -454,19 +454,21 @@ function drawPdfHeaderBar(doc, payload, margin) {
     const format = inferPdfImageFormat(imageMeta.mimeType);
     if (format) {
       try {
-        doc.addImage(payload.logoDataUrl, format, pageWidth - margin - 110, barY - 6, 105, 30);
+        const logoW = 105;
+        const logoH = logoW / 1.97;
+        doc.addImage(payload.logoDataUrl, format, pageWidth - margin - logoW, barY - 10, logoW, logoH);
       } catch {
         // ignore
       }
     }
   }
 
-  const lineY = contactY + 14;
+  const lineY = contactY + 22;
   doc.setDrawColor(200, 190, 230);
   doc.setLineWidth(0.5);
   doc.line(margin, lineY, pageWidth - margin, lineY);
 
-  return lineY + 16;
+  return lineY + 24;
 }
 
 function formatProposalNumber(raw, issueDate) {
