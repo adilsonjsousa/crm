@@ -516,10 +516,28 @@ export function buildProposalPdfBlob(payload = {}) {
   }
 
   y += 6;
+
+  const institutionalText = [
+    "Agradecemos a oportunidade de apresentar nossa proposta comercial, com os equipamentos e opcionais, que identificamos como adequados à sua demanda, de acordo com as reuniões preliminares realizadas.",
+    "",
+    "A ARTPRINTER é especializada em soluções gráficas digitais.",
+    "",
+    "Nosso amplo portfólio inclui impressoras, plotters de grande formato, equipamentos de corte e vinco, guilhotinas, laminadoras e outros equipamentos para acabamento gráfico.\nEstamos preparados para proporcional a melhor experiência aos nossos clientes, da implantação ao suporte cliente.",
+    "",
+    "Somos Revenda Oficial da CANON, líder mundial em equipamentos gráficos digitais, garantindo qualidade, robustez e produtividade.",
+    "",
+    "Somos parceiros também da Mapel e MV Equipamentos, importadores oficiais de equipamentos de Comunicação Visual e Acabamento Gráficos, para trazer ao segmento gráfico, produtos de alta qualidade, que ajudam a garantir o crescimento dos nossos clientes.",
+    "",
+    "Entendemos que negócios duradouros se sustentam no tripé da Confiança, Compromisso e Proximidade, \nValores que transformam transações em parcerias e Clientes em Amigos.",
+    "",
+    "Nossa fortaleza está em selecionar os melhores equipamentos, com tecnologia de ponta e capacitar nossos colaboradores para oferecer suporte técnico que supere expectativas, com agilidade e excelência."
+  ].join("\n");
+
   const proposalText = cleanRenderedTextForPdf(normalizeMultilineText(payload.renderedText || ""));
-  if (proposalText.trim()) {
+  const textToRender = proposalText.trim() || institutionalText;
+  if (textToRender) {
     const companyNameUpper = safeText(payload.companyName, "").toUpperCase().trim();
-    let filteredText = proposalText;
+    let filteredText = textToRender;
     if (companyNameUpper) {
       filteredText = filteredText.replace(new RegExp("^" + companyNameUpper.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\n?", "i"), "");
     }
@@ -585,7 +603,9 @@ export function buildProposalPdfBlob(payload = {}) {
       }
       if (item.quantity > 1) descParts.push(`Qtd: ${item.quantityLabel}`);
       if (item.discount > 0) descParts.push(`Desconto: ${item.discountLabel}`);
-      const descCol = descParts.join("\n") || (productName !== item.description ? item.description : "");
+      let descCol = descParts.join("\n");
+      if (!descCol && productName !== item.description) descCol = item.description;
+      if (!descCol && item.description) descCol = item.description;
       return [productName, descCol, item.subtotalLabel];
     }),
     theme: "grid"
@@ -673,9 +693,18 @@ export function buildProposalPdfBlob(payload = {}) {
     y += 8;
   }
 
+  const closingPaymentTerms = safeText(payload.closingPaymentTerms, "").trim();
   const closingText = safeText(payload.closingText, "").trim();
   const financingTerms = safeText(payload.financingTerms, "").trim();
-  if (closingText || financingTerms) {
+  const allInFixed = safeText(payload.allInFixed, "").trim();
+  const allInCor = safeText(payload.allInCor, "").trim();
+  const allInMono = safeText(payload.allInMono, "").trim();
+  const contractRespFinanceiro = safeText(payload.contractRespFinanceiro, "").trim();
+  const contractRespOperador = safeText(payload.contractRespOperador, "").trim();
+  const contractEmailDanfe = safeText(payload.contractEmailDanfe, "").trim();
+  const hasClosingData = closingPaymentTerms || closingText || financingTerms || allInFixed || allInCor || allInMono || contractRespFinanceiro || contractRespOperador || contractEmailDanfe;
+
+  if (hasClosingData) {
     y = ensurePdfSpace(doc, y, 60, margin);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
@@ -684,7 +713,18 @@ export function buildProposalPdfBlob(payload = {}) {
     y += 10;
 
     const closingBody = [];
-    if (closingText) closingBody.push(["Prazo de Pagamento", closingText.replace(/\\n/g, "\n")]);
+    if (closingPaymentTerms) closingBody.push(["Prazo de Pagamento", closingPaymentTerms.replace(/\\n/g, "\n")]);
+    if (closingText && !closingPaymentTerms) closingBody.push(["Prazo de Pagamento", closingText.replace(/\\n/g, "\n")]);
+    if (allInFixed || allInCor || allInMono) {
+      const allInParts = [];
+      if (allInFixed) allInParts.push(`Taxa fixa: R$ ${allInFixed}/mês`);
+      if (allInCor) allInParts.push(`COR: R$ ${allInCor}/impressão`);
+      if (allInMono) allInParts.push(`MONO: R$ ${allInMono}/impressão`);
+      closingBody.push(["Contrato ALL IN", allInParts.join(" · ")]);
+    }
+    if (contractRespFinanceiro) closingBody.push(["Resp. Financeiro", contractRespFinanceiro]);
+    if (contractRespOperador) closingBody.push(["Resp. Operador", contractRespOperador]);
+    if (contractEmailDanfe) closingBody.push(["E-mail DANFE", contractEmailDanfe]);
     if (financingTerms) closingBody.push(["Financiamento", financingTerms.replace(/\\n/g, "\n")]);
 
     autoTable(doc, {
