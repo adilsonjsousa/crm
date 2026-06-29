@@ -449,26 +449,28 @@ function drawPdfHeaderBar(doc, payload, margin) {
   doc.setTextColor(80, 80, 100);
   doc.text(ownerEmail, emailIconX + iconRadius + 4, contactY);
 
+  const logoW = 105;
+  const logoH = logoW / 1.97;
+  const logoY = barY - 6;
   const imageMeta = parseImageDataUrl(payload.logoDataUrl);
   if (imageMeta) {
     const format = inferPdfImageFormat(imageMeta.mimeType);
     if (format) {
       try {
-        const logoW = 105;
-        const logoH = logoW / 1.97;
-        doc.addImage(payload.logoDataUrl, format, pageWidth - margin - logoW, barY - 10, logoW, logoH);
+        doc.addImage(payload.logoDataUrl, format, pageWidth - margin - logoW, logoY, logoW, logoH);
       } catch {
         // ignore
       }
     }
   }
 
-  const lineY = contactY + 22;
+  const logoBottom = logoY + logoH;
+  const lineY = Math.max(contactY + 16, logoBottom + 8);
   doc.setDrawColor(200, 190, 230);
   doc.setLineWidth(0.5);
   doc.line(margin, lineY, pageWidth - margin, lineY);
 
-  return lineY + 24;
+  return lineY + 28;
 }
 
 function formatProposalNumber(raw, issueDate) {
