@@ -61,6 +61,7 @@ function normalizeExportItems(items = []) {
     return {
       index: index + 1,
       description: safeText(entry?.item_description || entry?.title_product || entry?.product || "Item"),
+      titleProduct: String(entry?.title_product || "").trim(),
       detail: String(entry?.item_detail || entry?.detail || ""),
       quantity,
       unitPrice,
@@ -617,18 +618,20 @@ export function buildProposalPdfBlob(payload = {}) {
     },
     body: normalizedItems.map((item) => {
       const nameParts = String(item.description || "").split(" - ");
-      const productName = nameParts.length > 1 ? nameParts.slice(1).join(" - ").trim() : item.description;
+      const shortName = item.titleProduct || (nameParts.length > 1 ? nameParts.slice(1).join(" - ").trim() : item.description);
       const descParts = [];
       const detailText = safeText(item.detail, "").trim();
       if (detailText) {
         descParts.push(detailText.replace(/\\n/g, "\n"));
       }
+      if (!detailText && item.titleProduct && item.description !== item.titleProduct) {
+        descParts.push(item.description);
+      }
       if (item.quantity > 1) descParts.push(`Qtd: ${item.quantityLabel}`);
       if (item.discount > 0) descParts.push(`Desconto: ${item.discountLabel}`);
       let descCol = descParts.join("\n");
       if (!descCol && nameParts.length > 1) descCol = nameParts[0].trim();
-      if (!descCol) descCol = productName;
-      return [productName, descCol, item.subtotalLabel];
+      return [shortName, descCol, item.subtotalLabel];
     }),
     theme: "grid"
   });
