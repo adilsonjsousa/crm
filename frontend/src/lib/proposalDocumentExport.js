@@ -624,13 +624,9 @@ export function buildProposalPdfBlob(payload = {}) {
       if (detailText) {
         descParts.push(detailText.replace(/\\n/g, "\n"));
       }
-      if (!detailText && item.titleProduct && item.description !== item.titleProduct) {
-        descParts.push(item.description);
-      }
       if (item.quantity > 1) descParts.push(`Qtd: ${item.quantityLabel}`);
       if (item.discount > 0) descParts.push(`Desconto: ${item.discountLabel}`);
-      let descCol = descParts.join("\n");
-      if (!descCol && nameParts.length > 1) descCol = nameParts[0].trim();
+      const descCol = descParts.join("\n");
       return [shortName, descCol, item.subtotalLabel];
     }),
     theme: "grid"
