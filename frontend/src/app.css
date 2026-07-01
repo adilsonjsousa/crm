@@ -1619,18 +1619,40 @@ a.btn-table-action {
 .settings-product-search-input {
   flex: 1;
   max-width: 480px;
-  padding: 8px 14px;
-  border: 1.5px solid var(--border);
-  border-radius: 8px;
+  padding: 10px 16px 10px 38px;
+  border: 2px solid var(--accent, #7c3aed);
+  border-radius: 10px;
   font-size: 0.95em;
-  background: var(--bg);
+  background: #f9f7ff;
   color: var(--fg);
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: 0 1px 4px rgba(124, 58, 237, 0.1);
+}
+
+.settings-product-search {
+  position: relative;
+}
+
+.settings-product-search::before {
+  content: "🔍";
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.9em;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.settings-product-search-input::placeholder {
+  color: #9b8ec4;
 }
 
 .settings-product-search-input:focus {
   outline: none;
   border-color: var(--accent, #7c3aed);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+  background: #fff;
 }
 
 .settings-library-flags {
