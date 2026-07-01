@@ -600,6 +600,7 @@ function normalizeProposalCommercialItem(item = {}, fallbackType = "equipment") 
     item_type: normalizedType,
     item_code: String(item.item_code || item.product_code || "").trim(),
     item_description: description,
+    item_detail: String(item.item_detail || "").trim(),
     quantity,
     unit_price: unitPrice,
     discount_percent: discountPercent,
@@ -1497,6 +1498,7 @@ function createProposalDraft({
         item_type: selectedProductProfile.proposal_type || proposalType,
         item_code: selectedProductProfile.product_code || "",
         item_description: selectedProductProfile.product_name || primaryItem.title_product || "Produto",
+        item_detail: selectedProductProfile.technical_text || "",
         quantity: 1,
         unit_price: toPositiveMoneyNumber(selectedProductProfile.base_price),
         discount_percent: 0
@@ -1511,6 +1513,7 @@ function createProposalDraft({
             item_type: selectedProductProfile.proposal_type || entry.item_type,
             item_code: entry.item_code || selectedProductProfile.product_code || "",
             item_description: entry.item_description || selectedProductProfile.product_name || "",
+            item_detail: entry.item_detail || selectedProductProfile.technical_text || "",
             unit_price:
               toPositiveMoneyNumber(entry.unit_price) > 0
                 ? toPositiveMoneyNumber(entry.unit_price)
@@ -3018,7 +3021,17 @@ export default function PipelineModule({
         estimated_value: item.estimated_value
       });
       const docItems = ensureProposalItems(parsedItems, fallbackItem);
-      const commercialItems = draft.commercial_items?.length ? draft.commercial_items : docItems;
+      let commercialItems = draft.commercial_items?.length ? draft.commercial_items : docItems;
+      if (profiles.length && commercialItems.length) {
+        commercialItems = commercialItems.map((ci) => {
+          if (ci.item_detail) return ci;
+          const match = profiles.find((p) =>
+            p.product_name && ci.title_product && p.product_name.toLowerCase() === ci.title_product.toLowerCase()
+          );
+          if (match?.technical_text) return { ...ci, item_detail: match.technical_text };
+          return ci;
+        });
+      }
       const companyCnpj = item.companies?.cnpj || "";
       const ownerUser = pipelineUsers.find((u) => u.user_id === (item.owner_user_id || viewerUserId)) || viewerUser;
       const companyName = item.companies?.trade_name || draft.client_name || "Cliente";
