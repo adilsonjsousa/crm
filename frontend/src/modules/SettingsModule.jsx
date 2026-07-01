@@ -1065,6 +1065,7 @@ export default function SettingsModule() {
   const [savingProposalProductProfileId, setSavingProposalProductProfileId] = useState("");
   const [deletingProposalProductProfileId, setDeletingProposalProductProfileId] = useState("");
   const [syncingLegacyProductCatalog, setSyncingLegacyProductCatalog] = useState(false);
+  const [productSearchTerm, setProductSearchTerm] = useState("");
 
   const [proposalCppRows, setProposalCppRows] = useState([]);
   const [proposalCppRowsLoading, setProposalCppRowsLoading] = useState(false);
@@ -3072,6 +3073,21 @@ export default function SettingsModule() {
     () => proposalProductProfiles.filter((item) => item.is_active).length,
     [proposalProductProfiles]
   );
+  const filteredProposalProductProfiles = useMemo(() => {
+    const term = productSearchTerm.trim().toLowerCase();
+    if (!term) return proposalProductProfiles;
+    const words = term.split(/\s+/);
+    return proposalProductProfiles.filter((profile) => {
+      const haystack = [
+        profile.product_name,
+        profile.product_subcategory,
+        proposalProductTypeLabel(profile.proposal_type),
+        profile.product_code,
+        profile.technical_text
+      ].join(" ").toLowerCase();
+      return words.every((w) => haystack.includes(w));
+    });
+  }, [proposalProductProfiles, productSearchTerm]);
   const activeProposalCppRowsCount = useMemo(() => proposalCppRows.filter((item) => item.is_active).length, [proposalCppRows]);
   const activeProposalCommercialTermsCount = useMemo(
     () => proposalCommercialTerms.filter((item) => item.is_active).length,
@@ -4330,6 +4346,21 @@ export default function SettingsModule() {
               </div>
             </form>
 
+            <div className="settings-product-search top-gap">
+              <input
+                type="search"
+                placeholder="Pesquisar produto por nome, categoria, código..."
+                value={productSearchTerm}
+                onChange={(event) => setProductSearchTerm(event.target.value)}
+                className="settings-product-search-input"
+              />
+              {productSearchTerm.trim() ? (
+                <span className="muted" style={{ fontSize: "0.85em", marginLeft: 8 }}>
+                  {filteredProposalProductProfiles.length} de {proposalProductProfiles.length} produto(s)
+                </span>
+              ) : null}
+            </div>
+
             <div className="table-wrap top-gap">
               <table>
                 <thead>
@@ -4345,7 +4376,7 @@ export default function SettingsModule() {
                   </tr>
                 </thead>
                 <tbody>
-                  {proposalProductProfiles.map((profile) => (
+                  {filteredProposalProductProfiles.map((profile) => (
                     <tr key={profile.id}>
                       <td>{proposalProductTypeLabel(profile.proposal_type)}</td>
                       <td>{profile.product_subcategory || "-"}</td>
@@ -4375,10 +4406,12 @@ export default function SettingsModule() {
                       </td>
                     </tr>
                   ))}
-                  {!proposalProductProfiles.length ? (
+                  {!filteredProposalProductProfiles.length ? (
                     <tr>
                       <td colSpan={8} className="muted">
-                        Nenhum produto cadastrado.
+                        {productSearchTerm.trim()
+                          ? `Nenhum produto encontrado para "${productSearchTerm.trim()}".`
+                          : "Nenhum produto cadastrado."}
                       </td>
                     </tr>
                   ) : null}

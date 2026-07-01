@@ -1610,6 +1610,29 @@ a.btn-table-action {
   min-height: 76px;
 }
 
+.settings-product-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-product-search-input {
+  flex: 1;
+  max-width: 480px;
+  padding: 8px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.95em;
+  background: var(--bg);
+  color: var(--fg);
+  transition: border-color 0.15s;
+}
+
+.settings-product-search-input:focus {
+  outline: none;
+  border-color: var(--accent, #7c3aed);
+}
+
 .settings-library-flags {
   display: grid;
   gap: 6px;
